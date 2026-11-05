@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -357,12 +358,19 @@ def build(root: Path | None = None) -> BuildResult:
     repository = _resolve_repository_root(Path.cwd() if root is None else root)
     result = build_distribution(repository)
     bundle_path, manifest_path = write_distribution(repository, result)
-    print(
+    report = (
         f"{bundle_path.relative_to(repository).as_posix()} "
-        f"{sha256_bytes(result.bundle)}"
-    )
-    print(
+        f"{sha256_bytes(result.bundle)}\n"
         f"{manifest_path.relative_to(repository).as_posix()} "
-        f"{sha256_bytes(result.manifest)}"
+        f"{sha256_bytes(result.manifest)}\n"
     )
+    try:
+        sys.stdout.write(report)
+        sys.stdout.flush()
+    except OSError as error:
+        raise FilesystemError(
+            "distribution report could not be written to standard output",
+            path="<stdout>",
+            remediation="redirect standard output to a writable destination and retry",
+        ) from error
     return result

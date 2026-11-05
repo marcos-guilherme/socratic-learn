@@ -76,8 +76,15 @@ def export_prompt(output: Path | None = None, *, root: Path | None = None) -> No
         )
 
     if output is None:
-        sys.stdout.buffer.write(bundle_bytes)
-        sys.stdout.buffer.flush()
+        try:
+            sys.stdout.buffer.write(bundle_bytes)
+            sys.stdout.buffer.flush()
+        except OSError as error:
+            raise FilesystemError(
+                "distribution prompt could not be written to standard output",
+                path="<stdout>",
+                remediation="use --output with a writable path inside the repository",
+            ) from error
         return
     requested_output = output if output.is_absolute() else repository / output
     safe_output = _ensure_contained(

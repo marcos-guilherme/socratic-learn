@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from io import BytesIO
+import contextlib
+from io import BytesIO, StringIO
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -13,6 +14,7 @@ from learning_tutor.build import (
     build_distribution,
     write_distribution,
 )
+from learning_tutor.__main__ import main
 from learning_tutor.errors import FilesystemError, IntegrityError
 from learning_tutor.export import export_prompt
 from learning_tutor.manifest import sha256_bytes
@@ -505,6 +507,121 @@ class BuildTests(unittest.TestCase):
 
         with self.assertRaisesRegex(IntegrityError, "hash"):
             export_prompt(root=root)
+
+    def test_cli_stdout_io_failures_return_actionable_filesystem_error(self) -> None:
+        class FailingTextStdout:
+            def __init__(self, operation: str) -> None:
+                self.operation = operation
+
+            def write(self, data: str) -> int:
+                if self.operation == "write":
+                    raise BrokenPipeError("injected text write failure")
+                return len(data)
+
+            def flush(self) -> None:
+                if self.operation == "flush":
+                    raise OSError("injected text flush failure")
+
+        class FailingBinaryBuffer:
+            def __init__(self, operation: str) -> None:
+                self.operation = operation
+
+            def write(self, data: bytes) -> int:
+                if self.operation == "write":
+                    raise BrokenPipeError("injected binary write failure")
+                return len(data)
+
+            def flush(self) -> None:
+                if self.operation == "flush":
+                    raise OSError("injected binary flush failure")
+
+        class BinaryStdout:
+            def __init__(self, operation: str) -> None:
+                self.buffer = FailingBinaryBuffer(operation)
+
+        for command, operation in (
+            ("build", "write"),
+            ("build", "flush"),
+            ("export", "write"),
+            ("export", "flush"),
+        ):
+            with self.subTest(command=command, operation=operation):
+                temporary, root = self.make_repository()
+                try:
+                    if command == "export":
+                        write_distribution(root, build_distribution(root))
+                    stderr = StringIO()
+                    stdout = (
+                        FailingTextStdout(operation)
+                        if command == "build"
+                        else BinaryStdout(operation)
+                    )
+                    cwd_patch = mock.patch(
+                        f"learning_tutor.{command}.Path.cwd",
+                        return_value=root,
+                    )
+                    stdout_patch = mock.patch("sys.stdout", stdout)
+                    with cwd_patch, stdout_patch, contextlib.redirect_stderr(stderr):
+                        exit_code = main(
+                            ["build"] if command == "build" else ["export", "prompt"]
+                        )
+
+                    message = stderr.getvalue()
+                    self.assertEqual(5, exit_code)
+                    self.assertIn("path: <stdout>", message)
+                    self.assertIn("remediation:", message)
+                    self.assertNotIn("Traceback", message)
+                finally:
+                    temporary.cleanup()
+
+    def test_stdout_programmer_errors_are_not_masked(self) -> None:
+        class ProgrammerErrorTextStdout:
+            def write(self, data: str) -> int:
+                raise RuntimeError("text programmer error")
+
+            def flush(self) -> None:
+                raise AssertionError("unreachable")
+
+        class ProgrammerErrorBinaryBuffer:
+            def write(self, data: bytes) -> int:
+                raise RuntimeError("binary programmer error")
+
+            def flush(self) -> None:
+                raise AssertionError("unreachable")
+
+        stdout = mock.Mock()
+        stdout.buffer = ProgrammerErrorBinaryBuffer()
+        cases = (
+            (
+                "build",
+                ProgrammerErrorTextStdout(),
+                ["build"],
+                "text programmer error",
+            ),
+            (
+                "export",
+                stdout,
+                ["export", "prompt"],
+                "binary programmer error",
+            ),
+        )
+        for command, failing_stdout, argv, expected in cases:
+            with self.subTest(command=command):
+                temporary, root = self.make_repository()
+                try:
+                    if command == "export":
+                        write_distribution(root, build_distribution(root))
+                    with (
+                        mock.patch(
+                            f"learning_tutor.{command}.Path.cwd",
+                            return_value=root,
+                        ),
+                        mock.patch("sys.stdout", failing_stdout),
+                        self.assertRaisesRegex(RuntimeError, expected),
+                    ):
+                        main(argv)
+                finally:
+                    temporary.cleanup()
 
 
 if __name__ == "__main__":
