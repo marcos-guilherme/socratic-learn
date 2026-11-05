@@ -141,7 +141,10 @@ def validate(root: Path) -> list[str]:
                 errors.append(
                     f"Broken Markdown link in {path.relative_to(root)}: {target}"
                 )
-        if "PRIVATE_LEARNER_DATA" in visible_text:
+        if any(
+            line.strip() == "PRIVATE_LEARNER_DATA"
+            for line in visible_text.splitlines()
+        ):
             errors.append(
                 f"Found private learner marker outside workspace: {path.relative_to(root)}"
             )

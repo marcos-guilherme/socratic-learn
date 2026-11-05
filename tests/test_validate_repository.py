@@ -117,6 +117,15 @@ class RepositoryValidationTests(unittest.TestCase):
         (root / "README.md").write_text("PRIVATE_LEARNER_DATA\n", encoding="utf-8")
         self.assertTrue(any("private learner" in error for error in validate(root)))
 
+    def test_private_marker_inline_mention_passes(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        (root / "README.md").write_text(
+            "The PRIVATE_LEARNER_DATA marker identifies private records.\n",
+            encoding="utf-8",
+        )
+        self.assertEqual([], validate(root))
+
     def test_workspace_exclusion_uses_path_relative_to_root(self) -> None:
         temp, root = self.make_root(nested_under_workspace=True)
         self.addCleanup(temp.cleanup)
