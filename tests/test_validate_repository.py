@@ -43,6 +43,19 @@ ROOT_CLAUDE_LOADER_RE = re.compile(
     r"\s*<!-- root-loader:end -->",
     re.DOTALL,
 )
+README_HEADINGS = (
+    "## What this is",
+    "## Quick start",
+    "## How a learning session works",
+    "## Supported agents",
+    "## Private learner state",
+    "## Validation",
+    "## Limitations",
+)
+README_WORKSPACE_COMMANDS = (
+    "Copy-Item -Recurse workspace.example\\* workspace",
+    "cp -R workspace.example/. workspace/",
+)
 
 
 def parse_curriculum_nodes(text: str) -> list[tuple[str, dict[str, str]]]:
@@ -137,6 +150,19 @@ class RepositoryValidationTests(unittest.TestCase):
         )
         text = (root / "AGENTS.md").read_text(encoding="utf-8")
         self.assertTrue(all(target in text for target in required))
+
+    def test_readme_provides_complete_onboarding_contract(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        readme = root / "README.md"
+        self.assertTrue(readme.exists(), "README.md must exist")
+        text = readme.read_text(encoding="utf-8")
+        headings = tuple(
+            line for line in text.splitlines() if line.startswith("## ")
+        )
+        self.assertEqual(README_HEADINGS, headings)
+        for command in README_WORKSPACE_COMMANDS:
+            with self.subTest(command=command):
+                self.assertIn(command, text)
 
     def test_adapter_skills_have_specific_learning_tutor_metadata(self) -> None:
         root = Path(__file__).resolve().parents[1]
