@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
 import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -29,8 +32,7 @@ CANONICAL_SOURCES = (
 )
 
 _CURRICULUM_HEADING_RE = re.compile(
-    r"^### ([a-z0-9]+(?:-[a-z0-9]+)*) — (\S.*)$",
-    re.MULTILINE,
+    r"### ([a-z0-9]+(?:-[a-z0-9]+)*) — (\S.*)",
 )
 
 
@@ -74,6 +76,65 @@ def _normalize_source(data: bytes, relative: str) -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
+def _resolve_repository_root(root: Path) -> Path:
+    try:
+        repository = root.resolve(strict=True)
+    except OSError as error:
+        raise IntegrityError(
+            "repository root cannot be resolved",
+            path=root,
+            remediation="use an existing repository directory",
+        ) from error
+    if not repository.is_dir():
+        raise IntegrityError(
+            "repository root is not a directory",
+            path=root,
+            remediation="use an existing repository directory",
+        )
+    return repository
+
+
+def _ensure_contained(
+    repository: Path,
+    candidate: Path,
+    *,
+    display_path: str | Path,
+) -> Path:
+    try:
+        resolved = candidate.resolve(strict=False)
+    except OSError as error:
+        raise IntegrityError(
+            "path cannot be resolved safely",
+            path=display_path,
+            remediation="remove invalid links and retry",
+        ) from error
+    if not resolved.is_relative_to(repository):
+        raise IntegrityError(
+            "path resolves outside the repository",
+            path=display_path,
+            remediation="remove the escaping symlink or choose a path inside the repository",
+        )
+    return resolved
+
+
+def _dist_path(repository: Path) -> Path:
+    dist = repository / "dist"
+    if dist.is_symlink():
+        raise IntegrityError(
+            "distribution directory must not be a symlink",
+            path="dist",
+            remediation="remove the dist symlink and rebuild",
+        )
+    _ensure_contained(repository, dist, display_path="dist")
+    if dist.exists() and not dist.is_dir():
+        raise IntegrityError(
+            "distribution path is not a directory",
+            path="dist",
+            remediation="move the existing path and rebuild",
+        )
+    return dist
+
+
 def _read_sources(root: Path) -> list[tuple[str, bytes]]:
     sources: list[tuple[str, bytes]] = []
     for relative in CANONICAL_SOURCES:
@@ -82,7 +143,11 @@ def _read_sources(root: Path) -> list[tuple[str, bytes]]:
                 "canonical source paths must be relative POSIX paths",
                 path=relative,
             )
-        path = root / relative
+        path = _ensure_contained(
+            root,
+            root / relative,
+            display_path=relative,
+        )
         try:
             data = path.read_bytes()
         except FileNotFoundError as error:
@@ -101,11 +166,23 @@ def _read_sources(root: Path) -> list[tuple[str, bytes]]:
 
 
 def _curriculum_index(relative: str, data: bytes) -> str:
-    headings = _CURRICULUM_HEADING_RE.findall(data.decode("utf-8"))
+    headings: list[tuple[str, str]] = []
+    for line_number, line in enumerate(data.decode("utf-8").splitlines(), start=1):
+        if not line.startswith("###"):
+            continue
+        match = _CURRICULUM_HEADING_RE.fullmatch(line)
+        if match is None:
+            raise IntegrityError(
+                "unsupported or malformed curriculum node heading",
+                path=f"{relative}:{line_number}",
+                remediation="use '### identifier — Title' for every node heading",
+            )
+        headings.append((match.group(1), match.group(2)))
     if not headings:
         raise IntegrityError(
             "curriculum source contains no node headings",
             path=relative,
+            remediation="add at least one '### identifier — Title' node heading",
         )
     return "\n".join(f"- {identifier} — {title}" for identifier, title in headings)
 
@@ -141,7 +218,8 @@ def _compose_bundle(sources: list[tuple[str, bytes]]) -> bytes:
 def build_distribution(root: Path) -> BuildResult:
     """Build deterministic bundle and manifest bytes without writing them."""
 
-    sources = _read_sources(root)
+    repository = _resolve_repository_root(root)
+    sources = _read_sources(repository)
     bundle = _compose_bundle(sources)
     manifest: dict[str, object] = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
@@ -184,25 +262,90 @@ def _atomic_write(path: Path, data: bytes) -> None:
         raise FilesystemError("distribution artifact could not be written", path=path) from error
 
 
-def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
-    """Atomically write exact build bytes under the repository's dist directory."""
-
-    dist = root / "dist"
+def _validate_staged_distribution(stage: Path, result: BuildResult) -> None:
     try:
-        dist.mkdir(parents=True, exist_ok=True)
+        manifest_bytes = (stage / "manifest.json").read_bytes()
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+        bundle_bytes = (stage / "learning-tutor.prompt.md").read_bytes()
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise IntegrityError(
+            "staged distribution cannot be read and validated",
+            path=stage,
+            remediation="retry the build after checking repository permissions",
+        ) from error
+    if not isinstance(manifest, dict):
+        raise IntegrityError(
+            "staged manifest must contain a JSON object",
+            path=stage / "manifest.json",
+            remediation="regenerate the distribution",
+        )
+    validate_manifest(manifest)
+    if manifest_bytes != result.manifest:
+        raise IntegrityError(
+            "staged manifest bytes differ from the build result",
+            path=stage / "manifest.json",
+            remediation="retry the build",
+        )
+    if bundle_bytes != result.bundle or sha256_bytes(bundle_bytes) != manifest["bundle"]["sha256"]:
+        raise IntegrityError(
+            "staged prompt bytes do not match the manifest",
+            path=stage / "learning-tutor.prompt.md",
+            remediation="retry the build",
+        )
+
+
+def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
+    """Stage, validate, and replace the complete distribution with rollback."""
+
+    repository = _resolve_repository_root(root)
+    dist = _dist_path(repository)
+    stage: Path | None = None
+    backup = repository / f".dist-backup-{uuid.uuid4().hex}"
+    old_moved = False
+    committed = False
+    try:
+        stage = Path(tempfile.mkdtemp(prefix=".dist-stage-", dir=repository))
+        _atomic_write(stage / "learning-tutor.prompt.md", result.bundle)
+        _atomic_write(stage / "manifest.json", result.manifest)
+        _validate_staged_distribution(stage, result)
+
+        if dist.exists():
+            os.replace(dist, backup)
+            old_moved = True
+        os.replace(stage, dist)
+        committed = True
+        stage = None
     except OSError as error:
-        raise FilesystemError("distribution directory could not be created", path=dist) from error
+        if old_moved:
+            try:
+                os.replace(backup, dist)
+                old_moved = False
+            except OSError as rollback_error:
+                raise FilesystemError(
+                    "distribution swap failed and the old directory could not be restored",
+                    path=dist,
+                    remediation=f"restore the old distribution from {backup.name}",
+                ) from rollback_error
+        raise FilesystemError(
+            "distribution swap or staged artifact write failed; old distribution restored",
+            path=dist,
+            remediation="check repository permissions and rebuild",
+        ) from error
+    finally:
+        if stage is not None and stage.exists():
+            shutil.rmtree(stage, ignore_errors=True)
+        if committed and backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+
     bundle_path = dist / "learning-tutor.prompt.md"
     manifest_path = dist / "manifest.json"
-    _atomic_write(bundle_path, result.bundle)
-    _atomic_write(manifest_path, result.manifest)
     return bundle_path, manifest_path
 
 
 def build(root: Path | None = None) -> BuildResult:
     """Build, write, and report the repository distribution."""
 
-    repository = Path.cwd() if root is None else root
+    repository = _resolve_repository_root(Path.cwd() if root is None else root)
     result = build_distribution(repository)
     bundle_path, manifest_path = write_distribution(repository, result)
     print(

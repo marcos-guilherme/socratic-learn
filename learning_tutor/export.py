@@ -6,7 +6,12 @@ import json
 import sys
 from pathlib import Path
 
-from .build import _atomic_write
+from .build import (
+    _atomic_write,
+    _dist_path,
+    _ensure_contained,
+    _resolve_repository_root,
+)
 from .errors import FilesystemError, IntegrityError
 from .manifest import sha256_bytes, validate_manifest
 
@@ -27,8 +32,13 @@ def _read_artifact(path: Path, label: str) -> bytes:
 def export_prompt(output: Path | None = None, *, root: Path | None = None) -> None:
     """Validate checked-in build artifacts and export exact prompt bytes."""
 
-    repository = Path.cwd() if root is None else root
-    manifest_path = repository / "dist/manifest.json"
+    repository = _resolve_repository_root(Path.cwd() if root is None else root)
+    dist = _dist_path(repository)
+    manifest_path = _ensure_contained(
+        repository,
+        dist / "manifest.json",
+        display_path="dist/manifest.json",
+    )
     manifest_bytes = _read_artifact(manifest_path, "distribution manifest")
     try:
         manifest = json.loads(manifest_bytes.decode("utf-8"))
@@ -39,12 +49,20 @@ def export_prompt(output: Path | None = None, *, root: Path | None = None) -> No
             remediation="run 'learning-tutor build'",
         ) from error
     if not isinstance(manifest, dict):
-        raise IntegrityError("distribution manifest must contain a JSON object")
+        raise IntegrityError(
+            "distribution manifest must contain a JSON object",
+            path="dist/manifest.json",
+            remediation="run 'learning-tutor build'",
+        )
     validate_manifest(manifest)
 
     bundle = manifest["bundle"]
     assert isinstance(bundle, dict)
-    bundle_path = repository / "dist" / bundle["path"]
+    bundle_path = _ensure_contained(
+        repository,
+        dist / bundle["path"],
+        display_path=f"dist/{bundle['path']}",
+    )
     bundle_bytes = _read_artifact(bundle_path, "distribution prompt")
     if sha256_bytes(bundle_bytes) != bundle["sha256"]:
         raise IntegrityError(
@@ -57,8 +75,17 @@ def export_prompt(output: Path | None = None, *, root: Path | None = None) -> No
         sys.stdout.buffer.write(bundle_bytes)
         sys.stdout.buffer.flush()
         return
+    requested_output = output if output.is_absolute() else repository / output
+    safe_output = _ensure_contained(
+        repository,
+        requested_output,
+        display_path=output,
+    )
     try:
-        output.parent.mkdir(parents=True, exist_ok=True)
+        safe_output.parent.mkdir(parents=True, exist_ok=True)
     except OSError as error:
-        raise FilesystemError("export directory could not be created", path=output.parent) from error
-    _atomic_write(output, bundle_bytes)
+        raise FilesystemError(
+            "export directory could not be created",
+            path=safe_output.parent,
+        ) from error
+    _atomic_write(safe_output, bundle_bytes)

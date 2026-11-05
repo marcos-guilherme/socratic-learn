@@ -61,18 +61,33 @@ class ManifestTests(unittest.TestCase):
 
         self.assertRegex(digest, re.compile(r"^[0-9a-f]{64}$"))
 
+    def test_sha256_matches_known_abc_vector(self) -> None:
+        self.assertEqual(
+            "ba7816bf8f01cfea414140de5dae2223"
+            "b00361a396177a9cb410ff61f20015ad",
+            sha256_bytes(b"abc"),
+        )
+
     def test_valid_manifest_passes(self) -> None:
         validate_manifest(valid_manifest())
 
     def assert_invalid(self, mutation, expected: str) -> None:
         manifest = copy.deepcopy(valid_manifest())
         mutation(manifest)
-        with self.assertRaisesRegex(IntegrityError, expected):
+        with self.assertRaisesRegex(IntegrityError, expected) as raised:
             validate_manifest(manifest)
+        self.assertTrue(raised.exception.path)
+        self.assertTrue(raised.exception.remediation)
 
     def test_rejects_unknown_schema_version(self) -> None:
         self.assert_invalid(
             lambda value: value.__setitem__("schema_version", 2),
+            "schema_version",
+        )
+
+    def test_rejects_boolean_schema_version(self) -> None:
+        self.assert_invalid(
+            lambda value: value.__setitem__("schema_version", True),
             "schema_version",
         )
 
@@ -155,6 +170,69 @@ class ManifestTests(unittest.TestCase):
             ),
             "session_headings",
         )
+
+    def test_rejects_unknown_top_level_key(self) -> None:
+        self.assert_invalid(
+            lambda value: value.__setitem__("unexpected", "value"),
+            "unexpected",
+        )
+
+    def test_rejects_unknown_nested_keys(self) -> None:
+        def source_extra(value: dict[str, object]) -> None:
+            sources = value["sources"]
+            assert isinstance(sources, list)
+            sources[0]["size"] = 123
+
+        def bundle_extra(value: dict[str, object]) -> None:
+            bundle = value["bundle"]
+            assert isinstance(bundle, dict)
+            bundle["media_type"] = "text/markdown"
+
+        self.assert_invalid(source_extra, r"sources\[0\]\.size")
+        self.assert_invalid(bundle_extra, "bundle.media_type")
+
+    def test_rejects_wrong_json_types(self) -> None:
+        cases = (
+            ("protocol_version", 100, "protocol_version"),
+            ("language", ["en"], "language"),
+            ("targets", tuple(TARGETS), "targets"),
+            ("sources", {"path": "x"}, "sources"),
+            ("bundle", [], "bundle"),
+            ("capability_fallbacks", [], "capability_fallbacks"),
+            ("session_headings", tuple(SESSION_HEADINGS), "session_headings"),
+        )
+        for field, replacement, expected in cases:
+            with self.subTest(field=field):
+                self.assert_invalid(
+                    lambda value, field=field, replacement=replacement: (
+                        value.__setitem__(field, replacement)
+                    ),
+                    expected,
+                )
+
+    def test_rejects_control_characters_in_manifest_strings(self) -> None:
+        def control_path(value: dict[str, object]) -> None:
+            sources = value["sources"]
+            assert isinstance(sources, list)
+            sources[0]["path"] = "core/\x00pedagogy.md"
+
+        def control_fallback(value: dict[str, object]) -> None:
+            fallbacks = value["capability_fallbacks"]
+            assert isinstance(fallbacks, dict)
+            fallbacks["web"] = "unsafe\x1ftext"
+
+        self.assert_invalid(control_path, r"sources\[0\]\.path")
+        self.assert_invalid(control_fallback, "capability_fallbacks.web")
+
+    def test_every_integrity_error_identifies_field_and_remediation(self) -> None:
+        manifest = valid_manifest()
+        manifest["unexpected"] = "value"
+
+        with self.assertRaises(IntegrityError) as raised:
+            validate_manifest(manifest)
+
+        self.assertEqual("manifest.unexpected", str(raised.exception.path))
+        self.assertTrue(raised.exception.remediation)
 
 
 if __name__ == "__main__":

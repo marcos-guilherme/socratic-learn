@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,7 +13,7 @@ from learning_tutor.build import (
     build_distribution,
     write_distribution,
 )
-from learning_tutor.errors import IntegrityError
+from learning_tutor.errors import FilesystemError, IntegrityError
 from learning_tutor.export import export_prompt
 from learning_tutor.manifest import sha256_bytes
 
@@ -83,6 +84,17 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn(b"\r", result.bundle)
         self.assertNotIn(b"\r", result.manifest)
 
+    def test_lf_and_crlf_repositories_build_byte_identically(self) -> None:
+        lf_temporary, lf_root = self.make_repository(newline="\n")
+        crlf_temporary, crlf_root = self.make_repository(newline="\r\n")
+        self.addCleanup(lf_temporary.cleanup)
+        self.addCleanup(crlf_temporary.cleanup)
+
+        self.assertEqual(
+            build_distribution(lf_root),
+            build_distribution(crlf_root),
+        )
+
     def test_missing_source_reports_relative_path(self) -> None:
         temporary, root = self.make_repository()
         self.addCleanup(temporary.cleanup)
@@ -109,6 +121,28 @@ class BuildTests(unittest.TestCase):
         with mock.patch("learning_tutor.build.CANONICAL_SOURCES", (absolute,)):
             with self.assertRaisesRegex(IntegrityError, "relative"):
                 build_distribution(root)
+
+    def test_source_symlink_cannot_escape_repository(self) -> None:
+        temporary, root = self.make_repository()
+        outside_temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.addCleanup(outside_temporary.cleanup)
+        relative = CANONICAL_SOURCES[0]
+        source = root / relative
+        outside = Path(outside_temporary.name) / "outside.md"
+        outside.write_text("# Escaped\n", encoding="utf-8")
+        source.unlink()
+        try:
+            source.symlink_to(outside)
+        except OSError as error:
+            self.skipTest(f"file symlinks unavailable: {error}")
+
+        with self.assertRaises(IntegrityError) as raised:
+            build_distribution(root)
+
+        self.assertIn(relative, str(raised.exception))
+        self.assertIn("repository", str(raised.exception))
+        self.assertTrue(raised.exception.remediation)
 
     def test_header_contains_protocol_and_relative_sources(self) -> None:
         temporary, root = self.make_repository()
@@ -150,21 +184,35 @@ class BuildTests(unittest.TestCase):
         self.assertIn("- learning — Learning", text)
         self.assertNotIn("- Outcome: Solve equations.", text)
 
+    def test_malformed_curriculum_node_heading_rejects_entire_build(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        curriculum = root / "curricula/ai/map.md"
+        curriculum.write_text(
+            curriculum.read_text(encoding="utf-8")
+            + "\n### Unsupported heading without identifier separator\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(IntegrityError, "curriculum node heading"):
+            build_distribution(root)
+
     def test_manifest_hashes_match_normalized_sources_and_bundle(self) -> None:
         temporary, root = self.make_repository(newline="\r\n")
+        lf_temporary, lf_root = self.make_repository(newline="\n")
         self.addCleanup(temporary.cleanup)
+        self.addCleanup(lf_temporary.cleanup)
 
         result = build_distribution(root)
         manifest = json.loads(result.manifest)
+        lf_manifest = json.loads(build_distribution(lf_root).manifest)
 
         self.assertEqual(sha256_bytes(result.bundle), manifest["bundle"]["sha256"])
-        for entry in manifest["sources"]:
-            source = (root / entry["path"]).read_text(encoding="utf-8")
-            normalized = source.replace("\r\n", "\n").replace("\r", "\n").strip() + "\n"
-            self.assertEqual(
-                sha256_bytes(normalized.encode("utf-8")),
-                entry["sha256"],
-            )
+        self.assertEqual(lf_manifest["sources"], manifest["sources"])
+        self.assertEqual(
+            sha256_bytes(b"# Pedagogy\n\nUniversal pedagogy.\n"),
+            manifest["sources"][0]["sha256"],
+        )
 
     def test_write_distribution_writes_exact_dist_bytes(self) -> None:
         temporary, root = self.make_repository()
@@ -178,6 +226,86 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(result.bundle, bundle_path.read_bytes())
         self.assertEqual(result.manifest, manifest_path.read_bytes())
 
+    def test_write_distribution_rejects_symlinked_dist(self) -> None:
+        temporary, root = self.make_repository()
+        outside_temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.addCleanup(outside_temporary.cleanup)
+        outside = Path(outside_temporary.name)
+        try:
+            (root / "dist").symlink_to(outside, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f"directory symlinks unavailable: {error}")
+
+        with self.assertRaises(IntegrityError) as raised:
+            write_distribution(root, build_distribution(root))
+
+        self.assertIn("dist", str(raised.exception))
+        self.assertTrue(raised.exception.remediation)
+        self.assertEqual([], list(outside.iterdir()))
+
+    def test_second_artifact_write_failure_preserves_old_distribution(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        old_result = build_distribution(root)
+        bundle_path, manifest_path = write_distribution(root, old_result)
+        old_bytes = (bundle_path.read_bytes(), manifest_path.read_bytes())
+        pedagogy = root / CANONICAL_SOURCES[0]
+        pedagogy.write_text(
+            pedagogy.read_text(encoding="utf-8") + "\nChanged.\n",
+            encoding="utf-8",
+        )
+        new_result = build_distribution(root)
+        real_write = __import__(
+            "learning_tutor.build", fromlist=["_atomic_write"]
+        )._atomic_write
+        calls = 0
+
+        def fail_second(path: Path, data: bytes) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("injected second artifact failure")
+            real_write(path, data)
+
+        with mock.patch("learning_tutor.build._atomic_write", side_effect=fail_second):
+            with self.assertRaises(FilesystemError):
+                write_distribution(root, new_result)
+
+        self.assertEqual(old_bytes[0], bundle_path.read_bytes())
+        self.assertEqual(old_bytes[1], manifest_path.read_bytes())
+
+    def test_directory_swap_failure_rolls_back_complete_old_distribution(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        old_result = build_distribution(root)
+        bundle_path, manifest_path = write_distribution(root, old_result)
+        old_bytes = (bundle_path.read_bytes(), manifest_path.read_bytes())
+        assessment = root / CANONICAL_SOURCES[2]
+        assessment.write_text(
+            assessment.read_text(encoding="utf-8") + "\nChanged.\n",
+            encoding="utf-8",
+        )
+        new_result = build_distribution(root)
+        real_replace = __import__("os").replace
+
+        def fail_new_directory(source, destination) -> None:
+            source_path = Path(source)
+            destination_path = Path(destination)
+            if (
+                source_path.name.startswith(".dist-stage-")
+                and destination_path.name == "dist"
+            ):
+                raise OSError("injected directory swap failure")
+            real_replace(source, destination)
+
+        with mock.patch("learning_tutor.build.os.replace", side_effect=fail_new_directory):
+            with self.assertRaisesRegex(FilesystemError, "swap"):
+                write_distribution(root, new_result)
+
+        self.assertEqual(old_bytes[0], bundle_path.read_bytes())
+        self.assertEqual(old_bytes[1], manifest_path.read_bytes())
+
     def test_export_prompt_writes_exact_validated_bundle(self) -> None:
         temporary, root = self.make_repository()
         self.addCleanup(temporary.cleanup)
@@ -188,6 +316,35 @@ class BuildTests(unittest.TestCase):
         export_prompt(output, root=root)
 
         self.assertEqual(result.bundle, output.read_bytes())
+
+    def test_export_output_must_remain_inside_repository(self) -> None:
+        temporary, root = self.make_repository()
+        outside_temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.addCleanup(outside_temporary.cleanup)
+        result = build_distribution(root)
+        write_distribution(root, result)
+        output = Path(outside_temporary.name) / "prompt.md"
+
+        with self.assertRaises(IntegrityError) as raised:
+            export_prompt(output, root=root)
+
+        self.assertIn("repository", str(raised.exception))
+        self.assertTrue(raised.exception.remediation)
+        self.assertFalse(output.exists())
+
+    def test_export_prompt_writes_exact_bundle_bytes_to_stdout(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        result = build_distribution(root)
+        write_distribution(root, result)
+
+        stdout = mock.Mock()
+        stdout.buffer = BytesIO()
+        with mock.patch("learning_tutor.export.sys.stdout", stdout):
+            export_prompt(root=root)
+
+        self.assertEqual(result.bundle, stdout.buffer.getvalue())
 
     def test_export_prompt_rejects_bundle_hash_mismatch(self) -> None:
         temporary, root = self.make_repository()

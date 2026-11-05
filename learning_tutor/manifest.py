@@ -33,6 +33,19 @@ CAPABILITY_FALLBACKS = {
 }
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_TOP_LEVEL_KEYS = {
+    "bundle",
+    "capability_fallbacks",
+    "language",
+    "protocol_version",
+    "schema_version",
+    "session_headings",
+    "sources",
+    "targets",
+}
+_SOURCE_KEYS = {"path", "sha256"}
+_BUNDLE_KEYS = {"path", "sha256"}
+_REMEDIATION = "regenerate the manifest with 'learning-tutor build'"
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -50,7 +63,12 @@ def serialize_json(value: object) -> bytes:
 
 
 def _is_relative_portable_path(value: object) -> bool:
-    if not isinstance(value, str) or not value or "\\" in value:
+    if (
+        type(value) is not str
+        or not value
+        or "\\" in value
+        or _has_control_character(value)
+    ):
         return False
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
@@ -63,53 +81,111 @@ def _is_relative_portable_path(value: object) -> bool:
     )
 
 
+def _has_control_character(value: str) -> bool:
+    return any(ord(character) < 32 or ord(character) == 127 for character in value)
+
+
+def _invalid(field: str, message: str) -> IntegrityError:
+    return IntegrityError(
+        f"manifest {field} {message}",
+        path=f"manifest.{field}",
+        remediation=_REMEDIATION,
+    )
+
+
+def _require_exact_keys(
+    value: Mapping[str, object],
+    expected: set[str],
+    field: str,
+) -> None:
+    actual = set(value)
+    unknown = sorted(actual - expected)
+    if unknown:
+        unknown_field = f"{field}.{unknown[0]}" if field else unknown[0]
+        raise _invalid(unknown_field, "is an unknown property")
+    missing = sorted(expected - actual)
+    if missing:
+        missing_field = f"{field}.{missing[0]}" if field else missing[0]
+        raise _invalid(missing_field, "is required")
+
+
 def _require_hash(value: object, field: str) -> None:
-    if not isinstance(value, str) or _SHA256_RE.fullmatch(value) is None:
-        raise IntegrityError(f"manifest {field} must be a lowercase SHA-256 hash")
+    if type(value) is not str or _SHA256_RE.fullmatch(value) is None:
+        raise _invalid(field, "must be a lowercase SHA-256 hash")
 
 
 def validate_manifest(manifest: Mapping[str, object]) -> None:
     """Reject manifests that drift from the distribution contract."""
 
-    if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
-        raise IntegrityError("unsupported manifest schema_version")
-    if manifest.get("protocol_version") != PROTOCOL_VERSION:
-        raise IntegrityError("manifest protocol_version does not match")
-    if manifest.get("language") != "en":
-        raise IntegrityError("manifest language must be 'en'")
-    if manifest.get("targets") != list(TARGETS):
-        raise IntegrityError("manifest targets do not match the exact target set")
+    if not isinstance(manifest, Mapping):
+        raise _invalid("$", "must be a JSON object")
+    _require_exact_keys(manifest, _TOP_LEVEL_KEYS, "")
 
-    sources = manifest.get("sources")
-    if not isinstance(sources, list) or not sources:
-        raise IntegrityError("manifest sources must be a non-empty list")
+    schema_version = manifest["schema_version"]
+    if type(schema_version) is not int or schema_version != MANIFEST_SCHEMA_VERSION:
+        raise _invalid("schema_version", "must be integer 1")
+    protocol_version = manifest["protocol_version"]
+    if type(protocol_version) is not str or protocol_version != PROTOCOL_VERSION:
+        raise _invalid("protocol_version", f"must be '{PROTOCOL_VERSION}'")
+    language = manifest["language"]
+    if type(language) is not str or language != "en":
+        raise _invalid("language", "must be 'en'")
+    targets = manifest["targets"]
+    if type(targets) is not list or any(type(target) is not str for target in targets):
+        raise _invalid("targets", "must be an array of strings")
+    if targets != list(TARGETS):
+        raise _invalid("targets", "must match the exact target sequence")
+
+    sources = manifest["sources"]
+    if type(sources) is not list or not sources:
+        raise _invalid("sources", "must be a non-empty array")
     seen_paths: set[str] = set()
     for index, source in enumerate(sources):
         if not isinstance(source, Mapping):
-            raise IntegrityError(f"manifest sources[{index}] must be an object")
-        path = source.get("path")
+            raise _invalid(f"sources[{index}]", "must be a JSON object")
+        _require_exact_keys(source, _SOURCE_KEYS, f"sources[{index}]")
+        path = source["path"]
         if not _is_relative_portable_path(path):
-            raise IntegrityError("manifest source paths must be relative POSIX paths")
+            raise _invalid(
+                f"sources[{index}].path",
+                "must be a control-free relative POSIX path",
+            )
         assert isinstance(path, str)
         if path in seen_paths:
-            raise IntegrityError(f"duplicate source path: {path}")
+            raise _invalid(f"sources[{index}].path", f"is a duplicate source path: {path}")
         seen_paths.add(path)
-        _require_hash(source.get("sha256"), f"sources[{index}].sha256")
+        _require_hash(source["sha256"], f"sources[{index}].sha256")
 
-    bundle = manifest.get("bundle")
+    bundle = manifest["bundle"]
     if not isinstance(bundle, Mapping):
-        raise IntegrityError("manifest bundle must be an object")
-    if bundle.get("path") != "learning-tutor.prompt.md":
-        raise IntegrityError("manifest bundle path must be learning-tutor.prompt.md")
-    _require_hash(bundle.get("sha256"), "bundle.sha256")
+        raise _invalid("bundle", "must be a JSON object")
+    _require_exact_keys(bundle, _BUNDLE_KEYS, "bundle")
+    bundle_path = bundle["path"]
+    if type(bundle_path) is not str or bundle_path != "learning-tutor.prompt.md":
+        raise _invalid("bundle.path", "must be learning-tutor.prompt.md")
+    _require_hash(bundle["sha256"], "bundle.sha256")
 
-    fallbacks = manifest.get("capability_fallbacks")
-    if not isinstance(fallbacks, Mapping) or set(fallbacks) != set(
-        CAPABILITY_FALLBACKS
-    ):
-        raise IntegrityError("manifest capability_fallbacks are incomplete")
-    if any(not isinstance(value, str) or not value.strip() for value in fallbacks.values()):
-        raise IntegrityError("manifest capability_fallbacks must be non-empty")
+    fallbacks = manifest["capability_fallbacks"]
+    if not isinstance(fallbacks, Mapping):
+        raise _invalid("capability_fallbacks", "must be a JSON object")
+    _require_exact_keys(
+        fallbacks,
+        set(CAPABILITY_FALLBACKS),
+        "capability_fallbacks",
+    )
+    for capability, fallback in fallbacks.items():
+        if (
+            type(fallback) is not str
+            or not fallback.strip()
+            or _has_control_character(fallback)
+        ):
+            raise _invalid(
+                f"capability_fallbacks.{capability}",
+                "must be a non-empty control-free string",
+            )
 
-    if manifest.get("session_headings") != list(SESSION_HEADINGS):
-        raise IntegrityError("manifest session_headings sequence does not match")
+    headings = manifest["session_headings"]
+    if type(headings) is not list or any(type(item) is not str for item in headings):
+        raise _invalid("session_headings", "must be an array of strings")
+    if headings != list(SESSION_HEADINGS):
+        raise _invalid("session_headings", "must match the exact heading sequence")
