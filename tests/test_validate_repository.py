@@ -333,6 +333,16 @@ class RepositoryValidationTests(unittest.TestCase):
                         f"Unknown prerequisites for {identifier} in {relative}",
                     )
 
+    def test_general_ai_evaluation_does_not_require_language_models(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        path = root / "curricula/ai/map.md"
+        nodes = dict(parse_curriculum_nodes(path.read_text(encoding="utf-8")))
+
+        self.assertEqual(
+            "loss-and-generalization",
+            nodes["evaluation"]["Prerequisites"],
+        )
+
     def test_missing_required_file_fails(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)

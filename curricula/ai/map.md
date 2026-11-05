@@ -88,10 +88,10 @@ and record version or date context according to the
 ### evaluation — Evaluation
 
 - Outcome: Design and execute a small evaluation whose metric, dataset, failure categories, and uncertainty match a stated use.
-- Prerequisites: loss-and-generalization, language-models
+- Prerequisites: loss-and-generalization
 - Concepts: construct and metric validity; baselines and slices; qualitative error analysis; uncertainty and distribution shift using [probability models](../mathematics/map.md#probability-models)
 - Evidence: Score two systems on a fixed example set, inspect disagreements, and report at least one metric limitation and one unresolved uncertainty.
-- Application: Create a reusable evaluation card containing task definition, examples, metric, baseline, failure categories, and decision rule.
+- Application: Create a reusable evaluation card for a classifier or regressor, or specialize it for a language model when that is the chosen system.
 
 ### framework-experimentation — Framework experimentation
 
