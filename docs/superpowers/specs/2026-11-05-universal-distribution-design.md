@@ -193,11 +193,15 @@ Existing agent files are never merged automatically in version 1.
 - protocol version;
 - selected target;
 - installed relative paths;
-- SHA-256 of each owned file;
+- SHA-256 of each owned file except `install.json` itself;
 - bundle and manifest hashes.
 
+The receipt is owned metadata but is excluded from its own hash map because a
+file cannot contain its own stable cryptographic hash. `doctor` validates the
+receipt schema, protocol, paths, and every hash it references.
+
 The receipt is the authority for updates. `--update` may replace a managed file
-only when:
+other than the receipt only when:
 
 1. the path is listed in the existing receipt;
 2. its current hash matches the old receipt;

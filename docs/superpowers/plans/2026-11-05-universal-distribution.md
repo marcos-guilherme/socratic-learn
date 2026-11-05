@@ -417,6 +417,11 @@ Generic installation owns:
 .learning-tutor/workspace/.gitkeep
 ```
 
+`install.json` is an owned path but is excluded from its own hash map. The
+receipt records hashes for every other owned file; tests must assert that the
+self path is listed as owned without a recursive self-hash. Receipt schema,
+protocol, paths, and referenced hashes remain mandatory.
+
 The nested ignore file contains:
 
 ```gitignore
