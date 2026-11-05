@@ -86,20 +86,74 @@ class RepositoryValidationTests(unittest.TestCase):
     def test_pedagogy_defines_responsive_socratic_dialogue(self) -> None:
         root = Path(__file__).resolve().parents[1]
         text = (root / "core/pedagogy.md").read_text(encoding="utf-8").lower()
-        required = (
-            "## responsive socratic dialogue",
-            "aporia",
-            "clarification",
-            "assumptions",
-            "reasons and evidence",
-            "implications and consequences",
-            "perspectives",
-            "metacognition",
-            "deep listening",
-            "self-questioner",
-            "exposition",
+        start = "## responsive socratic dialogue"
+        end = "## active application"
+        self.assertIn(start, text, "Missing canonical Socratic section")
+        self.assertIn(end, text, "Missing section boundary after Socratic contract")
+        section = text.split(start, 1)[1].split(end, 1)[0]
+        section = " ".join(section.split())
+
+        cycle = (
+            "receive an answer or claim",
+            "probe that answer's reasoning",
+            "surface a contradiction or gap (aporia)",
+            "ask the learner to refine the answer",
+            "repeat from the refinement",
         )
-        self.assertTrue(all(marker in text for marker in required))
+        previous = -1
+        for step in cycle:
+            with self.subTest(contract="responsive cycle", step=step):
+                position = section.find(step)
+                self.assertGreater(
+                    position,
+                    previous,
+                    f"Missing or out-of-order Socratic cycle step: {step}",
+                )
+                previous = position
+
+        contracts = {
+            "quiz versus dialogue": (
+                "a single question can be a quiz",
+                "each question derives from the learner's preceding answer",
+                "never from a fixed script",
+            ),
+            "wait and answer restraint": (
+                "allow wait time and silence",
+                "restrain the impulse to give an answer",
+            ),
+            "safe and humble inquiry": (
+                "collaborative and safe for mistakes",
+                "never adversarial or a gotcha",
+                "tutor and learner",
+                "intellectual humility",
+            ),
+            "internalized self-questioning": (
+                "question families become internal habits",
+                "independent self-questioner",
+            ),
+            "mode selection limits": (
+                "next step is discoverable",
+                "use direct exposition",
+                "information is not deducible",
+                "inappropriate cognitive load",
+            ),
+            "mathematics and ai applications": (
+                "for mathematics and ai",
+                "why does this work?",
+                "which hypothesis is necessary?",
+                "what evidence would refute the claim?",
+                "what changes when this variable or condition varies?",
+                "how does another approach compare?",
+            ),
+        }
+        for contract, clauses in contracts.items():
+            for clause in clauses:
+                with self.subTest(contract=contract, clause=clause):
+                    self.assertIn(
+                        clause,
+                        section,
+                        f"Missing {contract} contract clause: {clause}",
+                    )
 
     def test_missing_required_file_fails(self) -> None:
         temp, root = self.make_root()

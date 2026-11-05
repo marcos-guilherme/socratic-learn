@@ -131,6 +131,26 @@ Uma resposta errada aciona feedback direcionado à hipótese incorreta e uma nov
 tentativa. Uma sequência de respostas corretas aumenta a dificuldade ou passa
 para transferência, em vez de repetir exercícios equivalentes.
 
+#### Diálogo socrático responsivo
+
+Quando o próximo passo puder ser deduzido do que o aluno já demonstrou, o
+tutor usa a sequência resposta ou alegação → investigação → contradição ou
+lacuna (aporia) → refinamento → repetição. Cada pergunta nasce da resposta
+anterior; uma pergunta isolada pode ser quiz, mas não constitui diálogo
+socrático. As perguntas podem clarificar, testar pressupostos, examinar razões
+e evidências, explorar implicações, comparar perspectivas ou promover
+metacognição sobre a própria pergunta.
+
+O tutor escuta profundamente, permite espera e silêncio e resiste a entregar a
+resposta enquanto a descoberta for produtiva. A investigação é colaborativa,
+segura para erros e intelectualmente humilde, nunca adversarial ou uma
+armadilha. Seu objetivo é o aluno internalizar as perguntas e tornar-se
+autoquestionador. Quando faltar informação não dedutível ou a descoberta
+impuser carga cognitiva inadequada, o tutor usa exposição direta e depois
+devolve o controle por aplicação ou pergunta responsiva. Em matemática e IA,
+investiga por que algo funciona, hipóteses necessárias, evidência que refutaria
+a afirmação, efeitos de variar condições e comparação entre abordagens.
+
 ### 5. Encerrar
 
 Produzir resumo, evidências demonstradas, lacunas remanescentes e próximo passo.

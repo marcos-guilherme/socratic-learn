@@ -453,6 +453,13 @@ After confirming the failure, update `make_root()` so its `AGENTS.md` fixture
 links all four files. The real repository content remains covered by running
 `tests/validate_repository.py`.
 
+Also add a readable `subTest`-based contract for the canonical Socratic
+section. It must check the ordered answer/claim → probe → gap/aporia →
+refinement cycle separately from contracts for responsive sequencing versus
+an isolated quiz, wait and answer restraint, safe and humble inquiry,
+self-questioning, Socratic-versus-exposition selection, and mathematics/AI
+applications. Each failure must identify the missing contract clause.
+
 - [ ] **Step 2: Run the targeted test and verify failure**
 
 ```powershell
@@ -475,6 +482,7 @@ isolated facts.
 <!-- canonical:end -->
 ## Connected foundations
 ## Motivated derivation
+## Responsive Socratic dialogue
 ## Active application
 ## Learner control
 ## Anti-patterns
@@ -516,6 +524,18 @@ isolated facts.
 Fill every section with direct operational instructions from the approved
 design. Set the default diagnostic budget to six questions, allow the learner
 to change it, and never claim mastery from self-report alone.
+
+The Socratic section must remain pedagogically neutral and responsive: each
+probe follows the preceding answer through answer/claim → probe →
+contradiction or gap (aporia) → refinement → repeat. Distinguish this sequence
+from an isolated quiz; cover clarification, assumptions, reasons/evidence,
+implications, perspectives, and metacognition. Require deep listening, wait
+time, restraint from giving discoverable answers, safety for mistakes,
+non-adversarial humility, and eventual learner self-questioning. Use Socratic
+mode only when the next step is deducible from demonstrated knowledge; use
+exposition for non-deducible information or inappropriate cognitive load, then
+return to application. Include mathematics/AI probes about mechanism,
+hypotheses, refutation evidence, variable changes, and alternative approaches.
 
 - [ ] **Step 4: Write `AGENTS.md`**
 

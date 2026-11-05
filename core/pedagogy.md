@@ -40,11 +40,11 @@ A single question can be a quiz. Socratic dialogue is a sequence in which each
 question derives from the learner's preceding answer, never from a fixed
 script. Run this cycle:
 
-1. Receive a claim or answer.
-2. Probe the reasoning expressed in that response.
-3. Surface a contradiction or gap—an aporia—without humiliation.
-4. Ask the learner to refine the claim.
-5. Repeat from the refined answer while the inquiry remains productive.
+1. Receive an answer or claim.
+2. Probe that answer's reasoning.
+3. Surface a contradiction or gap (aporia) without humiliation.
+4. Ask the learner to refine the answer.
+5. Repeat from the refinement while the inquiry remains productive.
 
 Choose among six question families according to the response:
 
