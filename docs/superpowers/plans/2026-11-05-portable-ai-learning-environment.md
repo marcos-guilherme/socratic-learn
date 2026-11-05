@@ -438,21 +438,20 @@ Append to `RepositoryValidationTests`:
     def test_agents_entry_references_every_core_document(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
-        agents = root / "AGENTS.md"
-        agents.write_text("# Agent entry\n", encoding="utf-8")
         required = (
             "core/pedagogy.md",
             "core/session-protocol.md",
             "core/assessment.md",
             "core/evidence-policy.md",
         )
-        text = agents.read_text(encoding="utf-8")
+        text = (root / "AGENTS.md").read_text(encoding="utf-8")
         self.assertTrue(all(target in text for target in required))
 ```
 
-This test intentionally fails against the fixture. After confirming the failure,
-update `make_root()` so its `AGENTS.md` fixture links all four files. The real
-repository content remains covered by running `tests/validate_repository.py`.
+This test intentionally fails against the fixture's initial `# file` content.
+After confirming the failure, update `make_root()` so its `AGENTS.md` fixture
+links all four files. The real repository content remains covered by running
+`tests/validate_repository.py`.
 
 - [ ] **Step 2: Run the targeted test and verify failure**
 
@@ -907,7 +906,14 @@ Expected:
 - only intended README/test changes are uncommitted before the final commit;
 - `git ls-files workspace` prints only `workspace/.gitkeep`.
 
-- [ ] **Step 5: Perform a clean-copy smoke test**
+- [ ] **Step 5: Commit the verified documentation**
+
+```powershell
+git add README.md tests/test_validate_repository.py
+git commit -m "docs: add portable tutor onboarding"
+```
+
+- [ ] **Step 6: Perform a clean-copy smoke test**
 
 ```powershell
 $temp = Join-Path $env:TEMP "learning-things-smoke"
@@ -920,13 +926,6 @@ Remove-Item -Recurse -Force $temp
 Expected: the clone succeeds and validation prints
 `Repository validation passed.`.
 
-- [ ] **Step 6: Commit**
-
-```powershell
-git add README.md tests/test_validate_repository.py
-git commit -m "docs: add portable tutor onboarding"
-```
-
 - [ ] **Step 7: Confirm clean final state**
 
 ```powershell
@@ -935,5 +934,7 @@ git log --oneline -7
 ```
 
 Expected: clean working tree and a linear sequence of focused implementation
-commits after the design and plan commits.
+commits after the design and plan commits. If the clean-copy smoke test required
+a correction, rerun the full verification, commit the correction separately,
+then repeat the smoke test before this final check.
 
