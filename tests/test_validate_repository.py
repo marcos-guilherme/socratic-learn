@@ -339,6 +339,50 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn("manual", visible)
         self.assertIn(".learning-tutor/AGENTS.md", text)
 
+    def test_pi_installation_aborts_for_preexisting_skill_directory(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "adapters/pi/README.md").read_text(encoding="utf-8")
+        powershell = re.search(
+            r"```powershell\n(?P<body>.*?)\n```",
+            text,
+            re.DOTALL,
+        ).group("body")
+        posix = re.search(r"```sh\n(?P<body>.*?)\n```", text, re.DOTALL).group(
+            "body"
+        )
+
+        with TemporaryDirectory() as temp:
+            project = Path(temp) / "project"
+            skill_directory = project / ".pi/skills/learning-tutor"
+            skill_directory.mkdir(parents=True)
+            self.assertTrue(skill_directory.is_dir())
+            self.assertFalse((skill_directory / "SKILL.md").exists())
+
+        powershell_first_mutation = min(
+            powershell.index("New-Item"),
+            powershell.index("Copy-Item"),
+        )
+        for check in (
+            "if (Test-Path $PackageDirectory)",
+            "if (Test-Path $SkillDirectory)",
+        ):
+            with self.subTest(shell="PowerShell", check=check):
+                self.assertGreaterEqual(powershell.find(check), 0)
+                self.assertLess(powershell.index(check), powershell_first_mutation)
+
+        posix_first_mutation = min(posix.index("mkdir"), posix.index("cp "))
+        for check in (
+            'if [ -e "$package_dir" ]',
+            'if [ -e "$skill_dir" ]',
+        ):
+            with self.subTest(shell="POSIX", check=check):
+                self.assertGreaterEqual(posix.find(check), 0)
+                self.assertLess(posix.index(check), posix_first_mutation)
+
+        for shell, commands in (("PowerShell", powershell), ("POSIX", posix)):
+            with self.subTest(shell=shell, invariant="no removals"):
+                self.assertNotRegex(commands, r"(?im)(remove-item|rm\s+-r)")
+
     def test_pedagogy_defines_responsive_socratic_dialogue(self) -> None:
         root = Path(__file__).resolve().parents[1]
         text = (root / "core/pedagogy.md").read_text(encoding="utf-8").lower()

@@ -9,7 +9,7 @@ root-ready for the documented destination
 
 The installation is namespaced and fail-closed: it creates the canonical
 package at `<project>/.learning-tutor/` and aborts if that directory or the Pi
-skill file already exists. It does not write to `<project>/AGENTS.md`.
+skill directory already exists. It does not write to `<project>/AGENTS.md`.
 
 From this repository root, install with PowerShell:
 
@@ -21,8 +21,8 @@ $SkillFile = Join-Path $SkillDirectory "SKILL.md"
 if (Test-Path $PackageDirectory) {
   throw "Installation aborted: $PackageDirectory already exists."
 }
-if (Test-Path $SkillFile) {
-  throw "Installation aborted: $SkillFile already exists."
+if (Test-Path $SkillDirectory) {
+  throw "Installation aborted: $SkillDirectory already exists."
 }
 New-Item -ItemType Directory $PackageDirectory | Out-Null
 Copy-Item AGENTS.md $PackageDirectory
@@ -37,19 +37,20 @@ Or with a POSIX shell:
 ```sh
 project="<project>"
 package_dir="$project/.learning-tutor"
-skill_file="$project/.pi/skills/learning-tutor/SKILL.md"
+skill_dir="$project/.pi/skills/learning-tutor"
+skill_file="$skill_dir/SKILL.md"
 if [ -e "$package_dir" ]; then
   echo "Installation aborted: $package_dir already exists." >&2
   exit 1
 fi
-if [ -e "$skill_file" ]; then
-  echo "Installation aborted: $skill_file already exists." >&2
+if [ -e "$skill_dir" ]; then
+  echo "Installation aborted: $skill_dir already exists." >&2
   exit 1
 fi
 mkdir "$package_dir"
 cp AGENTS.md "$package_dir/"
 cp -R core curricula "$package_dir/"
-mkdir -p "$project/.pi/skills/learning-tutor"
+mkdir -p "$skill_dir"
 cp adapters/pi/skills/learning-tutor/SKILL.project.md.template \
   "$skill_file"
 ```
