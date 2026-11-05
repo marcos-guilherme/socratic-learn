@@ -43,7 +43,7 @@ The approved path is taught one node at a time. Each node requires observable ev
 - **Generic agents:** begin with [AGENTS.md](AGENTS.md), which points to the complete canonical protocol.
 - **Cursor:** opening this repository makes the project [learning tutor skill](.cursor/skills/learning-tutor/SKILL.md) available automatically. See the [Cursor adapter](adapters/cursor/README.md).
 - **Claude Code:** use the provided [Claude Code loader](adapters/claude-code/CLAUDE.md). Its relative links are adapter-local, so follow the [installation instructions](adapters/claude-code/README.md) when creating a root `CLAUDE.md`.
-- **Pi:** copy or link the [Pi learning tutor skill](adapters/pi/skills/learning-tutor/SKILL.md) into a skills directory loaded by Pi and preserve or adjust its relative links. See the [Pi adapter](adapters/pi/README.md). Pi extensions are optional.
+- **Pi:** follow the non-destructive [Pi installation instructions](adapters/pi/README.md), which install the [root-ready skill template](adapters/pi/skills/learning-tutor/SKILL.project.md.template) against a namespaced canonical package. Pi extensions are optional.
 
 ## Private learner state
 

@@ -23,6 +23,7 @@ REQUIRED_PATHS = (
     "adapters/claude-code/CLAUDE.md",
     "adapters/claude-code/README.md",
     "adapters/pi/skills/learning-tutor/SKILL.md",
+    "adapters/pi/skills/learning-tutor/SKILL.project.md.template",
     "adapters/pi/README.md",
     "workspace.example/learner-profile.md",
     "workspace.example/learning-goal.md",

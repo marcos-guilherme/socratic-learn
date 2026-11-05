@@ -45,6 +45,7 @@ ROOT_CLAUDE_LOADER_RE = re.compile(
     re.DOTALL,
 )
 PI_PROJECT_TEMPLATE = "adapters/pi/skills/learning-tutor/SKILL.project.md.template"
+PI_PACKAGE_DIRECTORY = ".learning-tutor"
 SESSION_H2_HEADINGS = (
     "## Outcome",
     "## Diagnostic evidence",
@@ -120,6 +121,7 @@ class RepositoryValidationTests(unittest.TestCase):
             "adapters/claude-code/CLAUDE.md",
             "adapters/claude-code/README.md",
             "adapters/pi/skills/learning-tutor/SKILL.md",
+            PI_PROJECT_TEMPLATE,
             "adapters/pi/README.md",
             "workspace.example/learner-profile.md",
             "workspace.example/learning-goal.md",
@@ -191,6 +193,18 @@ class RepositoryValidationTests(unittest.TestCase):
         for command in README_WORKSPACE_COMMANDS:
             with self.subTest(command=command):
                 self.assertIn(command, text)
+
+    def test_readme_pi_onboarding_points_to_install_assets(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "README.md").read_text(encoding="utf-8")
+        linked_targets = set(MARKDOWN_LINK_RE.findall(text))
+
+        self.assertIn("adapters/pi/README.md", linked_targets)
+        self.assertIn(PI_PROJECT_TEMPLATE, linked_targets)
+        self.assertNotIn(
+            "adapters/pi/skills/learning-tutor/SKILL.md",
+            linked_targets,
+        )
 
     def test_adapter_skills_have_specific_learning_tutor_metadata(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -268,13 +282,15 @@ class RepositoryValidationTests(unittest.TestCase):
             destination = project / ".pi/skills/learning-tutor/SKILL.md"
             destination.parent.mkdir(parents=True)
             shutil.copy2(template, destination)
+            package = project / PI_PACKAGE_DIRECTORY
+            package.mkdir()
             for relative in (
                 "AGENTS.md",
                 "core",
                 "curricula",
             ):
                 source = source_root / relative
-                target = project / relative
+                target = package / relative
                 if source.is_dir():
                     shutil.copytree(source, target)
                 else:
@@ -290,6 +306,38 @@ class RepositoryValidationTests(unittest.TestCase):
                 all(target.exists() for target in linked_targets),
                 "Installed Pi skill contains a local link that does not resolve",
             )
+
+    def test_pi_installation_is_namespaced_and_collision_safe(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "adapters/pi/README.md").read_text(encoding="utf-8")
+        powershell = re.search(
+            r"```powershell\n(?P<body>.*?)\n```",
+            text,
+            re.DOTALL,
+        )
+        posix = re.search(r"```sh\n(?P<body>.*?)\n```", text, re.DOTALL)
+        self.assertIsNotNone(powershell)
+        self.assertIsNotNone(posix)
+
+        command_blocks = {
+            "PowerShell": powershell.group("body"),
+            "POSIX": posix.group("body"),
+        }
+        for shell, commands in command_blocks.items():
+            with self.subTest(shell=shell):
+                self.assertIn(PI_PACKAGE_DIRECTORY, commands)
+                self.assertRegex(commands, r"(?i)(test-path|\[\s+-e\s+)")
+                self.assertRegex(commands, r"(?i)(throw|exit\s+1)")
+                self.assertNotRegex(
+                    commands,
+                    r"(?im)(copy-item|cp)\s+.*AGENTS\.md\s+.*\$project[/\"']?\s*$",
+                )
+
+        visible = without_fenced_code(text).lower()
+        self.assertIn("agents.md", visible)
+        self.assertRegex(visible, r"does not (?:overwrite|write to)")
+        self.assertIn("manual", visible)
+        self.assertIn(".learning-tutor/AGENTS.md", text)
 
     def test_pedagogy_defines_responsive_socratic_dialogue(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -549,6 +597,7 @@ class RepositoryValidationTests(unittest.TestCase):
             ("core entry", "AGENTS.md"),
             ("adapter readme", "adapters/claude-code/README.md"),
             ("adapter readme", "adapters/pi/README.md"),
+            ("adapter artifact", PI_PROJECT_TEMPLATE),
             ("filled example", "workspace.example/learner-profile.md"),
             ("filled example", "workspace.example/learning-goal.md"),
             ("filled example", "workspace.example/progress.md"),
