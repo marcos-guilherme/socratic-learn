@@ -42,6 +42,10 @@ def parse_curriculum_nodes(text: str) -> list[tuple[str, dict[str, str]]]:
     return nodes
 
 
+def parse_prerequisite_ids(value: str) -> set[str]:
+    return {identifier.strip() for identifier in value.split(",")}
+
+
 class RepositoryValidationTests(unittest.TestCase):
     def make_root(
         self, nested_under_workspace: bool = False
@@ -337,11 +341,18 @@ class RepositoryValidationTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         path = root / "curricula/ai/map.md"
         nodes = dict(parse_curriculum_nodes(path.read_text(encoding="utf-8")))
+        prerequisites = parse_prerequisite_ids(
+            nodes["evaluation"]["Prerequisites"]
+        )
 
         self.assertEqual(
-            "loss-and-generalization",
-            nodes["evaluation"]["Prerequisites"],
+            {"loss-and-generalization", "supervised-learning"},
+            parse_prerequisite_ids(
+                " loss-and-generalization, supervised-learning "
+            ),
         )
+        self.assertIn("loss-and-generalization", prerequisites)
+        self.assertNotIn("language-models", prerequisites)
 
     def test_missing_required_file_fails(self) -> None:
         temp, root = self.make_root()
