@@ -56,12 +56,50 @@ class RepositoryValidationTests(unittest.TestCase):
         (root / "adapters/pi/skills/learning-tutor/SKILL.md").write_text(
             skill, encoding="utf-8"
         )
+        (root / "AGENTS.md").write_text(
+            "# Agent Entry\n\n"
+            "- [Pedagogy](core/pedagogy.md)\n"
+            "- [Session protocol](core/session-protocol.md)\n"
+            "- [Assessment](core/assessment.md)\n"
+            "- [Evidence policy](core/evidence-policy.md)\n",
+            encoding="utf-8",
+        )
         return temp, root
 
     def test_minimal_valid_repository_passes(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
         self.assertEqual([], validate(root))
+
+    def test_agents_entry_references_every_core_document(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        required = (
+            "core/pedagogy.md",
+            "core/session-protocol.md",
+            "core/assessment.md",
+            "core/evidence-policy.md",
+        )
+        text = (root / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertTrue(all(target in text for target in required))
+
+    def test_pedagogy_defines_responsive_socratic_dialogue(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "core/pedagogy.md").read_text(encoding="utf-8").lower()
+        required = (
+            "## responsive socratic dialogue",
+            "aporia",
+            "clarification",
+            "assumptions",
+            "reasons and evidence",
+            "implications and consequences",
+            "perspectives",
+            "metacognition",
+            "deep listening",
+            "self-questioner",
+            "exposition",
+        )
+        self.assertTrue(all(marker in text for marker in required))
 
     def test_missing_required_file_fails(self) -> None:
         temp, root = self.make_root()
