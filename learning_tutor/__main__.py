@@ -21,25 +21,25 @@ class _ArgumentParser(argparse.ArgumentParser):
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = _ArgumentParser(prog="learning-tutor")
+    parser = _ArgumentParser(prog="learning-tutor", allow_abbrev=False)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    commands.add_parser("build")
+    commands.add_parser("build", allow_abbrev=False)
 
-    export_parser = commands.add_parser("export")
+    export_parser = commands.add_parser("export", allow_abbrev=False)
     export_formats = export_parser.add_subparsers(
         dest="export_format",
         required=True,
     )
-    prompt_parser = export_formats.add_parser("prompt")
+    prompt_parser = export_formats.add_parser("prompt", allow_abbrev=False)
     prompt_parser.add_argument("--output", type=Path)
 
-    install_parser = commands.add_parser("install")
+    install_parser = commands.add_parser("install", allow_abbrev=False)
     install_parser.add_argument("target", choices=TARGETS)
     install_parser.add_argument("project", type=Path)
     install_parser.add_argument("--update", action="store_true")
 
-    doctor_parser = commands.add_parser("doctor")
+    doctor_parser = commands.add_parser("doctor", allow_abbrev=False)
     doctor_parser.add_argument("project", type=Path)
 
     return parser

@@ -38,6 +38,28 @@ class CliContractTests(unittest.TestCase):
             "--force",
         )
 
+    @mock.patch("learning_tutor.__main__._dispatch_install", return_value=0)
+    def test_install_rejects_abbreviated_update(
+        self,
+        dispatch: mock.Mock,
+    ) -> None:
+        self.assert_usage_error(
+            ["install", "generic", ".", "--up"],
+            "--up",
+        )
+        dispatch.assert_not_called()
+
+    @mock.patch("learning_tutor.__main__._dispatch_export_prompt", return_value=0)
+    def test_export_rejects_abbreviated_output(
+        self,
+        dispatch: mock.Mock,
+    ) -> None:
+        self.assert_usage_error(
+            ["export", "prompt", "--out", "prompt.md"],
+            "--out",
+        )
+        dispatch.assert_not_called()
+
     def test_error_classes_have_stable_exit_codes(self) -> None:
         self.assertEqual(3, CollisionError("x").exit_code)
         self.assertEqual(4, IntegrityError("x").exit_code)
