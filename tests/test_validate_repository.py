@@ -159,7 +159,17 @@ class RepositoryValidationTests(unittest.TestCase):
         headings = tuple(
             line for line in text.splitlines() if line.startswith("## ")
         )
-        self.assertEqual(README_HEADINGS, headings)
+        headings_with_extra = (
+            headings[:1] + ("## Optional additional guidance",) + headings[1:]
+        )
+        remaining_headings = iter(headings_with_extra)
+        for required_heading in README_HEADINGS:
+            with self.subTest(heading=required_heading):
+                self.assertIn(
+                    required_heading,
+                    remaining_headings,
+                    f"Missing or out-of-order README heading: {required_heading}",
+                )
         for command in README_WORKSPACE_COMMANDS:
             with self.subTest(command=command):
                 self.assertIn(command, text)

@@ -36,7 +36,7 @@ Do not add files under `workspace/` to version control. The repository's ignore 
 
 The tutor first turns the objective into an observable outcome and asks the learner to confirm it. It then diagnoses only relevant prerequisites, proposes the smallest dependency path with explicit edges, and waits for approval before teaching.
 
-The approved path is taught one node at a time. Each node requires observable evidence such as a derivation, explanation, prediction, implementation, or error diagnosis. Questions adapt to the learner's actual answers; direct exposition is used when discovery would be impossible or impose inappropriate cognitive load. At the end, the tutor records evidence, remaining gaps, sources, and one next step under the private workspace.
+The approved path is taught one node at a time. Each node requires observable evidence such as a derivation, explanation, prediction, implementation, or error diagnosis. Questions adapt to the learner's actual answers; direct exposition is used when discovery would be impossible or impose inappropriate cognitive load. At the end, when filesystem access is available, the tutor records evidence, remaining gaps, sources, and one next step under the private workspace. Without filesystem access, the tutor returns the complete Markdown record for the learner to save.
 
 ## Supported agents
 
