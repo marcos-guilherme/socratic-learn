@@ -35,14 +35,47 @@ CANONICAL_RE = re.compile(
     re.DOTALL,
 )
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+FENCE_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})")
 
 
 def markdown_files(root: Path) -> list[Path]:
     return [
         path
         for path in root.rglob("*.md")
-        if ".git" not in path.parts and "workspace" not in path.parts
+        if ".git" not in path.relative_to(root).parts
+        and "workspace" not in path.relative_to(root).parts
     ]
+
+
+def without_fenced_code(text: str) -> str:
+    visible: list[str] = []
+    fence_character = ""
+    fence_length = 0
+    for line in text.splitlines(keepends=True):
+        match = FENCE_RE.match(line)
+        if not fence_character:
+            if match:
+                fence = match.group(1)
+                fence_character = fence[0]
+                fence_length = len(fence)
+            else:
+                visible.append(line)
+            continue
+        if re.fullmatch(
+            rf"[ ]{{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*(?:\r?\n)?",
+            line,
+        ):
+            fence_character = ""
+            fence_length = 0
+    return "".join(visible)
+
+
+def markdown_link_target(raw_target: str) -> str:
+    raw_target = raw_target.strip()
+    if raw_target.startswith("<"):
+        end = raw_target.find(">")
+        return raw_target[1:end] if end != -1 else raw_target
+    return raw_target.split(maxsplit=1)[0] if raw_target else ""
 
 
 def parse_frontmatter(text: str) -> dict[str, str] | None:
@@ -64,7 +97,9 @@ def normalize(text: str) -> str:
     return " ".join(text.split())
 
 
-def tracked_files(root: Path) -> set[str]:
+def tracked_files(root: Path) -> tuple[set[str], str | None]:
+    if not (root / ".git").exists():
+        return set(), None
     try:
         result = subprocess.run(
             ["git", "ls-files"],
@@ -73,9 +108,18 @@ def tracked_files(root: Path) -> set[str]:
             capture_output=True,
             text=True,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return set()
-    return {line.replace("\\", "/") for line in result.stdout.splitlines()}
+    except FileNotFoundError:
+        return set(), "git ls-files unavailable: git executable not found"
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()
+        message = "git ls-files failed"
+        if detail:
+            message += f": {detail}"
+        return set(), message
+    return (
+        {line.replace("\\", "/") for line in result.stdout.splitlines()},
+        None,
+    )
 
 
 def validate(root: Path) -> list[str]:
@@ -87,7 +131,9 @@ def validate(root: Path) -> list[str]:
 
     for path in markdown_files(root):
         text = path.read_text(encoding="utf-8")
-        for target in LINK_RE.findall(text):
+        visible_text = without_fenced_code(text)
+        for raw_target in LINK_RE.findall(visible_text):
+            target = markdown_link_target(raw_target)
             target = target.split("#", 1)[0]
             if not target or "://" in target or target.startswith("mailto:"):
                 continue
@@ -95,7 +141,7 @@ def validate(root: Path) -> list[str]:
                 errors.append(
                     f"Broken Markdown link in {path.relative_to(root)}: {target}"
                 )
-        if "PRIVATE_LEARNER_DATA" in text:
+        if "PRIVATE_LEARNER_DATA" in visible_text:
             errors.append(
                 f"Found private learner marker outside workspace: {path.relative_to(root)}"
             )
@@ -143,9 +189,12 @@ def validate(root: Path) -> list[str]:
         if "workspace/*" not in rules or "!workspace/.gitkeep" not in rules:
             errors.append(".gitignore must ignore workspace except .gitkeep")
 
+    tracked, git_error = tracked_files(root)
+    if git_error:
+        errors.append(git_error)
     tracked_private = sorted(
         path
-        for path in tracked_files(root)
+        for path in tracked
         if path.startswith("workspace/") and path != "workspace/.gitkeep"
     )
     if tracked_private:
