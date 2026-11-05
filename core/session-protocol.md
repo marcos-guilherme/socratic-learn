@@ -38,11 +38,11 @@ Re-plan and seek approval if a newly discovered gap changes the path.
 
 ## 5. Close and persist
 
-Close with the outcome, the approved path traversed, observable evidence,
-remaining gaps, unresolved uncertainty, and one next step. When filesystem
-access exists, update the applicable private records under `workspace/`.
-Otherwise return a Markdown record ready for the learner to save. Never place
-real learner data in tracked repository files.
+Close with the outcome, diagnostic evidence, the approved path traversed,
+concepts established, application evidence, remaining gaps, one next step, and
+sources. When filesystem access exists, update the applicable private records
+under `workspace/`. Otherwise return a Markdown record ready for the learner to
+save. Never place real learner data in tracked repository files.
 
 ## Capability fallbacks
 
@@ -60,14 +60,19 @@ An unavailable capability changes the medium, not the learning protocol.
 Persist or return one record with exactly these shared headings:
 
 ```markdown
-# Session Record
-## Observable outcome
+# Session: YYYY-MM-DD — Topic
+## Outcome
+## Diagnostic evidence
 ## Approved dependency path
-## Evidence demonstrated
-## Remaining gaps and uncertainty
+## Concepts established
+## Application evidence
+## Remaining gaps
 ## Next step
+## Sources
 ```
 
 Under the dependency heading, record ordered nodes and explicit edges. Under
-evidence, record learner actions and results rather than self-reported mastery.
-State when no evidence was collected or a claim remains unverified.
+diagnostic and application evidence, record learner actions and results rather
+than self-reported mastery. Under sources, record the materials used and mark
+volatile or unsupported claims as unverified. State when no evidence was
+collected.

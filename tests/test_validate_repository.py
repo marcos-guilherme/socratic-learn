@@ -187,34 +187,48 @@ class RepositoryValidationTests(unittest.TestCase):
                         f"Missing {contract} contract clause: {clause}",
                     )
 
-    def test_learning_state_templates_preserve_required_headings(self) -> None:
+    def test_session_contract_template_and_example_share_exact_headings(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        expected_headings = {
-            "templates/session-log.md": (
-                "# Session Record",
-                "## Observable outcome",
-                "## Approved dependency path",
-                "## Evidence demonstrated",
-                "## Remaining gaps and uncertainty",
-                "## Next step",
+        expected = (
+            "# Session: YYYY-MM-DD — Topic",
+            "## Outcome",
+            "## Diagnostic evidence",
+            "## Approved dependency path",
+            "## Concepts established",
+            "## Application evidence",
+            "## Remaining gaps",
+            "## Next step",
+            "## Sources",
+        )
+        contract_text = (root / "core/session-protocol.md").read_text(
+            encoding="utf-8"
+        )
+        contract_block = contract_text.split("```markdown", 1)[1].split("```", 1)[0]
+        sources = {
+            "canonical contract": contract_block,
+            "session template": (root / "templates/session-log.md").read_text(
+                encoding="utf-8"
             ),
-            "templates/progress.md": (
-                "## Demonstrated",
-                "## Developing",
-                "## Next evidence needed",
-            ),
+            "example session": (
+                root / "workspace.example/sessions/2026-01-15-example.md"
+            ).read_text(encoding="utf-8"),
         }
 
-        for relative, headings in expected_headings.items():
-            path = root / relative
-            with self.subTest(template=relative, requirement="exists"):
-                self.assertTrue(path.is_file(), f"Missing template: {relative}")
-            if not path.is_file():
-                continue
-            text = path.read_text(encoding="utf-8")
-            for heading in headings:
-                with self.subTest(template=relative, heading=heading):
-                    self.assertIn(heading, text, f"Missing heading: {heading}")
+        for source, text in sources.items():
+            actual = tuple(line for line in text.splitlines() if line.startswith("#"))
+            with self.subTest(source=source):
+                self.assertEqual(expected, actual)
+
+    def test_progress_template_preserves_required_headings(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "templates/progress.md").read_text(encoding="utf-8")
+        for heading in (
+            "## Demonstrated",
+            "## Developing",
+            "## Next evidence needed",
+        ):
+            with self.subTest(heading=heading):
+                self.assertIn(heading, text, f"Missing heading: {heading}")
 
     def test_missing_required_file_fails(self) -> None:
         temp, root = self.make_root()
