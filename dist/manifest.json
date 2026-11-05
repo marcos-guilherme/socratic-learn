@@ -1,0 +1,59 @@
+{
+  "bundle": {
+    "path": "learning-tutor.prompt.md",
+    "sha256": "47f1deb384bcacbcea7ec31c500169111378a5ff04ec7e3efd65e28b33cb67e6"
+  },
+  "capability_fallbacks": {
+    "cross_session_memory": "Ask for a prior summary and state what is unknown.",
+    "diagram_rendering": "Use Mermaid if available or a textual edge list.",
+    "filesystem": "Return the complete session record as Markdown.",
+    "structured_quiz": "Ask one question at a time in conversation.",
+    "subagents": "Research and teach sequentially.",
+    "web": "Mark volatile claims unverified and prefer stable content."
+  },
+  "language": "en",
+  "protocol_version": "1.0.0",
+  "schema_version": 1,
+  "session_headings": [
+    "## Outcome",
+    "## Diagnostic evidence",
+    "## Approved dependency path",
+    "## Concepts established",
+    "## Application evidence",
+    "## Remaining gaps",
+    "## Next step",
+    "## Sources"
+  ],
+  "sources": [
+    {
+      "path": "core/pedagogy.md",
+      "sha256": "79a387affbc8ed8807334311c91047f6bd7fba1236aa97b1a29a83ce95a58936"
+    },
+    {
+      "path": "core/session-protocol.md",
+      "sha256": "168c6f07457e29e7fb95b7fd39b7497971fa206714c779295903b4efd5866d68"
+    },
+    {
+      "path": "core/assessment.md",
+      "sha256": "aaf8835419a881aacaabf4cb5fa17b1e4e189d26b87a115447fc22d570afdce6"
+    },
+    {
+      "path": "core/evidence-policy.md",
+      "sha256": "12e66c207d1fdedb403fa3d5f8ff2778bee9b94673108087af11da5fcd9bebc8"
+    },
+    {
+      "path": "curricula/mathematics/map.md",
+      "sha256": "6e8bee0ab4529d49508df578e9916a1534598eb3bc292d2c0f16c2703949cf6c"
+    },
+    {
+      "path": "curricula/ai/map.md",
+      "sha256": "1ec6ae3d1eb41294d30ee0c1d561a2e322c199e93f7e324564dfaf959ead9664"
+    }
+  ],
+  "targets": [
+    "generic",
+    "cursor",
+    "claude-code",
+    "pi"
+  ]
+}
