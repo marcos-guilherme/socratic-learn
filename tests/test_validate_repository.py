@@ -111,11 +111,43 @@ class RepositoryValidationTests(unittest.TestCase):
                 )
                 previous = position
 
+        question_families = {
+            "clarification": "clarification of meaning or examples",
+            "assumptions": "assumptions required by the claim",
+            "reasons and evidence": "reasons and evidence supporting or refuting it",
+            "implications and consequences": (
+                "implications and consequences if it holds"
+            ),
+            "perspectives": "perspectives or alternative approaches",
+            "metacognition": (
+                "metacognition about why the question matters "
+                "or how it should be asked"
+            ),
+        }
+        for family, clause in question_families.items():
+            with self.subTest(contract="question family", family=family):
+                self.assertIn(
+                    clause,
+                    section,
+                    f"Missing Socratic question family: {family}",
+                )
+
         contracts = {
             "quiz versus dialogue": (
                 "a single question can be a quiz",
                 "each question derives from the learner's preceding answer",
                 "never from a fixed script",
+            ),
+            "deep listening": (
+                "practice deep listening",
+                "interpret the learner's actual reasoning",
+            ),
+            "grounded in demonstrated knowledge": (
+                "knowledge the learner has already demonstrated",
+            ),
+            "active return after exposition": (
+                "after exposition",
+                "active application or an active question",
             ),
             "wait and answer restraint": (
                 "allow wait time and silence",

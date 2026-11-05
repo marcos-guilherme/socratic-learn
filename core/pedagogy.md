@@ -30,11 +30,11 @@ valid and return to the precise model.
 
 ## Responsive Socratic dialogue
 
-Use Socratic mode when the next step is discoverable from foundations the
-learner has already demonstrated. Use direct exposition when essential
-information is not deducible from those foundations or when discovery would
-impose inappropriate cognitive load. After exposition, return control through
-an application or a responsive question.
+Use Socratic mode when the next step is discoverable from knowledge the learner
+has already demonstrated. Use direct exposition when essential information is
+not deducible from that knowledge or when discovery would impose
+inappropriate cognitive load. After exposition, return control through an
+active application or an active question.
 
 A single question can be a quiz. Socratic dialogue is a sequence in which each
 question derives from the learner's preceding answer, never from a fixed
