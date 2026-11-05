@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from tests.validate_repository import main, validate
+from tests.validate_repository import main, validate, without_fenced_code
 
 CURRICULUM_FIELDS = (
     "Outcome",
@@ -38,6 +38,11 @@ ADAPTER_SKILLS = (
     "adapters/pi/skills/learning-tutor/SKILL.md",
 )
 MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)\s]+)(?:\s+[^)]*)?\)")
+ROOT_CLAUDE_LOADER_RE = re.compile(
+    r"<!-- root-loader:start -->\s*```markdown\n(.*?)\n```"
+    r"\s*<!-- root-loader:end -->",
+    re.DOTALL,
+)
 
 
 def parse_curriculum_nodes(text: str) -> list[tuple[str, dict[str, str]]]:
@@ -152,7 +157,7 @@ class RepositoryValidationTests(unittest.TestCase):
         for relative in ADAPTER_ENTRIES:
             with self.subTest(adapter=relative):
                 path = root / relative
-                text = path.read_text(encoding="utf-8")
+                text = without_fenced_code(path.read_text(encoding="utf-8"))
                 linked_targets = {
                     (path.parent / target).resolve()
                     for target in MARKDOWN_LINK_RE.findall(text)
@@ -165,6 +170,39 @@ class RepositoryValidationTests(unittest.TestCase):
                     all(target.exists() for target in linked_targets),
                     f"{relative} contains a broken relative link",
                 )
+
+    def test_documented_root_claude_loader_references_resolve(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        readme = (root / "adapters/claude-code/README.md").read_text(
+            encoding="utf-8"
+        )
+        match = ROOT_CLAUDE_LOADER_RE.search(readme)
+        self.assertIsNotNone(match, "Missing documented root CLAUDE.md loader")
+        snippet = match.group(1)
+        linked_targets = {
+            (root / target).resolve()
+            for target in MARKDOWN_LINK_RE.findall(snippet)
+        }
+        required_targets = {
+            (root / relative).resolve()
+            for relative in (
+                "AGENTS.md",
+                "core/pedagogy.md",
+                "core/session-protocol.md",
+                "core/assessment.md",
+                "core/evidence-policy.md",
+            )
+        }
+        self.assertTrue(
+            required_targets <= linked_targets,
+            "Root loader must link the universal entry and canonical core",
+        )
+        self.assertTrue(
+            all(target.exists() for target in linked_targets),
+            "Root loader contains a reference that does not resolve from root",
+        )
+        self.assertIn("`workspace/`", snippet)
+        self.assertTrue((root / "workspace").is_dir())
 
     def test_pedagogy_defines_responsive_socratic_dialogue(self) -> None:
         root = Path(__file__).resolve().parents[1]
