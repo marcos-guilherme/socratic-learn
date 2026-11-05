@@ -25,6 +25,19 @@ CURRICULUM_FIELD_RE = re.compile(
     r"[ \t]*(?P<value>\S.*)$",
     re.MULTILINE,
 )
+ADAPTER_ENTRIES = (
+    ".cursor/skills/learning-tutor/SKILL.md",
+    "adapters/cursor/README.md",
+    "adapters/claude-code/CLAUDE.md",
+    "adapters/claude-code/README.md",
+    "adapters/pi/skills/learning-tutor/SKILL.md",
+    "adapters/pi/README.md",
+)
+ADAPTER_SKILLS = (
+    ".cursor/skills/learning-tutor/SKILL.md",
+    "adapters/pi/skills/learning-tutor/SKILL.md",
+)
+MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 
 
 def parse_curriculum_nodes(text: str) -> list[tuple[str, dict[str, str]]]:
@@ -119,6 +132,39 @@ class RepositoryValidationTests(unittest.TestCase):
         )
         text = (root / "AGENTS.md").read_text(encoding="utf-8")
         self.assertTrue(all(target in text for target in required))
+
+    def test_adapter_skills_have_specific_learning_tutor_metadata(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        for relative in ADAPTER_SKILLS:
+            with self.subTest(skill=relative):
+                text = (root / relative).read_text(encoding="utf-8")
+                frontmatter = text.split("---\n", 2)[1].lower()
+                self.assertIn("name: learning-tutor", frontmatter)
+                for term in ("mathematics", "ai", "diagnos", "learning sessions"):
+                    self.assertIn(term, frontmatter)
+
+    def test_every_adapter_entry_links_session_and_evidence_core(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        required_targets = {
+            (root / "core/session-protocol.md").resolve(),
+            (root / "core/evidence-policy.md").resolve(),
+        }
+        for relative in ADAPTER_ENTRIES:
+            with self.subTest(adapter=relative):
+                path = root / relative
+                text = path.read_text(encoding="utf-8")
+                linked_targets = {
+                    (path.parent / target).resolve()
+                    for target in MARKDOWN_LINK_RE.findall(text)
+                }
+                self.assertTrue(
+                    required_targets <= linked_targets,
+                    f"{relative} must link both canonical protocol files",
+                )
+                self.assertTrue(
+                    all(target.exists() for target in linked_targets),
+                    f"{relative} contains a broken relative link",
+                )
 
     def test_pedagogy_defines_responsive_socratic_dialogue(self) -> None:
         root = Path(__file__).resolve().parents[1]

@@ -1,0 +1,18 @@
+---
+name: learning-tutor
+description: Conducts diagnostic, evidence-aware mathematics and AI learning sessions. Use when the user wants to study, understand, practice, or build a learning plan for mathematics, machine learning, AI frameworks, neural networks, transformers, or related prerequisites.
+---
+
+# Learning Tutor
+
+Load the universal [agent entry](../../../../AGENTS.md) and canonical [pedagogy](../../../../core/pedagogy.md), [session protocol](../../../../core/session-protocol.md), [assessment](../../../../core/assessment.md), and [evidence policy](../../../../core/evidence-policy.md). Consult the [mathematics map](../../../../curricula/mathematics/map.md) and [AI map](../../../../curricula/ai/map.md) when relevant.
+
+## Pi capability mapping
+
+- Use `quiz` for graded checks. Without it, conduct each check conversationally and grade the response from the observable evidence.
+- Use `ask-user-question` for preference and goal decisions. Without it, ask the decision directly in conversation.
+- Use a researcher subagent to verify volatile facts. Without one, use available web tools directly; without web access, apply the evidence policy's no-web fallback.
+- Use Mermaid or SVG makers only for structure or geometry. Without them, use Mermaid text when renderable or a concise textual edge list.
+- Use `md-log` for session persistence. Without it, write through available filesystem tools; without filesystem access, return the complete Markdown record for the learner to save.
+
+Keep optional learner context and every real state update under `workspace/`.
