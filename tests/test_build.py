@@ -25,9 +25,31 @@ class BuildTests(unittest.TestCase):
         temporary = TemporaryDirectory()
         root = Path(temporary.name)
         contents = {
-            "core/pedagogy.md": "# Pedagogy\n\nUniversal pedagogy.",
+            "core/pedagogy.md": (
+                "# Pedagogy\n\n"
+                "Universal pedagogy.\n\n"
+                "## Responsive Socratic dialogue\n\n"
+                "Each question derives from the learner's preceding answer.\n"
+                "Use direct exposition when information is not deducible. "
+                "After exposition, return control through an active application."
+            ),
             "core/session-protocol.md": (
                 "# Session Protocol\n\n"
+                "## 1. Define an observable outcome\n\n"
+                "Set a performance that can be observed.\n\n"
+                "## 2. Diagnose relevant prerequisites\n\n"
+                "Diagnose only relevant prerequisites.\n\n"
+                "## 3. Present and approve a dependency path\n\n"
+                "Wait until the learner approves the path.\n\n"
+                "## 4. Teach one node at a time\n\n"
+                "Teach one approved node.\n\n"
+                "## 5. Close and persist\n\n"
+                "Close with diagnostic evidence, application evidence, and remaining gaps.\n"
+                "Keep private state under workspace/ and out of version control.\n\n"
+                "## Capability fallbacks\n\n"
+                "Without structured quiz support, ask conversational questions.\n"
+                "Without web access, mark claims unverified.\n"
+                "Without filesystem access, return a Markdown record.\n\n"
                 "## Session record contract\n\n"
                 "# Session: YYYY-MM-DD — Topic\n"
                 "## Outcome\n"
@@ -39,8 +61,17 @@ class BuildTests(unittest.TestCase):
                 "## Next step\n"
                 "## Sources"
             ),
-            "core/assessment.md": "# Assessment\n\nAssess relevant prerequisites.",
-            "core/evidence-policy.md": "# Evidence Policy\n\nClassify claims.",
+            "core/assessment.md": (
+                "# Assessment\n\n"
+                "Use at most six diagnostic questions and stop early when evidence "
+                "is sufficient."
+            ),
+            "core/evidence-policy.md": (
+                "# Evidence Policy\n\n"
+                "For mathematical claims, state the domain and hypotheses and classify "
+                "each as a definition, theorem, or approximation.\n"
+                "For volatile claims, verify against a primary source."
+            ),
             "curricula/mathematics/map.md": (
                 "# Mathematics\n\n"
                 "### algebra — Algebra\n"
@@ -255,7 +286,14 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(sha256_bytes(result.bundle), manifest["bundle"]["sha256"])
         self.assertEqual(lf_manifest["sources"], manifest["sources"])
         self.assertEqual(
-            sha256_bytes(b"# Pedagogy\n\nUniversal pedagogy.\n"),
+            sha256_bytes(
+                b"# Pedagogy\n\n"
+                b"Universal pedagogy.\n\n"
+                b"## Responsive Socratic dialogue\n\n"
+                b"Each question derives from the learner's preceding answer.\n"
+                b"Use direct exposition when information is not deducible. "
+                b"After exposition, return control through an active application.\n"
+            ),
             manifest["sources"][0]["sha256"],
         )
 

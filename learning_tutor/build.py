@@ -13,6 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from . import MANIFEST_SCHEMA_VERSION, PROTOCOL_VERSION, TARGETS
+from .conformance import (
+    CONFORMANCE_CONTRACT_VERSION,
+    REQUIRED_DIAGNOSTIC_CODES,
+    check_conformance,
+)
 from .errors import FilesystemError, IntegrityError
 from .manifest import (
     CAPABILITY_FALLBACKS,
@@ -224,6 +229,21 @@ def build_distribution(root: Path) -> BuildResult:
     repository = _resolve_repository_root(root)
     sources = _read_sources(repository)
     bundle = _compose_bundle(sources)
+    diagnostics = check_conformance(bundle.decode("utf-8"))
+    if diagnostics:
+        details = "; ".join(
+            f"{diagnostic.code} ({diagnostic.path}): {diagnostic.message}"
+            for diagnostic in diagnostics
+        )
+        remediation = "; ".join(
+            f"{diagnostic.code}: {diagnostic.remediation}"
+            for diagnostic in diagnostics
+        )
+        raise IntegrityError(
+            f"bundle behavioral conformance failed: {details}",
+            path="dist/learning-tutor.prompt.md",
+            remediation=remediation,
+        )
     manifest: dict[str, object] = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "protocol_version": PROTOCOL_VERSION,
@@ -238,6 +258,10 @@ def build_distribution(root: Path) -> BuildResult:
             "sha256": sha256_bytes(bundle),
         },
         "capability_fallbacks": dict(CAPABILITY_FALLBACKS),
+        "conformance": {
+            "version": CONFORMANCE_CONTRACT_VERSION,
+            "required_diagnostic_codes": list(REQUIRED_DIAGNOSTIC_CODES),
+        },
         "session_headings": list(SESSION_HEADINGS),
     }
     validate_manifest(manifest)

@@ -11,6 +11,22 @@
     "subagents": "Research and teach sequentially.",
     "web": "Mark volatile claims unverified and prefer stable content."
   },
+  "conformance": {
+    "required_diagnostic_codes": [
+      "active-return-after-exposition",
+      "bounded-diagnosis",
+      "capability-fallbacks",
+      "evidence-based-closure",
+      "exposition-fallback",
+      "mathematical-assumptions-classification",
+      "observable-outcome",
+      "plan-approval-before-teaching",
+      "private-state",
+      "responsive-socratic-follow-up",
+      "volatile-primary-source-verification"
+    ],
+    "version": 1
+  },
   "language": "en",
   "protocol_version": "1.0.0",
   "schema_version": 1,

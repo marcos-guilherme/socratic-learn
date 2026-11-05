@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from pathlib import PurePosixPath, PureWindowsPath
 
 from . import MANIFEST_SCHEMA_VERSION, PROTOCOL_VERSION, TARGETS
+from .conformance import CONFORMANCE_CONTRACT_VERSION, REQUIRED_DIAGNOSTIC_CODES
 from .errors import IntegrityError
 
 
@@ -36,6 +37,7 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _TOP_LEVEL_KEYS = {
     "bundle",
     "capability_fallbacks",
+    "conformance",
     "language",
     "protocol_version",
     "schema_version",
@@ -45,6 +47,7 @@ _TOP_LEVEL_KEYS = {
 }
 _SOURCE_KEYS = {"path", "sha256"}
 _BUNDLE_KEYS = {"path", "sha256"}
+_CONFORMANCE_KEYS = {"required_diagnostic_codes", "version"}
 _REMEDIATION = "regenerate the manifest with 'learning-tutor build'"
 
 
@@ -183,6 +186,27 @@ def validate_manifest(manifest: Mapping[str, object]) -> None:
                 f"capability_fallbacks.{capability}",
                 "must be a non-empty control-free string",
             )
+
+    conformance = manifest["conformance"]
+    if not isinstance(conformance, Mapping):
+        raise _invalid("conformance", "must be a JSON object")
+    _require_exact_keys(conformance, _CONFORMANCE_KEYS, "conformance")
+    version = conformance["version"]
+    if type(version) is not int or version != CONFORMANCE_CONTRACT_VERSION:
+        raise _invalid(
+            "conformance.version",
+            f"must be integer {CONFORMANCE_CONTRACT_VERSION}",
+        )
+    required_codes = conformance["required_diagnostic_codes"]
+    if (
+        type(required_codes) is not list
+        or any(type(code) is not str for code in required_codes)
+        or required_codes != list(REQUIRED_DIAGNOSTIC_CODES)
+    ):
+        raise _invalid(
+            "conformance.required_diagnostic_codes",
+            "must match the exact behavioral contract code sequence",
+        )
 
     headings = manifest["session_headings"]
     if type(headings) is not list or any(type(item) is not str for item in headings):
