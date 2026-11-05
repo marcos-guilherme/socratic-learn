@@ -187,6 +187,35 @@ class RepositoryValidationTests(unittest.TestCase):
                         f"Missing {contract} contract clause: {clause}",
                     )
 
+    def test_learning_state_templates_preserve_required_headings(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        expected_headings = {
+            "templates/session-log.md": (
+                "# Session Record",
+                "## Observable outcome",
+                "## Approved dependency path",
+                "## Evidence demonstrated",
+                "## Remaining gaps and uncertainty",
+                "## Next step",
+            ),
+            "templates/progress.md": (
+                "## Demonstrated",
+                "## Developing",
+                "## Next evidence needed",
+            ),
+        }
+
+        for relative, headings in expected_headings.items():
+            path = root / relative
+            with self.subTest(template=relative, requirement="exists"):
+                self.assertTrue(path.is_file(), f"Missing template: {relative}")
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8")
+            for heading in headings:
+                with self.subTest(template=relative, heading=heading):
+                    self.assertIn(heading, text, f"Missing heading: {heading}")
+
     def test_missing_required_file_fails(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
