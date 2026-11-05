@@ -21,6 +21,14 @@ consequences, approximations, heuristics, and empirical observations.
 - Evidence: For the example defined by \(f:\mathbb R\to\mathbb R\), \(f(x)=2x-1\), produce a value table, sketch the graph, and recover the slope and intercept.
 - Application: Model a temperature conversion or linear pricing rule and identify which inputs are meaningful.
 
+### exponentials-and-logarithms — Exponentials and logarithms
+
+- Outcome: Evaluate exponential and logarithmic expressions and use their inverse relationship to transform products, powers, and probability-based losses.
+- Prerequisites: functions-and-graphs
+- Concepts: for a fixed real base \(b>0\), \(b\ne1\), the exponential \(x\mapsto b^x\) is positive and one-to-one (theorem under these hypotheses); \(\log_b:(0,\infty)\to\mathbb R\) is its inverse (definition); \(\log_b(xy)=\log_b x+\log_b y\) for \(x,y>0\) (exact consequence); monotonicity depends on whether \(b>1\) or \(0<b<1\)
+- Evidence: For \(b=e\) and positive \(x,y\), derive \(\log(xy)=\log x+\log y\) from the inverse and exponent laws, then compute a small negative log-likelihood while stating why zero probability is outside the logarithm's domain.
+- Application: Convert a product of supplied positive probabilities into a sum of log probabilities and explain how exponentials turn real-valued scores into positive quantities.
+
 ### limits-and-change — Limits and change
 
 - Outcome: Estimate a limit numerically and graphically, then verify a simple limit from its definition or limit laws.

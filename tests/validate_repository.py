@@ -21,7 +21,13 @@ REQUIRED_PATHS = (
     ".cursor/skills/learning-tutor/SKILL.md",
     "adapters/cursor/README.md",
     "adapters/claude-code/CLAUDE.md",
+    "adapters/claude-code/README.md",
     "adapters/pi/skills/learning-tutor/SKILL.md",
+    "adapters/pi/README.md",
+    "workspace.example/learner-profile.md",
+    "workspace.example/learning-goal.md",
+    "workspace.example/progress.md",
+    "workspace.example/sessions/2026-01-15-example.md",
     "workspace/.gitkeep",
 )
 SKILL_PATHS = (
@@ -157,6 +163,8 @@ def validate(root: Path) -> list[str]:
         if (
             frontmatter is None
             or not SKILL_NAME_RE.fullmatch(frontmatter.get("name", ""))
+            or frontmatter.get("name") != path.parent.name
+            or frontmatter.get("name") != "learning-tutor"
             or not frontmatter.get("description")
         ):
             errors.append(f"Invalid skill frontmatter: {relative}")

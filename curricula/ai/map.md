@@ -8,6 +8,7 @@ dependencies are explicit links below and within relevant concepts.
 
 Use the mathematics map to select only the dependencies needed for the target:
 [functions and graphs](../mathematics/map.md#functions-and-graphs),
+[exponentials and logarithms](../mathematics/map.md#exponentials-and-logarithms),
 [vectors and dot products](../mathematics/map.md#vectors-and-dot-products),
 [matrices and linear maps](../mathematics/map.md#matrices-and-linear-maps),
 [probability models](../mathematics/map.md#probability-models),
@@ -65,7 +66,7 @@ and record version or date context according to the
 
 - Outcome: Compute scaled dot-product attention for a tiny example and explain how changing one score changes the output weights.
 - Prerequisites: neural-networks
-- Concepts: query, key, and value projections; dot products from [vectors and dot products](../mathematics/map.md#vectors-and-dot-products); softmax-normalized weights; masking
+- Concepts: query, key, and value projections; dot products from [vectors and dot products](../mathematics/map.md#vectors-and-dot-products); exponentials in softmax from [exponentials and logarithms](../mathematics/map.md#exponentials-and-logarithms); softmax-normalized weights; masking
 - Evidence: Calculate all scores, normalized weights, and the weighted output for one query and two key-value pairs.
 - Application: Create a toy retrieval example and predict the effect of modifying one key before recomputing it.
 
@@ -81,7 +82,7 @@ and record version or date context according to the
 
 - Outcome: Formulate next-token prediction and evaluate the probabilities assigned to a short token sequence.
 - Prerequisites: transformers
-- Concepts: tokenization; conditional next-token distribution; cross-entropy; generation as a policy over successive conditional distributions
+- Concepts: tokenization; conditional next-token distribution; cross-entropy and log loss grounded in [exponentials and logarithms](../mathematics/map.md#exponentials-and-logarithms); generation as a policy over successive conditional distributions
 - Evidence: Given explicit token probabilities, compute sequence log loss and explain how one probability affects the total.
 - Application: Compare greedy selection and sampled selection on a supplied probability table without claiming behavior beyond the example.
 

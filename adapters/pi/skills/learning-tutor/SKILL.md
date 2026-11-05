@@ -5,6 +5,12 @@ description: Conducts diagnostic, evidence-aware mathematics and AI learning ses
 
 # Learning Tutor
 
+This file is the repository-layout source and uses links relative to its
+adapter directory. For installation at
+`<project>/.pi/skills/learning-tutor/SKILL.md`, follow the
+[Pi installation procedure](../../README.md) and copy the adjacent
+[project-install template](SKILL.project.md.template), not this file.
+
 Load the universal [agent entry](../../../../AGENTS.md) and canonical [pedagogy](../../../../core/pedagogy.md), [session protocol](../../../../core/session-protocol.md), [assessment](../../../../core/assessment.md), and [evidence policy](../../../../core/evidence-policy.md). Consult the [mathematics map](../../../../curricula/mathematics/map.md) and [AI map](../../../../curricula/ai/map.md) when relevant.
 
 ## Pi capability mapping

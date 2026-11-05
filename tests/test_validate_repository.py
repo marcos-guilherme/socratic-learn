@@ -2,6 +2,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 import re
+import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 import unittest
@@ -42,6 +43,17 @@ ROOT_CLAUDE_LOADER_RE = re.compile(
     r"<!-- root-loader:start -->\s*```markdown\n(.*?)\n```"
     r"\s*<!-- root-loader:end -->",
     re.DOTALL,
+)
+PI_PROJECT_TEMPLATE = "adapters/pi/skills/learning-tutor/SKILL.project.md.template"
+SESSION_H2_HEADINGS = (
+    "## Outcome",
+    "## Diagnostic evidence",
+    "## Approved dependency path",
+    "## Concepts established",
+    "## Application evidence",
+    "## Remaining gaps",
+    "## Next step",
+    "## Sources",
 )
 README_HEADINGS = (
     "## What this is",
@@ -106,7 +118,13 @@ class RepositoryValidationTests(unittest.TestCase):
             ".cursor/skills/learning-tutor/SKILL.md",
             "adapters/cursor/README.md",
             "adapters/claude-code/CLAUDE.md",
+            "adapters/claude-code/README.md",
             "adapters/pi/skills/learning-tutor/SKILL.md",
+            "adapters/pi/README.md",
+            "workspace.example/learner-profile.md",
+            "workspace.example/learning-goal.md",
+            "workspace.example/progress.md",
+            "workspace.example/sessions/2026-01-15-example.md",
             "workspace/.gitkeep",
         ):
             path = root / relative
@@ -240,6 +258,39 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn("`workspace/`", snippet)
         self.assertTrue((root / "workspace").is_dir())
 
+    def test_documented_pi_project_install_resolves_every_local_link(self) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        template = source_root / PI_PROJECT_TEMPLATE
+        self.assertTrue(template.exists(), "Missing Pi project-install skill template")
+
+        with TemporaryDirectory() as temp:
+            project = Path(temp) / "project"
+            destination = project / ".pi/skills/learning-tutor/SKILL.md"
+            destination.parent.mkdir(parents=True)
+            shutil.copy2(template, destination)
+            for relative in (
+                "AGENTS.md",
+                "core",
+                "curricula",
+            ):
+                source = source_root / relative
+                target = project / relative
+                if source.is_dir():
+                    shutil.copytree(source, target)
+                else:
+                    shutil.copy2(source, target)
+
+            text = destination.read_text(encoding="utf-8")
+            linked_targets = {
+                (destination.parent / target).resolve()
+                for target in MARKDOWN_LINK_RE.findall(text)
+            }
+            self.assertTrue(linked_targets, "Installed Pi skill must contain links")
+            self.assertTrue(
+                all(target.exists() for target in linked_targets),
+                "Installed Pi skill contains a local link that does not resolve",
+            )
+
     def test_pedagogy_defines_responsive_socratic_dialogue(self) -> None:
         root = Path(__file__).resolve().parents[1]
         text = (root / "core/pedagogy.md").read_text(encoding="utf-8").lower()
@@ -346,17 +397,6 @@ class RepositoryValidationTests(unittest.TestCase):
 
     def test_session_contract_template_and_example_share_exact_headings(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        expected = (
-            "# Session: YYYY-MM-DD — Topic",
-            "## Outcome",
-            "## Diagnostic evidence",
-            "## Approved dependency path",
-            "## Concepts established",
-            "## Application evidence",
-            "## Remaining gaps",
-            "## Next step",
-            "## Sources",
-        )
         contract_text = (root / "core/session-protocol.md").read_text(
             encoding="utf-8"
         )
@@ -372,9 +412,26 @@ class RepositoryValidationTests(unittest.TestCase):
         }
 
         for source, text in sources.items():
-            actual = tuple(line for line in text.splitlines() if line.startswith("#"))
+            actual = tuple(line for line in text.splitlines() if line.startswith("## "))
             with self.subTest(source=source):
-                self.assertEqual(expected, actual)
+                self.assertEqual(SESSION_H2_HEADINGS, actual)
+
+        placeholder_sources = {
+            "canonical contract": contract_block,
+            "session template": sources["session template"],
+        }
+        for source, text in placeholder_sources.items():
+            with self.subTest(source=source, heading="placeholder H1"):
+                self.assertEqual(
+                    "# Session: YYYY-MM-DD — Topic",
+                    text.strip().splitlines()[0],
+                )
+
+        example_h1 = sources["example session"].splitlines()[0]
+        self.assertRegex(
+            example_h1,
+            r"^# Session: \d{4}-\d{2}-\d{2} — \S.*$",
+        )
 
     def test_progress_template_preserves_required_headings(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -393,6 +450,7 @@ class RepositoryValidationTests(unittest.TestCase):
             "curricula/mathematics/map.md": {
                 "algebraic-reasoning",
                 "functions-and-graphs",
+                "exponentials-and-logarithms",
                 "limits-and-change",
                 "derivatives",
                 "vectors-and-dot-products",
@@ -434,6 +492,16 @@ class RepositoryValidationTests(unittest.TestCase):
                         f"Invalid fields for {identifier} in {relative}",
                     )
 
+    def test_ai_softmax_and_log_loss_link_exponentials_and_logarithms(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        path = root / "curricula/ai/map.md"
+        nodes = dict(parse_curriculum_nodes(path.read_text(encoding="utf-8")))
+        target = "../mathematics/map.md#exponentials-and-logarithms"
+
+        for identifier in ("attention", "language-models"):
+            with self.subTest(node=identifier):
+                self.assertIn(target, nodes[identifier]["Concepts"])
+
     def test_curriculum_prerequisites_reference_local_nodes(self) -> None:
         root = Path(__file__).resolve().parents[1]
         for relative in (
@@ -474,11 +542,31 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn("loss-and-generalization", prerequisites)
         self.assertNotIn("language-models", prerequisites)
 
-    def test_missing_required_file_fails(self) -> None:
+    def test_missing_required_paths_fail_by_category(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
-        (root / "AGENTS.md").unlink()
-        self.assertTrue(any("AGENTS.md" in error for error in validate(root)))
+        cases = (
+            ("core entry", "AGENTS.md"),
+            ("adapter readme", "adapters/claude-code/README.md"),
+            ("adapter readme", "adapters/pi/README.md"),
+            ("filled example", "workspace.example/learner-profile.md"),
+            ("filled example", "workspace.example/learning-goal.md"),
+            ("filled example", "workspace.example/progress.md"),
+            (
+                "filled example",
+                "workspace.example/sessions/2026-01-15-example.md",
+            ),
+        )
+        for category, relative in cases:
+            with self.subTest(category=category, path=relative):
+                path = root / relative
+                original = path.read_text(encoding="utf-8")
+                path.unlink()
+                self.assertIn(
+                    f"Missing required path: {relative}",
+                    validate(root),
+                )
+                path.write_text(original, encoding="utf-8")
 
     def test_broken_relative_markdown_link_fails(self) -> None:
         temp, root = self.make_root()
@@ -510,6 +598,22 @@ class RepositoryValidationTests(unittest.TestCase):
         skill = root / ".cursor/skills/learning-tutor/SKILL.md"
         skill.write_text("---\nname: Learning Tutor\n---\n", encoding="utf-8")
         self.assertTrue(any("frontmatter" in error for error in validate(root)))
+
+    def test_unrelated_skill_name_fails_with_existing_diagnostic(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        skill = root / ".cursor/skills/learning-tutor/SKILL.md"
+        skill.write_text(
+            "---\n"
+            "name: unrelated-skill\n"
+            "description: Conducts structured learning sessions.\n"
+            "---\n",
+            encoding="utf-8",
+        )
+        self.assertIn(
+            "Invalid skill frontmatter: .cursor/skills/learning-tutor/SKILL.md",
+            validate(root),
+        )
 
     def test_canonical_copy_in_adapter_fails(self) -> None:
         temp, root = self.make_root()
