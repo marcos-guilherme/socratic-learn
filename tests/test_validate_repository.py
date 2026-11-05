@@ -1,12 +1,45 @@
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+import re
 import subprocess
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
 from tests.validate_repository import main, validate
+
+CURRICULUM_FIELDS = (
+    "Outcome",
+    "Prerequisites",
+    "Concepts",
+    "Evidence",
+    "Application",
+)
+CURRICULUM_HEADING_RE = re.compile(
+    r"^### (?P<identifier>[a-z0-9]+(?:-[a-z0-9]+)*) — (?P<title>\S.*)$",
+    re.MULTILINE,
+)
+CURRICULUM_FIELD_RE = re.compile(
+    r"^- (?P<name>Outcome|Prerequisites|Concepts|Evidence|Application):"
+    r"[ \t]*(?P<value>\S.*)$",
+    re.MULTILINE,
+)
+
+
+def parse_curriculum_nodes(text: str) -> list[tuple[str, dict[str, str]]]:
+    headings = list(CURRICULUM_HEADING_RE.finditer(text))
+    nodes: list[tuple[str, dict[str, str]]] = []
+    for index, heading in enumerate(headings):
+        block_end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        fields = {
+            match.group("name"): match.group("value").strip()
+            for match in CURRICULUM_FIELD_RE.finditer(
+                text, heading.end(), block_end
+            )
+        }
+        nodes.append((heading.group("identifier"), fields))
+    return nodes
 
 
 class RepositoryValidationTests(unittest.TestCase):
@@ -229,6 +262,76 @@ class RepositoryValidationTests(unittest.TestCase):
         ):
             with self.subTest(heading=heading):
                 self.assertIn(heading, text, f"Missing heading: {heading}")
+
+    def test_curriculum_nodes_use_shared_schema(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        expected_nodes = {
+            "curricula/mathematics/map.md": {
+                "algebraic-reasoning",
+                "functions-and-graphs",
+                "limits-and-change",
+                "derivatives",
+                "vectors-and-dot-products",
+                "matrices-and-linear-maps",
+                "probability-models",
+                "random-variables",
+                "optimization",
+                "math-for-machine-learning",
+            },
+            "curricula/ai/map.md": {
+                "supervised-learning",
+                "loss-and-generalization",
+                "gradient-based-learning",
+                "neural-networks",
+                "tensor-frameworks",
+                "attention",
+                "transformers",
+                "language-models",
+                "evaluation",
+                "framework-experimentation",
+            },
+        }
+        for relative, expected in expected_nodes.items():
+            with self.subTest(curriculum=relative):
+                path = root / relative
+                self.assertTrue(path.exists(), f"Missing curriculum map: {relative}")
+                nodes = parse_curriculum_nodes(path.read_text(encoding="utf-8"))
+                identifiers = [identifier for identifier, _ in nodes]
+                self.assertEqual(expected, set(identifiers))
+                self.assertEqual(
+                    len(identifiers),
+                    len(set(identifiers)),
+                    f"Duplicate curriculum node identifier in {relative}",
+                )
+                for identifier, fields in nodes:
+                    self.assertEqual(
+                        set(CURRICULUM_FIELDS),
+                        set(fields),
+                        f"Invalid fields for {identifier} in {relative}",
+                    )
+
+    def test_curriculum_prerequisites_reference_local_nodes(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        for relative in (
+            "curricula/mathematics/map.md",
+            "curricula/ai/map.md",
+        ):
+            with self.subTest(curriculum=relative):
+                path = root / relative
+                self.assertTrue(path.exists(), f"Missing curriculum map: {relative}")
+                nodes = parse_curriculum_nodes(path.read_text(encoding="utf-8"))
+                identifiers = {identifier for identifier, _ in nodes}
+                for identifier, fields in nodes:
+                    prerequisites = {
+                        value.strip()
+                        for value in fields["Prerequisites"].split(",")
+                    }
+                    unknown = prerequisites - identifiers - {"none"}
+                    self.assertEqual(
+                        set(),
+                        unknown,
+                        f"Unknown prerequisites for {identifier} in {relative}",
+                    )
 
     def test_missing_required_file_fails(self) -> None:
         temp, root = self.make_root()
