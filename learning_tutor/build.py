@@ -32,8 +32,9 @@ CANONICAL_SOURCES = (
 )
 
 _CURRICULUM_HEADING_RE = re.compile(
-    r"### ([a-z0-9]+(?:-[a-z0-9]+)*) — (\S.*)",
+    r" {0,3}### ([a-z0-9]+(?:-[a-z0-9]+)*) — (\S.*)",
 )
+_LEVEL_THREE_ATX_RE = re.compile(r" {0,3}###(?:[ \t]|$)")
 
 
 @dataclass(frozen=True)
@@ -160,6 +161,7 @@ def _read_sources(root: Path) -> list[tuple[str, bytes]]:
             raise FilesystemError(
                 "canonical source could not be read",
                 path=relative,
+                remediation="check source permissions and rebuild",
             ) from error
         sources.append((relative, _normalize_source(data, relative)))
     return sources
@@ -168,7 +170,7 @@ def _read_sources(root: Path) -> list[tuple[str, bytes]]:
 def _curriculum_index(relative: str, data: bytes) -> str:
     headings: list[tuple[str, str]] = []
     for line_number, line in enumerate(data.decode("utf-8").splitlines(), start=1):
-        if not line.startswith("###"):
+        if _LEVEL_THREE_ATX_RE.match(line) is None:
             continue
         match = _CURRICULUM_HEADING_RE.fullmatch(line)
         if match is None:
@@ -258,8 +260,15 @@ def _atomic_write(path: Path, data: bytes) -> None:
         os.replace(temporary_path, path)
     except OSError as error:
         if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
-        raise FilesystemError("distribution artifact could not be written", path=path) from error
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise FilesystemError(
+            "distribution artifact could not be written",
+            path=path,
+            remediation="check destination permissions and retry",
+        ) from error
 
 
 def _validate_staged_distribution(stage: Path, result: BuildResult) -> None:

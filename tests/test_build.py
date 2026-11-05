@@ -197,6 +197,49 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(IntegrityError, "curriculum node heading"):
             build_distribution(root)
 
+    def test_indented_level_three_curriculum_heading_is_indexed(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        curriculum = root / "curricula/ai/map.md"
+        curriculum.write_text(
+            curriculum.read_text(encoding="utf-8").replace(
+                "### learning — Learning",
+                "   ### learning — Learning",
+            ),
+            encoding="utf-8",
+        )
+
+        text = build_distribution(root).bundle.decode("utf-8")
+
+        self.assertIn("- learning — Learning", text)
+
+    def test_malformed_indented_level_three_heading_is_rejected(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        curriculum = root / "curricula/ai/map.md"
+        curriculum.write_text(
+            curriculum.read_text(encoding="utf-8")
+            + "\n  ### malformed node heading\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(IntegrityError, "curriculum node heading"):
+            build_distribution(root)
+
+    def test_level_four_heading_is_ignored_by_curriculum_index(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        curriculum = root / "curricula/ai/map.md"
+        curriculum.write_text(
+            curriculum.read_text(encoding="utf-8")
+            + "\n#### implementation detail\n",
+            encoding="utf-8",
+        )
+
+        text = build_distribution(root).bundle.decode("utf-8")
+
+        self.assertIn("- learning — Learning", text)
+
     def test_manifest_hashes_match_normalized_sources_and_bundle(self) -> None:
         temporary, root = self.make_repository(newline="\r\n")
         lf_temporary, lf_root = self.make_repository(newline="\n")
@@ -265,15 +308,120 @@ class BuildTests(unittest.TestCase):
             nonlocal calls
             calls += 1
             if calls == 2:
-                raise OSError("injected second artifact failure")
+                raise FilesystemError(
+                    "injected second artifact failure",
+                    path=path,
+                    remediation="retry the build",
+                )
             real_write(path, data)
 
         with mock.patch("learning_tutor.build._atomic_write", side_effect=fail_second):
-            with self.assertRaises(FilesystemError):
+            with self.assertRaises(FilesystemError) as raised:
                 write_distribution(root, new_result)
 
+        self.assertIn("manifest.json", str(raised.exception.path))
+        self.assertTrue(raised.exception.remediation)
         self.assertEqual(old_bytes[0], bundle_path.read_bytes())
         self.assertEqual(old_bytes[1], manifest_path.read_bytes())
+
+    def test_public_filesystem_failures_include_path_and_remediation(self) -> None:
+        def source_read_case(root: Path):
+            patcher = mock.patch.object(
+                Path,
+                "read_bytes",
+                autospec=True,
+                side_effect=OSError("source read denied"),
+            )
+            return patcher, lambda: build_distribution(root), "core/pedagogy.md"
+
+        def stage_write_case(root: Path):
+            result = build_distribution(root)
+            patcher = mock.patch(
+                "learning_tutor.build.tempfile.NamedTemporaryFile",
+                side_effect=OSError("stage write denied"),
+            )
+            return patcher, lambda: write_distribution(root, result), "prompt.md"
+
+        def distribution_operation_case(root: Path):
+            result = build_distribution(root)
+            patcher = mock.patch(
+                "learning_tutor.build.tempfile.mkdtemp",
+                side_effect=OSError("stage directory denied"),
+            )
+            return patcher, lambda: write_distribution(root, result), "dist"
+
+        def manifest_read_case(root: Path):
+            result = build_distribution(root)
+            write_distribution(root, result)
+            patcher = mock.patch.object(
+                Path,
+                "read_bytes",
+                autospec=True,
+                side_effect=OSError("manifest read denied"),
+            )
+            return patcher, lambda: export_prompt(root=root), "manifest.json"
+
+        def bundle_read_case(root: Path):
+            result = build_distribution(root)
+            write_distribution(root, result)
+            real_read = Path.read_bytes
+
+            def fail_bundle(path: Path) -> bytes:
+                if path.name == "learning-tutor.prompt.md":
+                    raise OSError("bundle read denied")
+                return real_read(path)
+
+            patcher = mock.patch.object(
+                Path,
+                "read_bytes",
+                autospec=True,
+                side_effect=fail_bundle,
+            )
+            return patcher, lambda: export_prompt(root=root), "prompt.md"
+
+        def output_parent_case(root: Path):
+            result = build_distribution(root)
+            write_distribution(root, result)
+            output = root / "out/prompt.md"
+            patcher = mock.patch.object(
+                Path,
+                "mkdir",
+                autospec=True,
+                side_effect=OSError("output parent denied"),
+            )
+            return patcher, lambda: export_prompt(output, root=root), "out"
+
+        def output_write_case(root: Path):
+            result = build_distribution(root)
+            write_distribution(root, result)
+            output = root / "prompt-copy.md"
+            patcher = mock.patch(
+                "learning_tutor.build.tempfile.NamedTemporaryFile",
+                side_effect=OSError("output write denied"),
+            )
+            return patcher, lambda: export_prompt(output, root=root), "prompt-copy.md"
+
+        cases = (
+            ("source read", source_read_case),
+            ("staged artifact write", stage_write_case),
+            ("distribution operation", distribution_operation_case),
+            ("manifest artifact read", manifest_read_case),
+            ("bundle artifact read", bundle_read_case),
+            ("output parent creation", output_parent_case),
+            ("output write", output_write_case),
+        )
+        for name, prepare in cases:
+            with self.subTest(path=name):
+                temporary, root = self.make_repository()
+                try:
+                    patcher, operation, expected_path = prepare(root)
+                    with patcher:
+                        with self.assertRaises(FilesystemError) as raised:
+                            operation()
+                    self.assertIn(expected_path, str(raised.exception.path))
+                    self.assertTrue(raised.exception.remediation)
+                finally:
+                    temporary.cleanup()
 
     def test_directory_swap_failure_rolls_back_complete_old_distribution(self) -> None:
         temporary, root = self.make_repository()
@@ -300,9 +448,11 @@ class BuildTests(unittest.TestCase):
             real_replace(source, destination)
 
         with mock.patch("learning_tutor.build.os.replace", side_effect=fail_new_directory):
-            with self.assertRaisesRegex(FilesystemError, "swap"):
+            with self.assertRaisesRegex(FilesystemError, "swap") as raised:
                 write_distribution(root, new_result)
 
+        self.assertIn("dist", str(raised.exception.path))
+        self.assertTrue(raised.exception.remediation)
         self.assertEqual(old_bytes[0], bundle_path.read_bytes())
         self.assertEqual(old_bytes[1], manifest_path.read_bytes())
 

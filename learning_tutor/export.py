@@ -26,7 +26,11 @@ def _read_artifact(path: Path, label: str) -> bytes:
             remediation="run 'learning-tutor build'",
         ) from error
     except OSError as error:
-        raise FilesystemError(f"{label} could not be read", path=path) from error
+        raise FilesystemError(
+            f"{label} could not be read",
+            path=path,
+            remediation="check artifact permissions and run 'learning-tutor build'",
+        ) from error
 
 
 def export_prompt(output: Path | None = None, *, root: Path | None = None) -> None:
@@ -87,5 +91,6 @@ def export_prompt(output: Path | None = None, *, root: Path | None = None) -> No
         raise FilesystemError(
             "export directory could not be created",
             path=safe_output.parent,
+            remediation="choose a writable directory inside the repository",
         ) from error
     _atomic_write(safe_output, bundle_bytes)
