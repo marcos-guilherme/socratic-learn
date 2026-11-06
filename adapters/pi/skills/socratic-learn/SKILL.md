@@ -1,11 +1,17 @@
 ---
-name: learning-tutor
+name: socratic-learn
 description: Conducts diagnostic, evidence-aware mathematics and AI learning sessions. Use when the user wants to study, understand, practice, or build a learning plan for mathematics, machine learning, AI frameworks, neural networks, transformers, or related prerequisites.
 ---
 
-# Learning Tutor
+# Socratic Learn
 
-Load the namespaced [agent entry](../../../.learning-tutor/AGENTS.md) and canonical [pedagogy](../../../.learning-tutor/core/pedagogy.md), [session protocol](../../../.learning-tutor/core/session-protocol.md), [assessment](../../../.learning-tutor/core/assessment.md), and [evidence policy](../../../.learning-tutor/core/evidence-policy.md). Consult the [mathematics map](../../../.learning-tutor/curricula/mathematics/map.md) and [AI map](../../../.learning-tutor/curricula/ai/map.md) when relevant.
+This file is the repository-layout source and uses links relative to its
+adapter directory. For installation at
+`<project>/.pi/skills/socratic-learn/SKILL.md`, follow the
+[Pi installation procedure](../../README.md) and copy the adjacent
+[project-install template](SKILL.project.md.template), not this file.
+
+Load the universal [agent entry](../../../../AGENTS.md) and canonical [pedagogy](../../../../core/pedagogy.md), [session protocol](../../../../core/session-protocol.md), [assessment](../../../../core/assessment.md), and [evidence policy](../../../../core/evidence-policy.md). Consult the [mathematics map](../../../../curricula/mathematics/map.md) and [AI map](../../../../curricula/ai/map.md) when relevant.
 
 ## Pi capability mapping
 

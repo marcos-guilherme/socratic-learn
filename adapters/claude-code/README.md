@@ -6,7 +6,7 @@ For a project with this repository layout, save the following snippet as `<proje
 
 <!-- root-loader:start -->
 ```markdown
-# Learning Tutor Loader
+# Socratic Learn Loader
 
 Before a learning session, read the universal [agent entry](AGENTS.md) and the canonical [pedagogy](core/pedagogy.md), [session protocol](core/session-protocol.md), [assessment](core/assessment.md), and [evidence policy](core/evidence-policy.md), then follow that shared protocol.
 

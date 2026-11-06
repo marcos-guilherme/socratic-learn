@@ -55,16 +55,16 @@ CURRICULUM_FIELD_RE = re.compile(
     re.MULTILINE,
 )
 ADAPTER_ENTRIES = (
-    ".cursor/skills/learning-tutor/SKILL.md",
+    ".cursor/skills/socratic-learn/SKILL.md",
     "adapters/cursor/README.md",
     "adapters/claude-code/CLAUDE.md",
     "adapters/claude-code/README.md",
-    "adapters/pi/skills/learning-tutor/SKILL.md",
+    "adapters/pi/skills/socratic-learn/SKILL.md",
     "adapters/pi/README.md",
 )
 ADAPTER_SKILLS = (
-    ".cursor/skills/learning-tutor/SKILL.md",
-    "adapters/pi/skills/learning-tutor/SKILL.md",
+    ".cursor/skills/socratic-learn/SKILL.md",
+    "adapters/pi/skills/socratic-learn/SKILL.md",
 )
 MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 ROOT_CLAUDE_LOADER_RE = re.compile(
@@ -72,8 +72,8 @@ ROOT_CLAUDE_LOADER_RE = re.compile(
     r"\s*<!-- root-loader:end -->",
     re.DOTALL,
 )
-PI_PROJECT_TEMPLATE = "adapters/pi/skills/learning-tutor/SKILL.project.md.template"
-PI_PACKAGE_DIRECTORY = ".learning-tutor"
+PI_PROJECT_TEMPLATE = "adapters/pi/skills/socratic-learn/SKILL.project.md.template"
+PI_PACKAGE_DIRECTORY = ".socratic-learn"
 SESSION_H2_HEADINGS = (
     "## Outcome",
     "## Diagnostic evidence",
@@ -165,11 +165,11 @@ class RepositoryValidationTests(unittest.TestCase):
             "templates/learning-goal.md",
             "templates/session-log.md",
             "templates/progress.md",
-            ".cursor/skills/learning-tutor/SKILL.md",
+            ".cursor/skills/socratic-learn/SKILL.md",
             "adapters/cursor/README.md",
             "adapters/claude-code/CLAUDE.md",
             "adapters/claude-code/README.md",
-            "adapters/pi/skills/learning-tutor/SKILL.md",
+            "adapters/pi/skills/socratic-learn/SKILL.md",
             PI_PROJECT_TEMPLATE,
             "adapters/pi/README.md",
             "workspace.example/learner-profile.md",
@@ -196,14 +196,14 @@ class RepositoryValidationTests(unittest.TestCase):
             shutil.copy2(source_root / relative, root / relative)
         skill = (
             "---\n"
-            "name: learning-tutor\n"
+            "name: socratic-learn\n"
             "description: Conducts structured learning sessions.\n"
-            "---\n\n# Learning Tutor\n"
+            "---\n\n# Socratic Learn\n"
         )
-        (root / ".cursor/skills/learning-tutor/SKILL.md").write_text(
+        (root / ".cursor/skills/socratic-learn/SKILL.md").write_text(
             skill, encoding="utf-8"
         )
-        (root / "adapters/pi/skills/learning-tutor/SKILL.md").write_text(
+        (root / "adapters/pi/skills/socratic-learn/SKILL.md").write_text(
             skill, encoding="utf-8"
         )
         (root / "AGENTS.md").write_text(
@@ -295,7 +295,7 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn("adapters/pi/README.md", linked_targets)
         self.assertIn(PI_PROJECT_TEMPLATE, linked_targets)
         self.assertNotIn(
-            "adapters/pi/skills/learning-tutor/SKILL.md",
+            "adapters/pi/skills/socratic-learn/SKILL.md",
             linked_targets,
         )
 
@@ -305,7 +305,7 @@ class RepositoryValidationTests(unittest.TestCase):
             with self.subTest(skill=relative):
                 text = (root / relative).read_text(encoding="utf-8")
                 frontmatter = text.split("---\n", 2)[1].lower()
-                self.assertIn("name: learning-tutor", frontmatter)
+                self.assertIn("name: socratic-learn", frontmatter)
                 for term in ("mathematics", "ai", "diagnos", "learning sessions"):
                     self.assertIn(term, frontmatter)
 
@@ -372,7 +372,7 @@ class RepositoryValidationTests(unittest.TestCase):
 
         with TemporaryDirectory() as temp:
             project = Path(temp) / "project"
-            destination = project / ".pi/skills/learning-tutor/SKILL.md"
+            destination = project / ".pi/skills/socratic-learn/SKILL.md"
             destination.parent.mkdir(parents=True)
             shutil.copy2(template, destination)
             package = project / PI_PACKAGE_DIRECTORY
@@ -430,7 +430,7 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn("agents.md", visible)
         self.assertRegex(visible, r"does not (?:overwrite|write to)")
         self.assertIn("manual", visible)
-        self.assertIn(".learning-tutor/AGENTS.md", text)
+        self.assertIn(".socratic-learn/AGENTS.md", text)
 
     def test_pi_installation_aborts_for_preexisting_skill_directory(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -446,7 +446,7 @@ class RepositoryValidationTests(unittest.TestCase):
 
         with TemporaryDirectory() as temp:
             project = Path(temp) / "project"
-            skill_directory = project / ".pi/skills/learning-tutor"
+            skill_directory = project / ".pi/skills/socratic-learn"
             skill_directory.mkdir(parents=True)
             self.assertTrue(skill_directory.is_dir())
             self.assertFalse((skill_directory / "SKILL.md").exists())
@@ -888,14 +888,14 @@ class RepositoryValidationTests(unittest.TestCase):
     def test_invalid_skill_frontmatter_fails(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
-        skill = root / ".cursor/skills/learning-tutor/SKILL.md"
-        skill.write_text("---\nname: Learning Tutor\n---\n", encoding="utf-8")
+        skill = root / ".cursor/skills/socratic-learn/SKILL.md"
+        skill.write_text("---\nname: Socratic Learn\n---\n", encoding="utf-8")
         self.assertTrue(any("frontmatter" in error for error in validate(root)))
 
     def test_unrelated_skill_name_fails_with_existing_diagnostic(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
-        skill = root / ".cursor/skills/learning-tutor/SKILL.md"
+        skill = root / ".cursor/skills/socratic-learn/SKILL.md"
         skill.write_text(
             "---\n"
             "name: unrelated-skill\n"
@@ -904,7 +904,7 @@ class RepositoryValidationTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertIn(
-            "Invalid skill frontmatter: .cursor/skills/learning-tutor/SKILL.md",
+            "Invalid skill frontmatter: .cursor/skills/socratic-learn/SKILL.md",
             validate(root),
         )
 

@@ -1,9 +1,9 @@
 ---
-name: learning-tutor
+name: socratic-learn
 description: Conducts diagnostic, evidence-aware mathematics and AI learning sessions. Use when the user wants to study, understand, practice, or build a learning plan for mathematics, machine learning, AI frameworks, neural networks, transformers, or related prerequisites.
 ---
 
-# Learning Tutor
+# Socratic Learn
 
 Before conducting a learning session, load the universal [agent entry](../../../AGENTS.md) and its canonical [pedagogy](../../../core/pedagogy.md), [session protocol](../../../core/session-protocol.md), [assessment](../../../core/assessment.md), and [evidence policy](../../../core/evidence-policy.md). Use the [mathematics map](../../../curricula/mathematics/map.md) and [AI map](../../../curricula/ai/map.md) only as needed for the learner's objective.
 

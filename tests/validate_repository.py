@@ -29,12 +29,12 @@ REQUIRED_PATHS = (
     "templates/learning-goal.md",
     "templates/session-log.md",
     "templates/progress.md",
-    ".cursor/skills/learning-tutor/SKILL.md",
+    ".cursor/skills/socratic-learn/SKILL.md",
     "adapters/cursor/README.md",
     "adapters/claude-code/CLAUDE.md",
     "adapters/claude-code/README.md",
-    "adapters/pi/skills/learning-tutor/SKILL.md",
-    "adapters/pi/skills/learning-tutor/SKILL.project.md.template",
+    "adapters/pi/skills/socratic-learn/SKILL.md",
+    "adapters/pi/skills/socratic-learn/SKILL.project.md.template",
     "adapters/pi/README.md",
     "workspace.example/learner-profile.md",
     "workspace.example/learning-goal.md",
@@ -66,8 +66,8 @@ REQUIRED_PATHS = (
     ".github/workflows/native-python.yml",
 )
 SKILL_PATHS = (
-    ".cursor/skills/learning-tutor/SKILL.md",
-    "adapters/pi/skills/learning-tutor/SKILL.md",
+    ".cursor/skills/socratic-learn/SKILL.md",
+    "adapters/pi/skills/socratic-learn/SKILL.md",
 )
 ADAPTER_ROOTS = (".cursor", "adapters")
 LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
@@ -306,7 +306,7 @@ def validate(root: Path) -> list[str]:
             frontmatter is None
             or not SKILL_NAME_RE.fullmatch(frontmatter.get("name", ""))
             or frontmatter.get("name") != path.parent.name
-            or frontmatter.get("name") != "learning-tutor"
+            or frontmatter.get("name") != "socratic-learn"
             or not frontmatter.get("description")
         ):
             errors.append(f"Invalid skill frontmatter: {relative}")
