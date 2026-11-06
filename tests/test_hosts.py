@@ -7,6 +7,10 @@ from socratic_learn.hosts import ADAPTERS, command_for, detect_hosts
 
 
 class HostAdapterTests(unittest.TestCase):
+    def test_public_adapter_registry_cannot_be_mutated(self) -> None:
+        with self.assertRaises(TypeError):
+            ADAPTERS["pi"] = ADAPTERS["claude"]  # type: ignore[index]
+
     def test_detection_uses_supported_executable_names(self) -> None:
         found = {
             "pi": "C:/bin/pi.exe",
@@ -50,6 +54,12 @@ class HostAdapterTests(unittest.TestCase):
             ),
             command_for(ADAPTERS["antigravity"], "agy", protocol, goal),
         )
+        antigravity = command_for(
+            ADAPTERS["antigravity"], "agy", protocol, goal
+        )
+        self.assertEqual(3, len(antigravity))
+        self.assertNotIn(goal, antigravity)
+        self.assertIn(goal, antigravity[2])
 
     def test_detection_uses_first_resolved_executable_per_adapter(self) -> None:
         looked_up: list[str] = []

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Literal
 
 
@@ -40,11 +41,13 @@ def _antigravity(executable: str, protocol: Path, goal: str) -> tuple[str, ...]:
     return executable, "--prompt-interactive", bootstrap
 
 
-ADAPTERS: dict[AgentName, HostAdapter] = {
-    "pi": HostAdapter("pi", ("pi",), _pi),
-    "claude": HostAdapter("claude", ("claude",), _claude),
-    "antigravity": HostAdapter("antigravity", ("agy",), _antigravity),
-}
+ADAPTERS: Mapping[AgentName, HostAdapter] = MappingProxyType(
+    {
+        "pi": HostAdapter("pi", ("pi",), _pi),
+        "claude": HostAdapter("claude", ("claude",), _claude),
+        "antigravity": HostAdapter("antigravity", ("agy",), _antigravity),
+    }
+)
 
 
 def detect_hosts(
