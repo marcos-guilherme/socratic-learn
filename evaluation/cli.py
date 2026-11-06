@@ -44,11 +44,25 @@ from evaluation.session import (
 REPOSITORY = Path(__file__).resolve().parents[1]
 EXPECTED_BRANCH = "feat/semantic-evaluation-runtime-ux"
 BLOCKED_EXIT_CODE = 2
+PREFLIGHT_TIMEOUT_SECONDS = 30.0
+PRECHECK_REFUSAL_MESSAGE = "BLOCKED: Semantic evaluation precheck refused.\n"
+RUN_FAILURE_MESSAGE = "BLOCKED: Semantic evaluation run failed.\n"
+ISOLATION_FAILURE_MESSAGE = (
+    "BLOCKED: Post-run isolation verification failed.\n"
+)
 _IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 class CliRefusal(ValueError):
     """A fixed, non-sensitive command refusal suitable for stderr."""
+
+
+class _RunPhaseFailure(RuntimeError):
+    """A private run failed; its original detail must not reach the console."""
+
+
+class _IsolationVerificationFailure(RuntimeError):
+    """Post-run isolation verification failed without exposing path details."""
 
 
 class _SafeArgumentParser(argparse.ArgumentParser):
@@ -80,7 +94,10 @@ def _invoke(
             text=True,
             encoding="utf-8",
             check=False,
+            timeout=PREFLIGHT_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired:
+        raise CliRefusal("Required preflight command timed out.") from None
     except (OSError, subprocess.SubprocessError, UnicodeError):
         raise CliRefusal("Required preflight command could not be executed.") from None
 
@@ -258,12 +275,6 @@ def _run_command(
 ) -> int:
     suite_id = _identifier(args.suite_id, "Suite")
     selected_scenario = _scenario(repository, args.scenario)
-    checked = _preflight(
-        repository,
-        Path(args.model_file),
-        run_process=run_process,
-    )
-    run_id = f"{suite_id}-{selected_scenario.identifier}"
     expected_run_dir = (
         repository
         / ".semantic-runs"
@@ -272,6 +283,12 @@ def _run_command(
     )
     if os.path.lexists(expected_run_dir):
         raise CliRefusal("Evaluation run already exists.")
+    checked = _preflight(
+        repository,
+        Path(args.model_file),
+        run_process=run_process,
+    )
+    run_id = f"{suite_id}-{selected_scenario.identifier}"
 
     layout = create_run_layout(
         repository,
@@ -306,9 +323,14 @@ def _run_command(
                 "post-handoff runtime removal failed: "
                 f"{type(cleanup_error).__name__}"
             )
+        if isinstance(primary, Exception):
+            raise _RunPhaseFailure from None
         raise
 
-    verify_run_isolation(layout.run_dir, repository)
+    try:
+        verify_run_isolation(layout.run_dir, repository)
+    except Exception:
+        raise _IsolationVerificationFailure from None
     output.write("Semantic evaluation session completed.\n")
     return 0
 
@@ -342,28 +364,37 @@ def main(
         if args.command == "verify-isolation":
             suite_id = _identifier(args.suite_id, "Suite")
             scenario_id = _identifier(args.scenario, "Scenario")
-            verify_run_isolation(
-                repository
-                / ".semantic-runs"
-                / suite_id
-                / scenario_id,
-                repository,
-            )
+            try:
+                verify_run_isolation(
+                    repository
+                    / ".semantic-runs"
+                    / suite_id
+                    / scenario_id,
+                    repository,
+                )
+            except Exception:
+                raise _IsolationVerificationFailure from None
             output.write("Runtime isolation verified.\n")
             return 0
         error.write("BLOCKED: Command is not available until Task 8.\n")
         return BLOCKED_EXIT_CODE
-    except CliRefusal as refusal:
-        error.write(f"BLOCKED: {refusal}\n")
+    except _IsolationVerificationFailure:
+        error.write(ISOLATION_FAILURE_MESSAGE)
+        return BLOCKED_EXIT_CODE
+    except _RunPhaseFailure:
+        error.write(RUN_FAILURE_MESSAGE)
+        return BLOCKED_EXIT_CODE
+    except CliRefusal:
+        error.write(PRECHECK_REFUSAL_MESSAGE)
         return BLOCKED_EXIT_CODE
     except (ContractCaptureError, FileExistsError, OSError, UnicodeError, ValueError):
-        error.write("BLOCKED: Semantic evaluation precheck failed.\n")
+        error.write(PRECHECK_REFUSAL_MESSAGE)
         return BLOCKED_EXIT_CODE
     except RuntimeCleanupError:
-        error.write("BLOCKED: Runtime cleanup did not complete.\n")
+        error.write(RUN_FAILURE_MESSAGE)
         return BLOCKED_EXIT_CODE
     except Exception:
-        error.write("BLOCKED: Semantic evaluation run failed.\n")
+        error.write(RUN_FAILURE_MESSAGE)
         return BLOCKED_EXIT_CODE
 
 
