@@ -24,6 +24,7 @@ from .safe_fs import (
     ParentIdentity,
     PathIdentity,
     TrackedDirectory,
+    _lock_windows_chain,
     identity_bound_mkdir,
     identity_bound_replace,
     path_identity,
@@ -804,14 +805,26 @@ def _link_staged_file(source: Path, destination: Path) -> LinkedFile:
     parent_chain = _capture_parent_chain(project, destination)
     identity = _path_identity(source)
     parent_descriptor: int | None = None
+    windows_locks: list[int] = []
     if _supports_bound_parent_operations():
         parent_descriptor = _open_verified_parent(parent_chain[-1])
+    elif os.name == "nt":
+        windows_locks.extend(_lock_windows_chain(parent_chain))
+
+    def close_parent_binding() -> None:
+        nonlocal parent_descriptor
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
+            parent_descriptor = None
+        for descriptor in reversed(windows_locks):
+            os.close(descriptor)
+        windows_locks.clear()
+
     try:
         _before_link_publication(source, destination)
         _verify_parent_chain(project, destination, parent_chain)
     except (LearningTutorError, OSError) as error:
-        if parent_descriptor is not None:
-            os.close(parent_descriptor)
+        close_parent_binding()
         raise _parent_chain_publication_error(
             destination,
             original_parent=parent_chain[-1],
@@ -829,16 +842,14 @@ def _link_staged_file(source: Path, destination: Path) -> LinkedFile:
                 follow_symlinks=False,
             )
     except FileExistsError as error:
-        if parent_descriptor is not None:
-            os.close(parent_descriptor)
+        close_parent_binding()
         raise CollisionError(
             "installation destination appeared after planning",
             path=destination,
             remediation="preserve the new path and create a new installation plan",
         ) from error
     except OSError as error:
-        if parent_descriptor is not None:
-            os.close(parent_descriptor)
+        close_parent_binding()
         raise FilesystemError(
             "staged file could not be linked to its destination",
             path=destination,
@@ -870,16 +881,14 @@ def _link_staged_file(source: Path, destination: Path) -> LinkedFile:
                 remediation="preserve the destination and inspect it",
             )
     except (LearningTutorError, OSError) as error:
-        if parent_descriptor is not None:
-            os.close(parent_descriptor)
+        close_parent_binding()
         raise _parent_chain_publication_error(
             destination,
             original_parent=parent_chain[-1],
             published=True,
             original=error,
         ) from error
-    if parent_descriptor is not None:
-        os.close(parent_descriptor)
+    close_parent_binding()
     return LinkedFile(destination, identity, project, parent_chain)
 
 

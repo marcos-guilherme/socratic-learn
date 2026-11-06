@@ -466,6 +466,7 @@ class BuildTests(unittest.TestCase):
                 finally:
                     temporary.cleanup()
 
+    @unittest.skipUnless(__import__("os").name == "nt", "requires Windows handle rename")
     def test_directory_swap_failure_rolls_back_complete_old_distribution(self) -> None:
         temporary, root = self.make_repository()
         self.addCleanup(temporary.cleanup)
@@ -478,19 +479,24 @@ class BuildTests(unittest.TestCase):
             encoding="utf-8",
         )
         new_result = build_distribution(root)
-        real_replace = __import__("os").replace
+        safe_fs = __import__(
+            "learning_tutor.safe_fs",
+            fromlist=["_windows_handle_rename_no_replace"],
+        )
+        real_replace = safe_fs._windows_handle_rename_no_replace
+        injected = False
 
-        def fail_new_directory(source, destination) -> None:
-            source_path = Path(source)
-            destination_path = Path(destination)
-            if (
-                source_path.name.startswith(".dist-stage-")
-                and destination_path.name == "dist"
-            ):
+        def fail_new_directory(source_descriptor, destination: Path) -> None:
+            nonlocal injected
+            if not injected and destination.name == "dist":
+                injected = True
                 raise OSError("injected directory swap failure")
-            real_replace(source, destination)
+            real_replace(source_descriptor, destination)
 
-        with mock.patch("learning_tutor.build.os.replace", side_effect=fail_new_directory):
+        with mock.patch(
+            "learning_tutor.safe_fs._windows_handle_rename_no_replace",
+            side_effect=fail_new_directory,
+        ):
             with self.assertRaisesRegex(FilesystemError, "swap") as raised:
                 write_distribution(root, new_result)
 

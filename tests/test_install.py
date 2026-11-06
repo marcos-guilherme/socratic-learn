@@ -557,10 +557,15 @@ class InstallTests(unittest.TestCase):
         ):
             apply_install(plan)
 
-        self.assertEqual(b"external parent before link", sentinel.read_bytes())
-        linked = detached / "SKILL.md"
-        if linked.exists():
-            self.assertIn("parent chain", str(raised.exception).lower())
+        if os.name == "nt":
+            self.assertTrue(parent.is_dir())
+            self.assertFalse(detached.exists())
+            self.assertFalse(sentinel.exists())
+        else:
+            self.assertEqual(b"external parent before link", sentinel.read_bytes())
+            linked = detached / "SKILL.md"
+            if linked.exists():
+                self.assertIn("parent chain", str(raised.exception).lower())
         self.assertFalse((self.project / ".learning-tutor").exists())
 
     def test_parent_replacement_after_link_preserves_external_tree(self) -> None:
@@ -588,10 +593,16 @@ class InstallTests(unittest.TestCase):
         ):
             apply_install(plan)
 
-        self.assertEqual(b"external parent after link", sentinel.read_bytes())
-        linked = detached / "SKILL.md"
-        if linked.exists():
-            self.assertIn("parent chain", str(raised.exception).lower())
+        if os.name == "nt":
+            self.assertTrue(parent.is_dir())
+            self.assertFalse(detached.exists())
+            self.assertFalse(sentinel.exists())
+            self.assertTrue((parent / "SKILL.md").is_file())
+        else:
+            self.assertEqual(b"external parent after link", sentinel.read_bytes())
+            linked = detached / "SKILL.md"
+            if linked.exists():
+                self.assertIn("parent chain", str(raised.exception).lower())
         self.assertFalse((self.project / ".learning-tutor").exists())
 
     def test_parent_symlink_swap_preserves_external_directory(self) -> None:
@@ -784,32 +795,35 @@ class InstallTests(unittest.TestCase):
             any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir())
         )
 
-    def test_update_hashes_bytes_after_atomic_backup_move(self) -> None:
+    @unittest.skipUnless(os.name == "nt", "requires Windows source handle binding")
+    def test_update_backup_rejects_final_source_replacement(self) -> None:
         self._install()
         plan = plan_install(self.source, self.project, "generic", True)
         manifest = self.project / ".learning-tutor/manifest.json"
-        real_replace = os.replace
+        detached = self.project / "detached-manifest"
+        original = manifest.read_bytes()
         injected = False
 
-        def mutate_during_backup(source, destination):
+        def replace_source(source: Path, destination: Path) -> None:
             nonlocal injected
-            source_path = Path(source)
-            destination_path = Path(destination)
             if (
                 not injected
-                and source_path == manifest
-                and ".learning-tutor-backup-" in str(destination_path)
+                and source == manifest
+                and destination.name == "manifest.json"
+                and ".learning-tutor-backup-" in str(destination)
             ):
                 injected = True
-                source_path.write_bytes(b"mutated during backup move")
-            real_replace(source_path, destination_path)
+                manifest.rename(detached)
+                manifest.write_bytes(b"external source replacement")
 
-        with mock.patch(
-            "learning_tutor.install.os.replace",
-            side_effect=mutate_during_backup,
+        with (
+            mock.patch(
+                "learning_tutor.safe_fs._before_bound_replace",
+                side_effect=replace_source,
+            ),
+            self.assertRaises(FilesystemError) as raised,
         ):
-            with self.assertRaises(FilesystemError) as raised:
-                apply_install(plan)
+            apply_install(plan)
 
         backups = [
             path
@@ -818,8 +832,10 @@ class InstallTests(unittest.TestCase):
         ]
         self.assertEqual(1, len(backups))
         backup_manifest = backups[0] / ".learning-tutor/manifest.json"
-        self.assertEqual(b"mutated during backup move", backup_manifest.read_bytes())
-        self.assertFalse(manifest.exists())
+        self.assertTrue(injected)
+        self.assertEqual(original, detached.read_bytes())
+        self.assertEqual(b"external source replacement", manifest.read_bytes())
+        self.assertFalse(backup_manifest.exists())
         self.assertIn(str(backup_manifest), str(raised.exception))
         self.assertTrue(
             any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir())
@@ -1238,18 +1254,25 @@ class InstallTests(unittest.TestCase):
         first_relative = plan.previous_receipt.owned_paths[0]
         first_source = self.project.joinpath(*first_relative.split("/"))
         first_bytes = first_source.read_bytes()
-        real_replace = os.replace
+        safe_fs = __import__(
+            "learning_tutor.safe_fs",
+            fromlist=["_windows_handle_rename_no_replace"],
+        )
+        real_replace = safe_fs._windows_handle_rename_no_replace
         backup_moves = 0
 
-        def fail_backup(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+        def fail_backup(source_descriptor: int, destination: Path) -> None:
             nonlocal backup_moves
             if ".learning-tutor-backup-" in str(destination):
                 backup_moves += 1
                 if backup_moves == 2:
                     raise OSError("injected backup failure")
-            real_replace(source, destination)
+            real_replace(source_descriptor, destination)
 
-        with mock.patch("learning_tutor.install.os.replace", side_effect=fail_backup):
+        with mock.patch(
+            "learning_tutor.safe_fs._windows_handle_rename_no_replace",
+            side_effect=fail_backup,
+        ):
             with self.assertRaises(FilesystemError) as raised:
                 apply_install(plan)
 
@@ -1294,8 +1317,12 @@ class InstallTests(unittest.TestCase):
         ):
             apply_install(plan)
 
-        self.assertEqual(b"external backup race winner", manifest.read_bytes())
-        self.assertEqual(original, (detached / "manifest.json").read_bytes())
+        if os.name == "nt":
+            self.assertEqual(original, manifest.read_bytes())
+            self.assertFalse(detached.exists())
+        else:
+            self.assertEqual(b"external backup race winner", manifest.read_bytes())
+            self.assertEqual(original, (detached / "manifest.json").read_bytes())
         self.assertIn("preserv", str(raised.exception).lower())
 
     def test_parent_mkdir_binds_original_ancestor(self) -> None:
@@ -1321,10 +1348,15 @@ class InstallTests(unittest.TestCase):
         ):
             apply_install(plan)
 
-        self.assertEqual(
-            b"external ancestor winner",
-            (cursor / "external.txt").read_bytes(),
-        )
+        if os.name == "nt":
+            self.assertTrue(cursor.is_dir())
+            self.assertFalse(detached.exists())
+            self.assertFalse((cursor / "external.txt").exists())
+        else:
+            self.assertEqual(
+                b"external ancestor winner",
+                (cursor / "external.txt").read_bytes(),
+            )
         self.assertFalse((cursor / "skills").exists())
         self.assertIn("preserv", str(raised.exception).lower())
 
