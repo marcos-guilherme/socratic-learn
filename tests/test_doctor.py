@@ -25,6 +25,10 @@ from socratic_learn.install import (
     plan_install,
 )
 from socratic_learn.manifest import serialize_json
+from tests.legacy_install_fixture import (
+    create_valid_legacy_install,
+    snapshot_tree,
+)
 
 
 class DoctorTests(unittest.TestCase):
@@ -63,12 +67,31 @@ class DoctorTests(unittest.TestCase):
     def _codes(diagnostics: list[Diagnostic]) -> list[str]:
         return [item.code for item in diagnostics]
 
+    def test_doctor_reports_legacy_migration_without_mutation(self) -> None:
+        project = self.root / "legacy"
+        project.mkdir()
+        create_valid_legacy_install(project, target="cursor")
+        before = snapshot_tree(project)
+
+        diagnostics = diagnose(project)
+
+        self.assertIn("legacy-installation", self._codes(diagnostics))
+        self.assertEqual(before, snapshot_tree(project))
+
+    def test_doctor_reports_both_installation_roots_as_collision(self) -> None:
+        project = self._installed()
+        create_valid_legacy_install(project, target="generic")
+
+        diagnostics = diagnose(project)
+
+        self.assertIn("installation-root-collision", self._codes(diagnostics))
+
     def test_all_target_discovery_paths_are_healthy(self) -> None:
         cases = (
-            ("generic", ".learning-tutor/loader.md"),
-            ("cursor", ".cursor/skills/learning-tutor/SKILL.md"),
+            ("generic", ".socratic-learn/loader.md"),
+            ("cursor", ".cursor/skills/socratic-learn/SKILL.md"),
             ("claude-code", "CLAUDE.md"),
-            ("pi", ".pi/skills/learning-tutor/SKILL.md"),
+            ("pi", ".pi/skills/socratic-learn/SKILL.md"),
         )
         for target, discovery_path in cases:
             with self.subTest(target=target):
@@ -100,9 +123,10 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual([], diagnose(project))
         self.assertTrue(receipt_path.is_file())
 
-    def test_task5_schema_one_receipts_remain_exact_and_update_compatible(self) -> None:
+    def test_schema_two_receipts_remain_exact_and_update_compatible(self) -> None:
         receipt_keys = {
             "schema_version",
+            "product",
             "protocol_version",
             "target",
             "owned_paths",
@@ -125,9 +149,11 @@ class DoctorTests(unittest.TestCase):
                         encoding="utf-8",
                     )
                 apply_install(plan_install(self.source, project, target, False))
-                receipt_path, legacy_receipt = self._receipt(project)
-                self.assertEqual(receipt_keys, set(legacy_receipt))
-                self._write_receipt(receipt_path, legacy_receipt)
+                receipt_path, canonical_receipt = self._receipt(project)
+                self.assertEqual(2, canonical_receipt["schema_version"])
+                self.assertEqual("socratic-learn", canonical_receipt["product"])
+                self.assertEqual(receipt_keys, set(canonical_receipt))
+                self._write_receipt(receipt_path, canonical_receipt)
                 if manual_claude:
                     with (project / "CLAUDE.md").open(
                         "a",
@@ -176,7 +202,7 @@ class DoctorTests(unittest.TestCase):
     def test_partial_install_without_receipt_still_reports_unsafe_paths(self) -> None:
         project = self._installed()
         (project / RECEIPT_PATH).unlink()
-        manifest = project / ".learning-tutor/manifest.json"
+        manifest = project / ".socratic-learn/manifest.json"
         real_stat = Path.stat
 
         def marked_stat(path: Path, *, follow_symlinks: bool = True):
@@ -197,12 +223,12 @@ class DoctorTests(unittest.TestCase):
 
         self.assertIn("missing-receipt", self._codes(diagnostics))
         item = next(item for item in diagnostics if item.code == "unsafe-managed-path")
-        self.assertEqual(".learning-tutor/manifest.json", item.path)
+        self.assertEqual(".socratic-learn/manifest.json", item.path)
 
     def test_invalid_receipt_schema_is_actionable(self) -> None:
         project = self._installed()
         receipt_path, receipt = self._receipt(project)
-        receipt["schema_version"] = 2
+        receipt["schema_version"] = 3
         self._write_receipt(receipt_path, receipt)
 
         diagnostic = diagnose(project)[0]
@@ -214,22 +240,22 @@ class DoctorTests(unittest.TestCase):
 
     def test_changed_and_missing_owned_files_are_distinct(self) -> None:
         changed = self._installed()
-        (changed / ".learning-tutor/loader.md").write_text(
+        (changed / ".socratic-learn/loader.md").write_text(
             "changed\n",
             encoding="utf-8",
         )
         self.assertIn("owned-file-changed", self._codes(diagnose(changed)))
 
         missing = self._installed()
-        (missing / ".learning-tutor/loader.md").unlink()
+        (missing / ".socratic-learn/loader.md").unlink()
         diagnostics = diagnose(missing)
         self.assertIn("owned-file-missing", self._codes(diagnostics))
         item = next(item for item in diagnostics if item.code == "owned-file-missing")
-        self.assertEqual(".learning-tutor/loader.md", item.path)
+        self.assertEqual(".socratic-learn/loader.md", item.path)
 
     def test_bundle_hash_is_checked_against_installed_manifest(self) -> None:
         project = self._installed()
-        manifest_path = project / ".learning-tutor/manifest.json"
+        manifest_path = project / ".socratic-learn/manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["bundle"]["sha256"] = "0" * 64
         manifest_path.write_bytes(serialize_json(manifest))
@@ -237,7 +263,7 @@ class DoctorTests(unittest.TestCase):
         diagnostics = diagnose(project)
 
         item = next(item for item in diagnostics if item.code == "bundle-hash-mismatch")
-        self.assertEqual(".learning-tutor/learning-tutor.prompt.md", item.path)
+        self.assertEqual(".socratic-learn/socratic-learn.prompt.md", item.path)
         self.assertIn("manifest", item.message)
 
     def test_receipt_protocol_mismatch_is_reported(self) -> None:
@@ -254,11 +280,11 @@ class DoctorTests(unittest.TestCase):
 
     def test_broken_loader_reference_is_reported(self) -> None:
         project = self._installed()
-        loader = project / ".learning-tutor/loader.md"
+        loader = project / ".socratic-learn/loader.md"
         loader.write_text(
             loader.read_text(encoding="utf-8").replace(
-                ".learning-tutor/learning-tutor.prompt.md",
-                ".learning-tutor/missing.prompt.md",
+                ".socratic-learn/socratic-learn.prompt.md",
+                ".socratic-learn/missing.prompt.md",
             ),
             encoding="utf-8",
         )
@@ -266,27 +292,27 @@ class DoctorTests(unittest.TestCase):
         diagnostics = diagnose(project)
 
         item = next(item for item in diagnostics if item.code == "broken-loader-link")
-        self.assertEqual(".learning-tutor/loader.md", item.path)
+        self.assertEqual(".socratic-learn/loader.md", item.path)
 
     def test_wrong_native_discovery_path_is_reported(self) -> None:
         project = self._installed("cursor")
-        cursor_skill = project / ".cursor/skills/learning-tutor/SKILL.md"
-        wrong_skill = project / ".pi/skills/learning-tutor/SKILL.md"
+        cursor_skill = project / ".cursor/skills/socratic-learn/SKILL.md"
+        wrong_skill = project / ".pi/skills/socratic-learn/SKILL.md"
         wrong_skill.parent.mkdir(parents=True)
         cursor_skill.replace(wrong_skill)
 
         diagnostics = diagnose(project)
 
         item = next(item for item in diagnostics if item.code == "wrong-native-discovery-path")
-        self.assertEqual(".cursor/skills/learning-tutor/SKILL.md", item.path)
-        self.assertIn(".pi/skills/learning-tutor/SKILL.md", item.message)
+        self.assertEqual(".cursor/skills/socratic-learn/SKILL.md", item.path)
+        self.assertIn(".pi/skills/socratic-learn/SKILL.md", item.message)
 
     def test_wrong_known_discovery_paths_are_reported_for_every_owned_target(self) -> None:
         cases = (
-            ("generic", ".learning-tutor/loader.md", ".cursor/skills/learning-tutor/SKILL.md"),
-            ("cursor", ".cursor/skills/learning-tutor/SKILL.md", ".pi/skills/learning-tutor/SKILL.md"),
-            ("claude-code", "CLAUDE.md", ".pi/skills/learning-tutor/SKILL.md"),
-            ("pi", ".pi/skills/learning-tutor/SKILL.md", ".cursor/skills/learning-tutor/SKILL.md"),
+            ("generic", ".socratic-learn/loader.md", ".cursor/skills/socratic-learn/SKILL.md"),
+            ("cursor", ".cursor/skills/socratic-learn/SKILL.md", ".pi/skills/socratic-learn/SKILL.md"),
+            ("claude-code", "CLAUDE.md", ".pi/skills/socratic-learn/SKILL.md"),
+            ("pi", ".pi/skills/socratic-learn/SKILL.md", ".cursor/skills/socratic-learn/SKILL.md"),
         )
         for target, expected, wrong in cases:
             with self.subTest(target=target):
@@ -308,8 +334,8 @@ class DoctorTests(unittest.TestCase):
 
     def test_unreadable_wrong_discovery_candidate_is_actionable(self) -> None:
         project = self._installed("cursor")
-        expected = project / ".cursor/skills/learning-tutor/SKILL.md"
-        candidate = project / ".pi/skills/learning-tutor/SKILL.md"
+        expected = project / ".cursor/skills/socratic-learn/SKILL.md"
+        candidate = project / ".pi/skills/socratic-learn/SKILL.md"
         candidate.parent.mkdir(parents=True)
         expected.replace(candidate)
         candidate_status = candidate.stat()
@@ -333,12 +359,12 @@ class DoctorTests(unittest.TestCase):
             diagnostics = diagnose(project)
 
         item = next(item for item in diagnostics if item.code == "managed-path-unreadable")
-        self.assertEqual(".pi/skills/learning-tutor/SKILL.md", item.path)
+        self.assertEqual(".pi/skills/socratic-learn/SKILL.md", item.path)
         self.assertIn("injected candidate denial", item.message)
 
     def test_reparse_managed_path_is_rejected_before_read(self) -> None:
         project = self._installed()
-        manifest = project / ".learning-tutor/manifest.json"
+        manifest = project / ".socratic-learn/manifest.json"
         real_stat = Path.stat
         real_read_bytes = Path.read_bytes
         read_attempted = False
@@ -370,19 +396,19 @@ class DoctorTests(unittest.TestCase):
 
         self.assertFalse(read_attempted)
         item = next(item for item in diagnostics if item.code == "unsafe-managed-path")
-        self.assertEqual(".learning-tutor/manifest.json", item.path)
+        self.assertEqual(".socratic-learn/manifest.json", item.path)
         self.assertEqual(
             1,
             sum(
                 item.code == "unsafe-managed-path"
-                and item.path == ".learning-tutor/manifest.json"
+                and item.path == ".socratic-learn/manifest.json"
                 for item in diagnostics
             ),
         )
 
     def test_external_managed_symlink_is_rejected_without_reading_target(self) -> None:
         project = self._installed()
-        manifest = project / ".learning-tutor/manifest.json"
+        manifest = project / ".socratic-learn/manifest.json"
         outside = self.root / "outside-manifest.json"
         outside.write_text('{"external": true}\n', encoding="utf-8")
         manifest.unlink()
@@ -394,7 +420,7 @@ class DoctorTests(unittest.TestCase):
         diagnostics = diagnose(project)
 
         item = next(item for item in diagnostics if item.code == "unsafe-managed-path")
-        self.assertEqual(".learning-tutor/manifest.json", item.path)
+        self.assertEqual(".socratic-learn/manifest.json", item.path)
         self.assertEqual('{"external": true}\n', outside.read_text(encoding="utf-8"))
 
     def test_file_symlink_swap_before_open_never_consumes_external_bytes(self) -> None:
@@ -447,8 +473,8 @@ class DoctorTests(unittest.TestCase):
 
     def test_parent_swap_before_open_never_consumes_replacement_bytes(self) -> None:
         project = self._installed()
-        install_root = project / ".learning-tutor"
-        detached = project / "detached-learning-tutor"
+        install_root = project / ".socratic-learn"
+        detached = project / "detached-socratic-learn"
         replacement_receipt = install_root / "install.json"
         consumed_replacement = False
 
@@ -498,7 +524,7 @@ class DoctorTests(unittest.TestCase):
 
     def test_missing_nested_ignore_rule_is_reported(self) -> None:
         project = self._installed()
-        (project / ".learning-tutor/.gitignore").write_text(
+        (project / ".socratic-learn/.gitignore").write_text(
             "workspace/*\n",
             encoding="utf-8",
         )
@@ -506,7 +532,7 @@ class DoctorTests(unittest.TestCase):
         diagnostics = diagnose(project)
 
         item = next(item for item in diagnostics if item.code == "missing-private-ignore-rule")
-        self.assertEqual(".learning-tutor/.gitignore", item.path)
+        self.assertEqual(".socratic-learn/.gitignore", item.path)
         self.assertIn("!workspace/.gitkeep", item.message)
 
     def test_tracked_private_file_is_reported_in_git_repository(self) -> None:
@@ -516,10 +542,10 @@ class DoctorTests(unittest.TestCase):
             check=True,
             capture_output=True,
         )
-        private = project / ".learning-tutor/workspace/private.md"
+        private = project / ".socratic-learn/workspace/private.md"
         private.write_text("private\n", encoding="utf-8")
         subprocess.run(
-            ["git", "-C", str(project), "add", "-f", ".learning-tutor/workspace/private.md"],
+            ["git", "-C", str(project), "add", "-f", ".socratic-learn/workspace/private.md"],
             check=True,
             capture_output=True,
         )
@@ -527,7 +553,7 @@ class DoctorTests(unittest.TestCase):
         diagnostics = diagnose(project)
 
         item = next(item for item in diagnostics if item.code == "tracked-private-file")
-        self.assertEqual(".learning-tutor/workspace/private.md", item.path)
+        self.assertEqual(".socratic-learn/workspace/private.md", item.path)
 
     def test_git_failure_in_detected_repository_is_explicit(self) -> None:
         project = self._installed()
@@ -548,8 +574,8 @@ class DoctorTests(unittest.TestCase):
 
     def test_diagnostics_and_formatting_are_deterministic(self) -> None:
         project = self._installed()
-        (project / ".learning-tutor/loader.md").unlink()
-        (project / ".learning-tutor/.gitignore").write_text("", encoding="utf-8")
+        (project / ".socratic-learn/loader.md").unlink()
+        (project / ".socratic-learn/.gitignore").write_text("", encoding="utf-8")
         receipt_path, receipt = self._receipt(project)
         receipt["protocol_version"] = "0.9.0"
         self._write_receipt(receipt_path, receipt)
@@ -570,7 +596,7 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(0, main(["doctor", str(project)]))
         self.assertEqual("Installation healthy.\n", stdout.getvalue())
 
-        (project / ".learning-tutor/loader.md").unlink()
+        (project / ".socratic-learn/loader.md").unlink()
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             self.assertEqual(4, main(["doctor", str(project)]))
@@ -606,7 +632,7 @@ class DoctorTests(unittest.TestCase):
                 self.assertIn("path: <stdout>", message)
                 self.assertIn("check standard output and retry", message)
 
-        (project / ".learning-tutor/loader.md").unlink()
+        (project / ".socratic-learn/loader.md").unlink()
         stderr = io.StringIO()
         with (
             mock.patch("sys.stdout", FailingStdout("write")),

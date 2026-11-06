@@ -25,6 +25,7 @@ from socratic_learn.install import (
 )
 from socratic_learn.manifest import sha256_bytes
 from socratic_learn.__main__ import main
+from tests.legacy_install_fixture import create_valid_legacy_install
 
 
 class InstallTests(unittest.TestCase):
@@ -111,6 +112,68 @@ class InstallTests(unittest.TestCase):
             for path in install_root.rglob("*")
             if path.is_file()
         }
+
+    def test_update_migrates_owned_legacy_installation_and_private_state(
+        self,
+    ) -> None:
+        create_valid_legacy_install(self.project, target="generic")
+        private = self.project / ".learning-tutor/workspace/notes.md"
+        private.write_text("private\n", encoding="utf-8")
+
+        plan = plan_install(self.source, self.project, "generic", True)
+        apply_install(plan)
+
+        self.assertTrue(plan.migrate_legacy)
+        self.assertFalse((self.project / ".learning-tutor").exists())
+        self.assertEqual(
+            "private\n",
+            (
+                self.project / ".socratic-learn/workspace/notes.md"
+            ).read_text(encoding="utf-8"),
+        )
+        receipt = load_receipt(self.project)
+        self.assertEqual("socratic-learn", receipt["product"])
+
+    def test_migration_refuses_modified_legacy_owned_file(self) -> None:
+        create_valid_legacy_install(self.project, target="generic")
+        loader = self.project / ".learning-tutor/loader.md"
+        loader.write_text("user change\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(IntegrityError, "modified"):
+            plan_install(self.source, self.project, "generic", True)
+
+        self.assertEqual("user change\n", loader.read_text(encoding="utf-8"))
+        self.assertFalse((self.project / ".socratic-learn").exists())
+
+    def test_migration_renames_owned_native_skill(self) -> None:
+        create_valid_legacy_install(self.project, target="cursor")
+
+        plan = plan_install(self.source, self.project, "cursor", True)
+        apply_install(plan)
+
+        self.assertFalse(
+            (
+                self.project
+                / ".cursor/skills/learning-tutor"
+            ).exists()
+        )
+        self.assertTrue(
+            (
+                self.project
+                / ".cursor/skills/socratic-learn/SKILL.md"
+            ).is_file()
+        )
+
+    def test_migration_refuses_unowned_legacy_path_before_mutation(self) -> None:
+        create_valid_legacy_install(self.project, target="generic")
+        unowned = self.project / ".learning-tutor/user-owned.txt"
+        unowned.write_text("preserve\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(CollisionError, "unowned"):
+            plan_install(self.source, self.project, "generic", True)
+
+        self.assertEqual("preserve\n", unowned.read_text(encoding="utf-8"))
+        self.assertFalse((self.project / ".socratic-learn").exists())
 
     def test_planning_rejects_nonexistent_and_non_directory_projects(self) -> None:
         missing = self.root / "missing"

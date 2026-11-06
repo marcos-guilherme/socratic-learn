@@ -15,6 +15,8 @@ from .conformance import Diagnostic
 from .errors import FilesystemError, IntegrityError, LearningTutorError
 from .install import (
     INSTALL_ROOT,
+    LEGACY_INSTALL_ROOT,
+    LEGACY_RECEIPT_PATH,
     RECEIPT_PATH,
     InstallReceipt,
     _claude_snippet,
@@ -28,20 +30,20 @@ from .manifest import sha256_bytes, validate_manifest
 
 
 _MANIFEST_PATH = f"{INSTALL_ROOT}/manifest.json"
-_BUNDLE_PATH = f"{INSTALL_ROOT}/learning-tutor.prompt.md"
+_BUNDLE_PATH = f"{INSTALL_ROOT}/socratic-learn.prompt.md"
 _GENERIC_LOADER_PATH = f"{INSTALL_ROOT}/loader.md"
 _IGNORE_PATH = f"{INSTALL_ROOT}/.gitignore"
 _WORKSPACE_KEEP = f"{INSTALL_ROOT}/workspace/.gitkeep"
 _NATIVE_PATHS = {
-    "cursor": ".cursor/skills/learning-tutor/SKILL.md",
+    "cursor": ".cursor/skills/socratic-learn/SKILL.md",
     "claude-code": "CLAUDE.md",
-    "pi": ".pi/skills/learning-tutor/SKILL.md",
+    "pi": ".pi/skills/socratic-learn/SKILL.md",
 }
 _LOADER_REFERENCES = {
-    "generic": ".learning-tutor/learning-tutor.prompt.md",
-    "cursor": "../../../.learning-tutor/learning-tutor.prompt.md",
-    "claude-code": ".learning-tutor/learning-tutor.prompt.md",
-    "pi": "../../../.learning-tutor/learning-tutor.prompt.md",
+    "generic": ".socratic-learn/socratic-learn.prompt.md",
+    "cursor": "../../../.socratic-learn/socratic-learn.prompt.md",
+    "claude-code": ".socratic-learn/socratic-learn.prompt.md",
+    "pi": "../../../.socratic-learn/socratic-learn.prompt.md",
 }
 _PARTIAL_MARKERS = (
     _MANIFEST_PATH,
@@ -455,8 +457,8 @@ def _receipt_diagnostics(
         remediation = error.remediation or (
             "preserve the installation and reinstall after manual review"
         )
-        if "compatible learning-tutor version" in remediation:
-            remediation = "reinstall with a compatible learning-tutor version"
+        if "compatible" in remediation.lower() and "version" in remediation.lower():
+            remediation = "reinstall with a compatible Socratic Learn version"
         return None, [
             _diagnostic(
                 "invalid-receipt",
@@ -466,6 +468,91 @@ def _receipt_diagnostics(
             )
         ]
     return receipt, []
+
+
+def _path_exists_no_follow(path: Path) -> bool:
+    try:
+        path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _legacy_installation_diagnostics(project: Path) -> list[Diagnostic]:
+    receipt_bytes, path_diagnostic = _read_managed_bytes(
+        project,
+        LEGACY_RECEIPT_PATH,
+    )
+    if path_diagnostic is not None:
+        return [path_diagnostic]
+    if receipt_bytes is None:
+        return [
+            _diagnostic(
+                "missing-receipt",
+                LEGACY_RECEIPT_PATH,
+                "legacy installation files exist but their receipt is missing",
+                "preserve the legacy installation and migrate manually",
+            )
+        ]
+    try:
+        value = json.loads(receipt_bytes.decode("utf-8"))
+        receipt = _parse_receipt(
+            value,
+            project / LEGACY_RECEIPT_PATH,
+            legacy=True,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, LearningTutorError) as error:
+        message = (
+            error.message
+            if isinstance(error, LearningTutorError)
+            else f"legacy receipt is not valid UTF-8 JSON: {error}"
+        )
+        return [
+            _diagnostic(
+                "invalid-receipt",
+                LEGACY_RECEIPT_PATH,
+                message,
+                "preserve the legacy installation and migrate manually",
+            )
+        ]
+    diagnostics: list[Diagnostic] = []
+    for relative, expected in receipt.hashes:
+        content, read_diagnostic = _read_managed_bytes(project, relative)
+        if read_diagnostic is not None:
+            diagnostics.append(read_diagnostic)
+        elif content is None:
+            diagnostics.append(
+                _diagnostic(
+                    "owned-file-missing",
+                    relative,
+                    "a legacy installation-owned file is missing",
+                    "restore the legacy file before migration",
+                )
+            )
+        elif sha256_bytes(content) != expected:
+            diagnostics.append(
+                _diagnostic(
+                    "owned-file-changed",
+                    relative,
+                    "a legacy installation-owned file was modified",
+                    "restore the legacy file or migrate manually",
+                )
+            )
+    if diagnostics:
+        return _ordered_diagnostics(diagnostics)
+    return [
+        _diagnostic(
+            "legacy-installation",
+            LEGACY_RECEIPT_PATH,
+            "a managed Learning Tutor installation can be migrated",
+            (
+                "run 'python -m socratic_learn install "
+                f"{receipt.target} PROJECT --update'"
+            ),
+        )
+    ]
 
 
 def _owned_file_diagnostics(
@@ -751,6 +838,23 @@ def diagnose(project: Path) -> list[Diagnostic]:
     """Return read-only installation diagnostics in deterministic order."""
 
     resolved_project = _resolve_directory(project, "project")
+    canonical_present = _path_exists_no_follow(
+        resolved_project / INSTALL_ROOT
+    )
+    legacy_present = _path_exists_no_follow(
+        resolved_project / LEGACY_INSTALL_ROOT
+    )
+    if canonical_present and legacy_present:
+        return [
+            _diagnostic(
+                "installation-root-collision",
+                ".",
+                "canonical and legacy installation roots both exist",
+                "preserve both roots and resolve the collision manually",
+            )
+        ]
+    if legacy_present and not canonical_present:
+        return _legacy_installation_diagnostics(resolved_project)
     receipt, diagnostics = _receipt_diagnostics(resolved_project)
     if receipt is None:
         return _ordered_diagnostics(diagnostics)
@@ -764,7 +868,7 @@ def diagnose(project: Path) -> list[Diagnostic]:
                     f"the receipt protocol {receipt.protocol_version!r} does not "
                     f"match supported protocol {PROTOCOL_VERSION!r}"
                 ),
-                "install with a compatible learning-tutor version",
+                "install with a compatible socratic-learn version",
             )
         )
     diagnostics.extend(_owned_file_diagnostics(resolved_project, receipt))

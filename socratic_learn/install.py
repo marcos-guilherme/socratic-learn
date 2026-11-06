@@ -58,6 +58,10 @@ _NATIVE_SKILL_PATHS = {
     "cursor": ".cursor/skills/socratic-learn/SKILL.md",
     "pi": ".pi/skills/socratic-learn/SKILL.md",
 }
+_LEGACY_NATIVE_SKILL_PATHS = {
+    "cursor": ".cursor/skills/learning-tutor/SKILL.md",
+    "pi": ".pi/skills/learning-tutor/SKILL.md",
+}
 _LEGACY_RECEIPT_KEYS = {
     "schema_version",
     "protocol_version",
@@ -113,6 +117,8 @@ class InstallPlan:
     previous_receipt: InstallReceipt | None = None
     expected_existing: tuple[tuple[str, str], ...] = ()
     emitted_snippet: str | None = None
+    migrate_legacy: bool = False
+    legacy_receipt: InstallReceipt | None = None
 
 
 CreatedDirectory = TrackedDirectory
@@ -370,8 +376,13 @@ def _parse_receipt(
     )
 
 
-def _read_receipt(project: Path) -> tuple[InstallReceipt, bytes]:
-    receipt_path = _project_path(project, RECEIPT_PATH)
+def _read_receipt(
+    project: Path,
+    *,
+    legacy: bool = False,
+) -> tuple[InstallReceipt, bytes]:
+    relative = LEGACY_RECEIPT_PATH if legacy else RECEIPT_PATH
+    receipt_path = _project_path(project, relative)
     receipt_bytes = _read_bytes(receipt_path, "installation receipt")
     try:
         value = json.loads(receipt_bytes.decode("utf-8"))
@@ -381,7 +392,7 @@ def _read_receipt(project: Path) -> tuple[InstallReceipt, bytes]:
             path=receipt_path,
             remediation="remove the invalid installation and reinstall",
         ) from error
-    return _parse_receipt(value, receipt_path), receipt_bytes
+    return _parse_receipt(value, receipt_path, legacy=legacy), receipt_bytes
 
 
 def load_receipt(project: Path) -> dict[str, object]:
@@ -558,14 +569,40 @@ def plan_install(
     if not update:
         previous_receipt = None
         expected_existing: tuple[tuple[str, str], ...] = ()
+        migrate_legacy = False
+        legacy_receipt = None
     else:
-        if not install_root.is_dir() or install_root.is_symlink():
+        legacy_root = destination / LEGACY_INSTALL_ROOT
+        canonical_present = install_root.exists() or install_root.is_symlink()
+        legacy_present = legacy_root.exists() or legacy_root.is_symlink()
+        if canonical_present and legacy_present:
+            raise CollisionError(
+                "canonical and legacy installation roots both exist",
+                path=destination,
+                remediation="preserve both roots and resolve the collision manually",
+            )
+        migrate_legacy = not canonical_present and legacy_present
+        if migrate_legacy:
+            if not legacy_root.is_dir() or legacy_root.is_symlink():
+                raise IntegrityError(
+                    "legacy managed installation directory is invalid",
+                    path=legacy_root,
+                    remediation="restore the legacy installation before migrating",
+                )
+            previous_receipt, receipt_bytes = _read_receipt(
+                destination,
+                legacy=True,
+            )
+            legacy_receipt = previous_receipt
+        elif not install_root.is_dir() or install_root.is_symlink():
             raise IntegrityError(
                 "managed installation directory is missing or invalid",
                 path=install_root,
                 remediation="restore the installation or perform a clean install",
             )
-        previous_receipt, receipt_bytes = _read_receipt(destination)
+        else:
+            previous_receipt, receipt_bytes = _read_receipt(destination)
+            legacy_receipt = None
         if previous_receipt.target != target:
             raise IntegrityError(
                 "installation receipt target does not match the requested target",
@@ -577,6 +614,11 @@ def plan_install(
             previous_receipt,
             receipt_bytes,
         )
+        if migrate_legacy:
+            _verify_legacy_tree_is_migratable(
+                destination,
+                previous_receipt,
+            )
         if target == "claude-code" and "CLAUDE.md" in previous_receipt.owned_paths:
             include_claude_loader = True
             emitted_snippet = None
@@ -610,6 +652,8 @@ def plan_install(
         previous_receipt=previous_receipt,
         expected_existing=expected_existing,
         emitted_snippet=emitted_snippet,
+        migrate_legacy=migrate_legacy,
+        legacy_receipt=legacy_receipt,
     )
 
 
@@ -1282,7 +1326,7 @@ def _apply_update(
         replacement_paths = {planned.path for planned in plan.files}
         expected_hashes = _expected_existing_hashes(plan)
         for relative in plan.previous_receipt.owned_paths:
-            if relative not in replacement_paths:
+            if not plan.migrate_legacy and relative not in replacement_paths:
                 continue
             source = _project_path(plan.project, relative)
             destination = backup.joinpath(*PurePosixPath(relative).parts)
@@ -1441,12 +1485,167 @@ def _apply_update(
         )
 
 
+def _canonical_legacy_path(relative: str, target: str) -> str:
+    prefix = f"{LEGACY_INSTALL_ROOT}/"
+    if relative == LEGACY_INSTALL_ROOT:
+        return INSTALL_ROOT
+    if relative.startswith(prefix):
+        return f"{INSTALL_ROOT}/{relative[len(prefix):]}"
+    legacy_native = _LEGACY_NATIVE_SKILL_PATHS.get(target)
+    if relative == legacy_native:
+        canonical_native = _NATIVE_SKILL_PATHS.get(target)
+        assert canonical_native is not None
+        return canonical_native
+    return relative
+
+
+def _verify_legacy_tree_is_migratable(
+    project: Path,
+    receipt: InstallReceipt,
+) -> None:
+    root = project / LEGACY_INSTALL_ROOT
+    owned = set(receipt.owned_paths)
+    allowed_directories = {LEGACY_INSTALL_ROOT}
+    for relative in owned:
+        pure = PurePosixPath(relative)
+        for parent in pure.parents:
+            if str(parent) not in ("", "."):
+                allowed_directories.add(parent.as_posix())
+    for path in root.rglob("*"):
+        relative = path.relative_to(project).as_posix()
+        if _is_reparse_or_symlink(path.stat(follow_symlinks=False)):
+            raise IntegrityError(
+                "legacy installation contains a symbolic link or reparse point",
+                path=relative,
+                remediation="preserve the legacy installation and migrate manually",
+            )
+        if relative.startswith(f"{LEGACY_INSTALL_ROOT}/workspace/"):
+            continue
+        if path.is_dir():
+            allowed = relative in allowed_directories
+        else:
+            allowed = relative in owned
+        if not allowed:
+            raise CollisionError(
+                "legacy installation contains an unowned path",
+                path=relative,
+                remediation="preserve the path and migrate manually",
+            )
+
+
+def _migration_update_plan(plan: InstallPlan) -> InstallPlan:
+    assert plan.previous_receipt is not None
+    mapped_owned = tuple(
+        _canonical_legacy_path(relative, plan.target)
+        for relative in plan.previous_receipt.owned_paths
+    )
+    mapped_hashes = tuple(
+        (_canonical_legacy_path(relative, plan.target), digest)
+        for relative, digest in plan.previous_receipt.hashes
+    )
+    mapped_receipt = InstallReceipt(
+        schema_version=plan.previous_receipt.schema_version,
+        product=plan.previous_receipt.product,
+        protocol_version=plan.previous_receipt.protocol_version,
+        target=plan.previous_receipt.target,
+        owned_paths=mapped_owned,
+        hashes=mapped_hashes,
+        receipt_path=RECEIPT_PATH,
+    )
+    mapped_expected = tuple(
+        (_canonical_legacy_path(relative, plan.target), digest)
+        for relative, digest in plan.expected_existing
+    )
+    return InstallPlan(
+        source_root=plan.source_root,
+        project=plan.project,
+        target=plan.target,
+        update=True,
+        files=plan.files,
+        previous_receipt=mapped_receipt,
+        expected_existing=mapped_expected,
+        emitted_snippet=plan.emitted_snippet,
+        migrate_legacy=True,
+        legacy_receipt=plan.legacy_receipt,
+    )
+
+
+def _apply_migration(
+    plan: InstallPlan,
+    stage: Path,
+    staged_install: Path,
+    stage_directory: TrackedDirectory,
+) -> None:
+    assert plan.previous_receipt is not None
+    _verify_legacy_tree_is_migratable(plan.project, plan.previous_receipt)
+    legacy_root = plan.project / LEGACY_INSTALL_ROOT
+    canonical_root = plan.project / INSTALL_ROOT
+    moved_paths: list[Path] = []
+    try:
+        identity_bound_replace(
+            legacy_root,
+            canonical_root,
+            root=plan.project,
+            expected_source=_path_identity(legacy_root),
+        )
+        moved_paths.append(canonical_root)
+        legacy_native = _LEGACY_NATIVE_SKILL_PATHS.get(plan.target)
+        canonical_native = _NATIVE_SKILL_PATHS.get(plan.target)
+        if legacy_native is not None and canonical_native is not None:
+            if legacy_native not in plan.previous_receipt.owned_paths:
+                raise IntegrityError(
+                    "legacy receipt does not own the required native skill",
+                    path=legacy_native,
+                    remediation="preserve the installation and migrate manually",
+                )
+            legacy_directory = _project_path(
+                plan.project,
+                str(PurePosixPath(legacy_native).parent),
+            )
+            canonical_directory = _project_path(
+                plan.project,
+                str(PurePosixPath(canonical_native).parent),
+            )
+            if {
+                entry.name for entry in os.scandir(legacy_directory)
+            } != {"SKILL.md"}:
+                raise CollisionError(
+                    "legacy native skill directory contains unowned paths",
+                    path=legacy_directory,
+                    remediation="preserve the directory and migrate manually",
+                )
+            identity_bound_replace(
+                legacy_directory,
+                canonical_directory,
+                root=plan.project,
+                expected_source=_path_identity(legacy_directory),
+            )
+            moved_paths.append(canonical_directory)
+    except (LearningTutorError, OSError) as error:
+        raise FilesystemError(
+            "legacy migration stopped with preserved recovery state",
+            path=", ".join(str(path) for path in moved_paths) or legacy_root,
+            remediation=(
+                "do not rerun migration; preserve the listed paths and run doctor "
+                "after inspecting the legacy and canonical roots"
+            ),
+        ) from error
+    _apply_update(
+        _migration_update_plan(plan),
+        stage,
+        staged_install,
+        stage_directory,
+    )
+
+
 def apply_install(plan: InstallPlan) -> None:
     """Apply a validated plan transactionally."""
 
     _verify_plan_still_safe(plan)
     stage, staged_install, stage_directory = _stage(plan)
-    if plan.update:
+    if plan.migrate_legacy:
+        _apply_migration(plan, stage, staged_install, stage_directory)
+    elif plan.update:
         _apply_update(plan, stage, staged_install, stage_directory)
     else:
         _apply_initial(plan, stage, staged_install, stage_directory)
