@@ -396,28 +396,43 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
         _validate_staged_distribution(stage, result)
 
         if dist.exists():
+            try:
+                tracked_dist = track_directory(dist)
+            except OSError as error:
+                raise FilesystemError(
+                    "existing distribution could not be safely tracked and was "
+                    "preserved without mutation",
+                    path=dist,
+                    remediation=(
+                        f"inspect and preserve {dist}; remove any symlink/reparse "
+                        "point or unsupported entry only after establishing "
+                        "ownership, then rebuild"
+                    ),
+                ) from error
             owned_dist = _fully_owned_dist_tree(dist)
-            dist_identity = path_identity(dist)
             identity_bound_replace(
                 dist,
                 backup,
                 root=repository,
-                expected_source=dist_identity,
+                expected_source=tracked_dist.identity,
             )
             old_moved = True
-            if owned_dist is None:
-                backup_directory = track_directory(backup)
-            else:
-                backup_directory = TrackedDirectory(
-                    backup,
-                    owned_dist.identity,
-                    owned_dist.entries,
+            backup_directory = TrackedDirectory(
+                backup,
+                tracked_dist.identity,
+                tracked_dist.entries,
+            )
+            owned_at_tracking = (
+                owned_dist is not None and owned_dist == tracked_dist
+            )
+            try:
+                # Re-capture verifies no child changed between proof and move.
+                backup_fully_owned = (
+                    owned_at_tracking
+                    and track_directory(backup) == backup_directory
                 )
-                try:
-                    # Re-capture verifies no child changed between proof and move.
-                    backup_fully_owned = track_directory(backup) == backup_directory
-                except OSError:
-                    backup_fully_owned = False
+            except OSError:
+                backup_fully_owned = False
         assert stage_directory is not None
         identity_bound_replace(
             stage,
@@ -441,7 +456,17 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
                     ),
                 ) from error
             try:
-                assert backup_directory is not None
+                if backup_directory is None:
+                    raise FilesystemError(
+                        "distribution swap failed after the old directory moved, "
+                        "but its backup could not be tracked; the backup was "
+                        "preserved",
+                        path=backup,
+                        remediation=(
+                            f"preserve and inspect {backup}; restore it to {dist} "
+                            "only after establishing ownership of every entry"
+                        ),
+                    ) from error
                 identity_bound_replace(
                     backup,
                     dist,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 from io import BytesIO, StringIO
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -590,6 +591,100 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(1, len(backups))
         self.assertEqual(b"user owned", (backups[0] / "user-owned.txt").read_bytes())
         self.assertIn(str(backups[0]), str(raised.exception))
+
+    def test_dist_with_symlink_child_is_preserved_before_replacement(self) -> None:
+        temporary, root = self.make_repository()
+        outside_temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.addCleanup(outside_temporary.cleanup)
+        result = build_distribution(root)
+        write_distribution(root, result)
+        dist = root / "dist"
+        outside = Path(outside_temporary.name) / "outside.txt"
+        outside.write_bytes(b"outside")
+        link = dist / "user-link"
+        try:
+            link.symlink_to(outside)
+        except OSError as error:
+            self.skipTest(f"file symlinks/reparse points unavailable: {error}")
+
+        with self.assertRaises(FilesystemError) as raised:
+            write_distribution(root, result)
+
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(b"outside", outside.read_bytes())
+        self.assertEqual(dist, raised.exception.path)
+        self.assertIn(str(dist), raised.exception.remediation or "")
+        self.assertIn("ownership", raised.exception.remediation or "")
+        self.assertFalse(
+            any(path.name.startswith(".dist-backup-") for path in root.iterdir())
+        )
+
+    def test_untrackable_dist_reports_preserved_recovery_path_without_assertion(
+        self,
+    ) -> None:
+        for reason in (
+            "tracked tree contains a link or reparse point",
+            "tracked tree contains an unsupported entry type",
+        ):
+            with self.subTest(reason=reason):
+                temporary, root = self.make_repository()
+                try:
+                    result = build_distribution(root)
+                    write_distribution(root, result)
+                    dist = root / "dist"
+                    real_track = __import__(
+                        "learning_tutor.build",
+                        fromlist=["track_directory"],
+                    ).track_directory
+
+                    def reject_untrackable(path: Path):
+                        if path == dist or path.name.startswith(".dist-backup-"):
+                            raise OSError(reason)
+                        return real_track(path)
+
+                    with mock.patch(
+                        "learning_tutor.build.track_directory",
+                        side_effect=reject_untrackable,
+                    ):
+                        with self.assertRaises(FilesystemError) as raised:
+                            write_distribution(root, result)
+
+                    self.assertEqual(dist, raised.exception.path)
+                    self.assertIn(str(dist), raised.exception.remediation or "")
+                    self.assertIn("ownership", raised.exception.remediation or "")
+                    self.assertTrue((dist / "manifest.json").is_file())
+                    self.assertFalse(
+                        any(
+                            path.name.startswith(".dist-backup-")
+                            for path in root.iterdir()
+                        )
+                    )
+                finally:
+                    temporary.cleanup()
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFO support")
+    def test_dist_with_unsupported_child_type_is_preserved_before_replacement(
+        self,
+    ) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        result = build_distribution(root)
+        write_distribution(root, result)
+        dist = root / "dist"
+        unsupported = dist / "user-fifo"
+        os.mkfifo(unsupported)
+
+        with self.assertRaises(FilesystemError) as raised:
+            write_distribution(root, result)
+
+        self.assertTrue(unsupported.exists())
+        self.assertEqual(dist, raised.exception.path)
+        self.assertIn(str(dist), raised.exception.remediation or "")
+        self.assertIn("unsupported", raised.exception.remediation or "")
+        self.assertFalse(
+            any(path.name.startswith(".dist-backup-") for path in root.iterdir())
+        )
 
     def test_dist_backup_unknown_child_at_cleanup_preserves_complete_tree(self) -> None:
         temporary, root = self.make_repository()
