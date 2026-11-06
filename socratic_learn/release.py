@@ -9,6 +9,7 @@ import platform
 import re
 import sys
 import tempfile
+import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -36,6 +37,12 @@ _SEMVER_RE = re.compile(
 )
 _PLATFORMS = {"win32": "windows", "linux": "linux", "darwin": "macos"}
 _ARCHITECTURES = {"amd64": "x86_64", "x86_64": "x86_64", "x64": "x86_64"}
+_FORBIDDEN_FILENAME_CHARACTERS = frozenset('<>:"/\\|?*')
+_RESERVED_WINDOWS_BASENAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{number}" for number in range(1, 10)}
+    | {f"LPT{number}" for number in range(1, 10)}
+)
 _INSTALL_REMEDIATION = "pipx install socratic-learn"
 _MANIFEST_REMEDIATION = "download a valid release manifest"
 
@@ -78,7 +85,7 @@ def _require_exact_keys(
 
 
 def _has_control_character(value: str) -> bool:
-    return any(ord(character) < 32 or ord(character) == 127 for character in value)
+    return any(unicodedata.category(character) == "Cc" for character in value)
 
 
 def _require_string(value: object, field: str) -> str:
@@ -89,14 +96,21 @@ def _require_string(value: object, field: str) -> str:
 
 def _require_leaf_filename(value: object, field: str) -> str:
     filename = _require_string(value, field)
+    basename = filename.split(".", 1)[0].upper()
     if (
         filename in {".", ".."}
         or "/" in filename
         or "\\" in filename
+        or any(
+            character in _FORBIDDEN_FILENAME_CHARACTERS
+            for character in filename
+        )
+        or filename.endswith((" ", "."))
+        or basename in _RESERVED_WINDOWS_BASENAMES
         or PurePosixPath(filename).name != filename
         or PureWindowsPath(filename).name != filename
     ):
-        raise _invalid(field, "must be a leaf name without path separators")
+        raise _invalid(field, "must be a portable leaf name")
     return filename
 
 

@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -130,6 +131,96 @@ class ReleaseTests(unittest.TestCase):
                 IntegrityError, "filename"
             ):
                 self.parse(self.manifest(filename=filename))
+
+    def test_parser_rejects_nonportable_filename_classes(self) -> None:
+        cases = {
+            "reserved device basename": (
+                "CON",
+                "con.exe",
+                "PRN.zip",
+                "aux",
+                "NUL.tar.gz",
+                "COM1",
+                "com9.bin",
+                "LPT1",
+                "lPt9.txt",
+            ),
+            "Windows-forbidden punctuation": (
+                "bad<name.exe",
+                "bad>name.exe",
+                "bad:name.exe",
+                'bad"name.exe',
+                "bad/name.exe",
+                r"bad\name.exe",
+                "bad|name.exe",
+                "bad?name.exe",
+                "bad*name.exe",
+            ),
+            "trailing space or period": (
+                "artifact.exe ",
+                "artifact.exe.",
+            ),
+            "Unicode control character": (
+                "artifact\u0085.exe",
+                "artifact\u009f.exe",
+            ),
+        }
+        for rejected_class, filenames in cases.items():
+            for filename in filenames:
+                with (
+                    self.subTest(rejected_class=rejected_class, filename=filename),
+                    self.assertRaisesRegex(IntegrityError, "filename"),
+                ):
+                    self.parse(self.manifest(filename=filename))
+
+    def test_parser_accepts_portable_filename(self) -> None:
+        filename = "socratic-learn_1.2.3-café(x86-64).exe"
+
+        artifact = self.parse(self.manifest(filename=filename))[0]
+
+        self.assertEqual(filename, artifact.filename)
+
+    def test_schema_rejects_same_nonportable_filename_classes(self) -> None:
+        schema = json.loads(
+            (Path(__file__).parents[1] / "release-manifest.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        filename_schema = schema["properties"]["artifacts"]["items"]["properties"][
+            "filename"
+        ]
+        allowed_pattern = re.compile(filename_schema["pattern"])
+        reserved_pattern = re.compile(filename_schema["not"]["pattern"])
+        cases = (
+            "CON",
+            "con.exe",
+            "COM9.zip",
+            "Lpt1.bin",
+            "bad<name.exe",
+            "bad>name.exe",
+            "bad:name.exe",
+            'bad"name.exe',
+            "bad/name.exe",
+            r"bad\name.exe",
+            "bad|name.exe",
+            "bad?name.exe",
+            "bad*name.exe",
+            "artifact.exe ",
+            "artifact.exe.",
+            "artifact\u0085.exe",
+            "artifact\u009f.exe",
+        )
+        for filename in cases:
+            with self.subTest(filename=filename):
+                accepted = (
+                    allowed_pattern.fullmatch(filename) is not None
+                    and reserved_pattern.search(filename) is None
+                )
+                self.assertFalse(accepted)
+
+        self.assertIsNotNone(
+            allowed_pattern.fullmatch("socratic-learn_1.2.3-café(x86-64).exe")
+        )
 
     def test_parser_rejects_nonpositive_size_and_malformed_hash(self) -> None:
         for size in (0, -1):

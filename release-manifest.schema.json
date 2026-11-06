@@ -44,12 +44,9 @@
           "filename": {
             "type": "string",
             "minLength": 1,
-            "pattern": "^[^/\\\\\\u0000-\\u001F\\u007F]+$",
+            "pattern": "^(?!.*[ .]$)[^<>:\"/\\\\|?*\\u0000-\\u001F\\u007F-\\u009F]+$",
             "not": {
-              "enum": [
-                ".",
-                ".."
-              ]
+              "pattern": "^(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\..*)?$"
             }
           },
           "size": {
