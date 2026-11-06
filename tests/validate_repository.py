@@ -131,9 +131,32 @@ README_ONBOARDING_ORDER = (
     "socratic --here",
 )
 UNSAFE_INSTALLER_PATTERNS = (
-    re.compile(r"raw[.]githubusercontent[.]com/.*/main/", re.IGNORECASE),
-    re.compile(r"\birm\b[^\n|]*\|\s*iex\b", re.IGNORECASE),
-    re.compile(r"\bcurl\b[^\n|]*\|\s*(?:ba)?sh\b", re.IGNORECASE),
+    re.compile(
+        r"https?://raw[.]githubusercontent[.]com/"
+        r"[^\s<>()`]+/main/",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"https?://github[.]com/[^\s<>()`]+/(?:raw|blob)/main/"
+        r"[^\s<>()`]*(?:install[.]ps1|install[.]sh)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"https?://github[.]com/[^\s<>()`]+/releases/latest/download/"
+        r"[^\s<>()`]*(?:install[.]ps1|install[.]sh)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:irm|invoke-restmethod|iwr|invoke-webrequest)\b"
+        r"[^\r\n|]*(?:\r?\n[ \t]*)?[|][ \t]*"
+        r"(?:iex|invoke-expression)\b",
+        re.IGNORECASE | re.MULTILINE,
+    ),
+    re.compile(
+        r"\b(?:curl|wget)\b[^\r\n|]*"
+        r"(?:\r?\n[ \t]*)?[|][ \t]*(?:sh|bash)\b",
+        re.IGNORECASE | re.MULTILINE,
+    ),
 )
 LAUNCHER_ADAPTER_REQUIREMENTS = (
     "executable detection",
@@ -499,21 +522,47 @@ def validate(root: Path) -> list[str]:
             errors.append("README.md public onboarding is out of order")
 
     installer_docs = (
-        root / "README.md",
-        root / "docs/universal-installation.md",
+        (
+            root / "README.md",
+            "## Quick start",
+            "## How a learning session works",
+        ),
+        (
+            root / "docs/universal-installation.md",
+            "## Normal installation",
+            "## Native channel behavior",
+        ),
     )
-    for path in installer_docs:
+    for path, section_start, section_end in installer_docs:
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8")
-        normalized_text = normalize(text).lower()
+        _before_section, separator, after_start = text.partition(section_start)
+        section_text = (
+            after_start.partition(section_end)[0]
+            if separator
+            else ""
+        )
+        normalized_text = normalize(section_text).lower()
+        exact_urls_present = all(
+            url in normalized_text for url in VERSIONED_INSTALLER_URLS
+        )
+        if not exact_urls_present:
+            relative = path.relative_to(root).as_posix()
+            errors.append(
+                f"{relative} must use exact v0.1.0 PowerShell and POSIX "
+                "installer URLs"
+            )
         caveats_are_contextual = (
             NATIVE_RELEASE_CAVEAT in normalized_text
             and PYPI_RELEASE_CAVEAT in normalized_text
-            and VERSIONED_INSTALLER_URLS[0] in normalized_text
+            and exact_urls_present
             and "pipx install socratic-learn" in normalized_text
             and normalized_text.index(NATIVE_RELEASE_CAVEAT)
-            < normalized_text.index(VERSIONED_INSTALLER_URLS[0])
+            < min(
+                normalized_text.index(url)
+                for url in VERSIONED_INSTALLER_URLS
+            )
             and normalized_text.index(PYPI_RELEASE_CAVEAT)
             < normalized_text.index("pipx install socratic-learn")
         )

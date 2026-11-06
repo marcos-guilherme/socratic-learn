@@ -10,7 +10,12 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from tests.validate_repository import main, validate, without_fenced_code
+from tests.validate_repository import (
+    UNSAFE_INSTALLER_PATTERNS,
+    main,
+    validate,
+    without_fenced_code,
+)
 
 UNIVERSAL_REQUIRED_PATHS = (
     "learning_tutor/__init__.py",
@@ -529,8 +534,23 @@ class RepositoryValidationTests(unittest.TestCase):
                 "https://raw.githubusercontent.com/marcos-guilherme/"
                 "socratic-learn/main/scripts/install.ps1",
             ),
-            ("& $installer", "irm $url | iex"),
-            ("sh \"$installer\"", "curl -fsSL $url | sh"),
+            (
+                VERSIONED_INSTALLER_URLS[0],
+                "https://github.com/marcos-guilherme/socratic-learn/"
+                "raw/main/scripts/install.ps1",
+            ),
+            (
+                VERSIONED_INSTALLER_URLS[1],
+                "https://github.com/marcos-guilherme/socratic-learn/"
+                "blob/main/scripts/install.sh",
+            ),
+            (
+                VERSIONED_INSTALLER_URLS[0],
+                "https://github.com/marcos-guilherme/socratic-learn/"
+                "releases/latest/download/install.ps1",
+            ),
+            ("& $installer", "IWR $url | Invoke-Expression"),
+            ("sh \"$installer\"", "wget -qO- $url | bash"),
         )
         for relative in ("README.md", "docs/universal-installation.md"):
             path = root / relative
@@ -544,6 +564,62 @@ class RepositoryValidationTests(unittest.TestCase):
                     self.assertIn(
                         f"{relative} contains unsafe or mutable "
                         "installer instructions",
+                        validate(root),
+                    )
+            path.write_text(original, encoding="utf-8")
+
+    def test_unsafe_installer_regexes_cover_remote_execution_variants(self) -> None:
+        self.assertTrue(
+            all(
+                isinstance(pattern, re.Pattern)
+                for pattern in UNSAFE_INSTALLER_PATTERNS
+            )
+        )
+        unsafe_examples = (
+            "https://raw.githubusercontent.com/org/repo/main/scripts/install.sh",
+            "https://github.com/org/repo/raw/main/scripts/install.ps1",
+            "https://github.com/org/repo/blob/main/scripts/install.sh",
+            "https://github.com/org/repo/releases/latest/download/install.ps1",
+            "IrM   https://example.invalid/install.ps1   |   IEX",
+            "iWr -UseBasicParsing $url\t|\tInvoke-Expression",
+            "Invoke-WebRequest $url -UseBasicParsing\n | iex",
+            "curl -fLsS https://example.invalid/install.sh | bash",
+            "wget -qO- https://example.invalid/install.sh\n  |  sh -s",
+        )
+        for command in unsafe_examples:
+            with self.subTest(command=command):
+                self.assertTrue(
+                    any(pattern.search(command) for pattern in UNSAFE_INSTALLER_PATTERNS)
+                )
+
+        safe_examples = (
+            "Invoke-WebRequest $url -OutFile $installer",
+            "curl -fL $url -o \"$installer\"",
+            "wget $url -O \"$installer\"",
+            "& $installer",
+            "sh \"$installer\"",
+        )
+        for command in safe_examples:
+            with self.subTest(command=command):
+                self.assertFalse(
+                    any(pattern.search(command) for pattern in UNSAFE_INSTALLER_PATTERNS)
+                )
+
+    def test_validator_requires_each_exact_installer_url_on_each_surface(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        for relative in ("README.md", "docs/universal-installation.md"):
+            path = root / relative
+            original = path.read_text(encoding="utf-8")
+            for url in VERSIONED_INSTALLER_URLS:
+                with self.subTest(relative=relative, url=url):
+                    path.write_text(
+                        original.replace(url, "https://example.invalid/installer", 1),
+                        encoding="utf-8",
+                    )
+                    self.assertIn(
+                        f"{relative} must use exact v0.1.0 PowerShell and "
+                        "POSIX installer URLs",
                         validate(root),
                     )
             path.write_text(original, encoding="utf-8")
