@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import subprocess
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from . import PROTOCOL_VERSION
@@ -47,6 +49,14 @@ _PARTIAL_MARKERS = (
     _GENERIC_LOADER_PATH,
     *_NATIVE_PATHS.values(),
 )
+
+
+@dataclass(frozen=True)
+class _ChainEntry:
+    path: Path
+    device: int
+    inode: int
+    mode: int
 
 
 def _diagnostic(
@@ -124,6 +134,213 @@ def _safe_managed_path(project: Path, relative: str) -> Path:
     return candidate
 
 
+def _capture_managed_chain(
+    project: Path,
+    relative: str,
+) -> tuple[Path, tuple[_ChainEntry, ...]] | None:
+    if not _portable_relative_path(relative):
+        raise IntegrityError(
+            "managed path is not a control-free relative POSIX path",
+            path=relative,
+            remediation="repair the receipt before inspecting managed files",
+        )
+    candidate = project.joinpath(*PurePosixPath(relative).parts)
+    entries: list[_ChainEntry] = []
+    current = project
+    components = (".", *PurePosixPath(relative).parts)
+    for index, part in enumerate(components):
+        if part != ".":
+            current /= part
+        try:
+            status = current.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise FilesystemError(
+                f"managed path metadata could not be read: {error}",
+                path=relative,
+                remediation="check path permissions and rerun doctor",
+            ) from error
+        if _is_reparse_or_symlink(status):
+            raise IntegrityError(
+                "managed path contains a symlink or reparse point",
+                path=relative,
+                remediation="replace the unsafe path with a project-local regular path",
+            )
+        if index < len(components) - 1 and not stat.S_ISDIR(status.st_mode):
+            raise IntegrityError(
+                "managed path has a non-directory parent",
+                path=relative,
+                remediation="replace the blocking parent with a project-local directory",
+            )
+        entries.append(
+            _ChainEntry(
+                current,
+                status.st_dev,
+                status.st_ino,
+                status.st_mode,
+            )
+        )
+    if not stat.S_ISREG(entries[-1].mode):
+        raise IntegrityError(
+            "managed file is not a regular file",
+            path=relative,
+            remediation="replace the unsafe path with a project-local regular file",
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise IntegrityError(
+            "managed path cannot be resolved safely",
+            path=relative,
+            remediation="replace the unsafe path with a project-local regular path",
+        ) from error
+    if not resolved.is_relative_to(project):
+        raise IntegrityError(
+            "managed path resolves outside the project",
+            path=relative,
+            remediation="replace the escaping path with a project-local regular path",
+        )
+    return candidate, tuple(entries)
+
+
+def _before_managed_open(project: Path, relative: str, path: Path) -> None:
+    """Narrow validation/open boundary hook for race testing."""
+
+
+def _read_descriptor(descriptor: int) -> bytes:
+    chunks: list[bytes] = []
+    while True:
+        chunk = os.read(descriptor, 65536)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _entry_matches_status(entry: _ChainEntry, status: os.stat_result) -> bool:
+    return (
+        entry.device == status.st_dev
+        and entry.inode == status.st_ino
+        and stat.S_IFMT(entry.mode) == stat.S_IFMT(status.st_mode)
+    )
+
+
+def _supports_bound_reads() -> bool:
+    return (
+        os.open in os.supports_dir_fd
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+    )
+
+
+def _changed_path_error(relative: str) -> IntegrityError:
+    return IntegrityError(
+        "managed path identity changed before it could be read",
+        path=relative,
+        remediation="preserve the changed path and rerun doctor after inspection",
+    )
+
+
+def _raise_open_error(
+    project: Path,
+    relative: str,
+    expected: tuple[_ChainEntry, ...],
+    error: OSError,
+) -> None:
+    try:
+        current = _capture_managed_chain(project, relative)
+    except IntegrityError as changed:
+        raise changed from error
+    if current is None or current[1] != expected:
+        raise _changed_path_error(relative) from error
+    raise FilesystemError(
+        f"managed path could not be opened without following links: {error}",
+        path=relative,
+        remediation="check path permissions and rerun doctor",
+    ) from error
+
+
+def _verify_open_chain(
+    project: Path,
+    relative: str,
+    expected: tuple[_ChainEntry, ...],
+) -> None:
+    current = _capture_managed_chain(project, relative)
+    if current is None or current[1] != expected:
+        raise _changed_path_error(relative)
+
+
+def _read_with_dir_descriptors(
+    project: Path,
+    relative: str,
+    expected: tuple[_ChainEntry, ...],
+) -> bytes:
+    descriptors: list[int] = []
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        try:
+            parent_descriptor = os.open(project, flags)
+        except OSError as error:
+            _raise_open_error(project, relative, expected, error)
+            raise AssertionError("unreachable")
+        descriptors.append(parent_descriptor)
+        if not _entry_matches_status(expected[0], os.fstat(parent_descriptor)):
+            raise _changed_path_error(relative)
+        for entry in expected[1:-1]:
+            try:
+                parent_descriptor = os.open(
+                    entry.path.name,
+                    flags,
+                    dir_fd=parent_descriptor,
+                )
+            except OSError as error:
+                _raise_open_error(project, relative, expected, error)
+                raise AssertionError("unreachable")
+            descriptors.append(parent_descriptor)
+            if not _entry_matches_status(entry, os.fstat(parent_descriptor)):
+                raise _changed_path_error(relative)
+        try:
+            file_descriptor = os.open(
+                expected[-1].path.name,
+                os.O_RDONLY | os.O_NOFOLLOW,
+                dir_fd=parent_descriptor,
+            )
+        except OSError as error:
+            _raise_open_error(project, relative, expected, error)
+            raise AssertionError("unreachable")
+        descriptors.append(file_descriptor)
+        if not _entry_matches_status(expected[-1], os.fstat(file_descriptor)):
+            raise _changed_path_error(relative)
+        _verify_open_chain(project, relative, expected)
+        return _read_descriptor(file_descriptor)
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _read_with_path_descriptor(
+    project: Path,
+    relative: str,
+    path: Path,
+    expected: tuple[_ChainEntry, ...],
+) -> bytes:
+    descriptor: int | None = None
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    try:
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as error:
+            _raise_open_error(project, relative, expected, error)
+            raise AssertionError("unreachable")
+        if not _entry_matches_status(expected[-1], os.fstat(descriptor)):
+            raise _changed_path_error(relative)
+        _verify_open_chain(project, relative, expected)
+        return _read_descriptor(descriptor)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def _path_diagnostic(error: LearningTutorError, relative: str) -> Diagnostic:
     code = (
         "unsafe-managed-path"
@@ -143,13 +360,19 @@ def _read_managed_bytes(
     relative: str,
 ) -> tuple[bytes | None, Diagnostic | None]:
     try:
-        path = _safe_managed_path(project, relative)
+        captured = _capture_managed_chain(project, relative)
     except LearningTutorError as error:
         return None, _path_diagnostic(error, relative)
-    try:
-        return path.read_bytes(), None
-    except FileNotFoundError:
+    if captured is None:
         return None, None
+    path, expected = captured
+    try:
+        _before_managed_open(project, relative, path)
+        if _supports_bound_reads():
+            return _read_with_dir_descriptors(project, relative, expected), None
+        return _read_with_path_descriptor(project, relative, path, expected), None
+    except LearningTutorError as error:
+        return None, _path_diagnostic(error, relative)
     except OSError as error:
         return None, _diagnostic(
             "managed-path-unreadable",
@@ -325,7 +548,7 @@ def _discovery_diagnostics(
     receipt: InstallReceipt,
 ) -> list[Diagnostic]:
     target = receipt.target
-    if receipt.loader_mode == "manual-snippet":
+    if target == "claude-code" and "CLAUDE.md" not in receipt.owned_paths:
         content, path_diagnostic = _read_managed_bytes(project, "CLAUDE.md")
         if path_diagnostic is not None:
             return [path_diagnostic]

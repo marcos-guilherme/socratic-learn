@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import stat
 import subprocess
@@ -20,6 +21,7 @@ from learning_tutor.install import (
     RECEIPT_PATH,
     _claude_snippet,
     apply_install,
+    load_receipt,
     plan_install,
 )
 from learning_tutor.manifest import serialize_json
@@ -80,7 +82,6 @@ class DoctorTests(unittest.TestCase):
         original = (project / "CLAUDE.md").read_bytes()
 
         self.assertNotIn("CLAUDE.md", receipt["owned_paths"])
-        self.assertEqual("manual-snippet", receipt["loader_mode"])
         diagnostic = next(
             item
             for item in diagnose(project)
@@ -99,11 +100,50 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual([], diagnose(project))
         self.assertTrue(receipt_path.is_file())
 
-    def test_receipt_records_owned_loader_mode_for_every_owned_target(self) -> None:
-        for target in ("generic", "cursor", "claude-code", "pi"):
-            with self.subTest(target=target):
-                _, receipt = self._receipt(self._installed(target))
-                self.assertEqual("owned", receipt["loader_mode"])
+    def test_task5_schema_one_receipts_remain_exact_and_update_compatible(self) -> None:
+        receipt_keys = {
+            "schema_version",
+            "protocol_version",
+            "target",
+            "owned_paths",
+            "hashes",
+        }
+        cases = (
+            ("generic", False),
+            ("cursor", False),
+            ("claude-code", False),
+            ("claude-code", True),
+            ("pi", False),
+        )
+        for index, (target, manual_claude) in enumerate(cases):
+            with self.subTest(target=target, manual_claude=manual_claude):
+                project = self.root / f"legacy-{index}-{target}"
+                project.mkdir()
+                if manual_claude:
+                    (project / "CLAUDE.md").write_text(
+                        "# User-owned Claude instructions\n",
+                        encoding="utf-8",
+                    )
+                apply_install(plan_install(self.source, project, target, False))
+                receipt_path, legacy_receipt = self._receipt(project)
+                self.assertEqual(receipt_keys, set(legacy_receipt))
+                self._write_receipt(receipt_path, legacy_receipt)
+                if manual_claude:
+                    with (project / "CLAUDE.md").open(
+                        "a",
+                        encoding="utf-8",
+                        newline="",
+                    ) as stream:
+                        stream.write("\n" + _claude_snippet())
+
+                self.assertEqual(receipt_keys, set(load_receipt(project)))
+                self.assertEqual([], diagnose(project))
+
+                apply_install(plan_install(self.source, project, target, True))
+
+                self.assertEqual(receipt_keys, set(load_receipt(project)))
+                self.assertEqual(receipt_keys, set(self._receipt(project)[1]))
+                self.assertEqual([], diagnose(project))
 
     def test_missing_receipt_diagnoses_partial_install_without_mutation(self) -> None:
         project = self._installed()
@@ -272,14 +312,24 @@ class DoctorTests(unittest.TestCase):
         candidate = project / ".pi/skills/learning-tutor/SKILL.md"
         candidate.parent.mkdir(parents=True)
         expected.replace(candidate)
-        real_read_bytes = Path.read_bytes
+        candidate_status = candidate.stat()
+        candidate_identity = (candidate_status.st_dev, candidate_status.st_ino)
+        doctor_module = __import__(
+            "learning_tutor.doctor",
+            fromlist=["_read_descriptor"],
+        )
+        real_read_descriptor = doctor_module._read_descriptor
 
-        def deny_candidate(path: Path) -> bytes:
-            if path == candidate:
+        def deny_candidate(descriptor: int) -> bytes:
+            status = os.fstat(descriptor)
+            if (status.st_dev, status.st_ino) == candidate_identity:
                 raise PermissionError("injected candidate denial")
-            return real_read_bytes(path)
+            return real_read_descriptor(descriptor)
 
-        with mock.patch("pathlib.Path.read_bytes", autospec=True, side_effect=deny_candidate):
+        with mock.patch(
+            "learning_tutor.doctor._read_descriptor",
+            side_effect=deny_candidate,
+        ):
             diagnostics = diagnose(project)
 
         item = next(item for item in diagnostics if item.code == "managed-path-unreadable")
@@ -346,6 +396,105 @@ class DoctorTests(unittest.TestCase):
         item = next(item for item in diagnostics if item.code == "unsafe-managed-path")
         self.assertEqual(".learning-tutor/manifest.json", item.path)
         self.assertEqual('{"external": true}\n', outside.read_text(encoding="utf-8"))
+
+    def test_file_symlink_swap_before_open_never_consumes_external_bytes(self) -> None:
+        project = self._installed()
+        receipt = project / RECEIPT_PATH
+        detached = project / "detached-receipt.json"
+        outside = self.root / "outside-receipt.json"
+        outside.write_bytes(b"external bytes must not be consumed")
+        consumed_external = False
+
+        def swap_file(current_project: Path, relative: str, path: Path) -> None:
+            if relative != RECEIPT_PATH or detached.exists():
+                return
+            receipt.replace(detached)
+            try:
+                receipt.symlink_to(outside)
+            except OSError as error:
+                detached.replace(receipt)
+                self.skipTest(f"file symlinks unavailable: {error}")
+
+        doctor_module = __import__(
+            "learning_tutor.doctor",
+            fromlist=["_read_descriptor"],
+        )
+        real_read_descriptor = doctor_module._read_descriptor
+        outside_identity = (outside.stat().st_dev, outside.stat().st_ino)
+
+        def track_descriptor(descriptor: int) -> bytes:
+            nonlocal consumed_external
+            status = os.fstat(descriptor)
+            if (status.st_dev, status.st_ino) == outside_identity:
+                consumed_external = True
+            return real_read_descriptor(descriptor)
+
+        with (
+            mock.patch(
+                "learning_tutor.doctor._before_managed_open",
+                side_effect=swap_file,
+            ),
+            mock.patch(
+                "learning_tutor.doctor._read_descriptor",
+                side_effect=track_descriptor,
+            ),
+        ):
+            diagnostics = diagnose(project)
+
+        self.assertFalse(consumed_external)
+        self.assertIn("unsafe-managed-path", self._codes(diagnostics))
+        self.assertEqual(b"external bytes must not be consumed", outside.read_bytes())
+
+    def test_parent_swap_before_open_never_consumes_replacement_bytes(self) -> None:
+        project = self._installed()
+        install_root = project / ".learning-tutor"
+        detached = project / "detached-learning-tutor"
+        replacement_receipt = install_root / "install.json"
+        consumed_replacement = False
+
+        def swap_parent(current_project: Path, relative: str, path: Path) -> None:
+            if relative != RECEIPT_PATH or detached.exists():
+                return
+            install_root.replace(detached)
+            install_root.mkdir()
+            replacement_receipt.write_bytes(b"replacement bytes must not be consumed")
+
+        doctor_module = __import__(
+            "learning_tutor.doctor",
+            fromlist=["_read_descriptor"],
+        )
+        real_read_descriptor = doctor_module._read_descriptor
+
+        def track_descriptor(descriptor: int) -> bytes:
+            nonlocal consumed_replacement
+            status = os.fstat(descriptor)
+            if replacement_receipt.exists():
+                replacement_status = replacement_receipt.stat()
+                if (status.st_dev, status.st_ino) == (
+                    replacement_status.st_dev,
+                    replacement_status.st_ino,
+                ):
+                    consumed_replacement = True
+            return real_read_descriptor(descriptor)
+
+        with (
+            mock.patch(
+                "learning_tutor.doctor._before_managed_open",
+                side_effect=swap_parent,
+            ),
+            mock.patch(
+                "learning_tutor.doctor._read_descriptor",
+                side_effect=track_descriptor,
+            ),
+        ):
+            diagnostics = diagnose(project)
+
+        self.assertFalse(consumed_replacement)
+        self.assertIn("unsafe-managed-path", self._codes(diagnostics))
+        self.assertEqual(
+            b"replacement bytes must not be consumed",
+            replacement_receipt.read_bytes(),
+        )
 
     def test_missing_nested_ignore_rule_is_reported(self) -> None:
         project = self._installed()

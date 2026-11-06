@@ -124,3 +124,54 @@ doctor stdout write/flush failures were not wrapped.
 
 No blocking concerns. One additional skip is the new real external-symlink
 doctor test; its lexical mocked-reparse fallback passed on this machine.
+
+## P1 re-review — schema compatibility and bound reads
+
+This section supersedes the earlier `loader_mode` receipt change and
+validate-then-read path-safety description.
+
+### RED evidence
+
+The expanded focused suite initially produced 7 expected errors. All five
+Task 5 receipt/update cases rejected the original schema-1 key set, and both
+race tests failed because descriptor-bound read hooks did not exist.
+
+### Compatibility fix
+
+- Schema-1 receipts again require exactly the original five keys:
+  `schema_version`, `protocol_version`, `target`, `owned_paths`, and `hashes`.
+- Claude integration mode is derived from existing ownership. A receipt that
+  owns and hashes root `CLAUDE.md` uses the owned loader; a Claude receipt that
+  does not own it requires the exact manual snippet.
+- Generic, Cursor, owned Claude, manual Claude, and Pi Task 5 receipts all
+  diagnose and update without migration. Updated receipts retain the same
+  exact schema-1 key set.
+
+### Identity-bound reads
+
+- Managed reads capture the complete project/parent/file no-follow identity
+  chain and containment before the open boundary.
+- Platforms with `dir_fd`, `O_DIRECTORY`, and `O_NOFOLLOW` open the project,
+  every parent component, and the final file through bound descriptors.
+- The Windows fallback opens the pathname once, compares the resulting
+  `fstat` identity to the captured file, then revalidates the complete
+  parent/file identity chain and containment before reading from that
+  descriptor.
+- Neither implementation reopens the pathname for content. Open, fstat,
+  identity, containment, and descriptor-read failures become actionable
+  diagnostics.
+- Narrow validation/open hooks test parent replacement on every platform and
+  file-symlink replacement when privilege permits. Descriptor tracking proves
+  replacement/external bytes are never consumed.
+
+### Final verification
+
+- Focused doctor suite: 24 tests passed with 2 Windows symlink-privilege skips.
+- Installer suite: 48 tests passed with 1 Windows symlink-privilege skip.
+- Full suite: 187 tests passed with 5 Windows symlink-privilege skips.
+- Compilation and `git diff --check` passed.
+- The deterministic diagnostic test passed in two consecutive runs.
+
+No blocking concerns. Two doctor symlink tests are skipped under this Windows
+account; the non-privileged parent-swap race test exercises the active Windows
+descriptor fallback and passed.
