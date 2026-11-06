@@ -80,3 +80,47 @@ Both runs completed with exit code 0 and identical sorted diagnostic output.
 
 No blocking concerns. The 3 full-suite skips are limited to Windows
 symlink-creation privilege and are unrelated to doctor behavior.
+
+## Review fixes — integration, path safety, and output
+
+### RED evidence
+
+The expanded focused suite initially failed with 2 assertion failures and 10
+errors. It reproduced all four review findings: receipts lacked a Claude
+manual-integration state, missing manual snippets were incorrectly healthy,
+managed paths were read before reparse checks, wrong candidate reads leaked
+`PermissionError`, Generic and owned Claude moves were not discovered, and
+doctor stdout write/flush failures were not wrapped.
+
+### Fixes and coverage
+
+- Receipts now record `loader_mode` as either `owned` or `manual-snippet` and
+  validate that mode against target and ownership.
+- Manual Claude mode compares the exact emitted snippet after line-ending
+  normalization. Absence produces deterministic
+  `manual-integration-required` output without claiming or modifying the user
+  file.
+- Every receipt, owned file, manifest, bundle, loader candidate, and nested
+  ignore read goes through lexical validation, component-by-component
+  no-follow stat checks, reparse/symlink rejection, resolution, and project
+  containment validation.
+- A real external-symlink test runs when Windows privilege permits. A mocked
+  reparse test always verifies rejection before the first content read.
+- Generic, Cursor, owned Claude, and Pi loaders are checked at their exact
+  discovery locations. Known wrong locations and unreadable candidates return
+  actionable diagnostics instead of raw exceptions.
+- Doctor writes and flushes stdout inside an `OSError` boundary that raises a
+  `FilesystemError` for `<stdout>` and exit 5. Non-I/O programmer errors remain
+  unmasked.
+
+### Final verification
+
+- Focused doctor suite: 22 tests passed with 1 Windows symlink-privilege skip.
+- Installer regression suite: 48 tests passed with 1 Windows
+  symlink-privilege skip.
+- Full suite: 185 tests passed with 4 Windows symlink-privilege skips.
+- `python -m compileall -q learning_tutor tests` and `git diff --check` passed.
+- The deterministic diagnostic test passed in two consecutive runs.
+
+No blocking concerns. One additional skip is the new real external-symlink
+doctor test; its lexical mocked-reparse fallback passed on this machine.

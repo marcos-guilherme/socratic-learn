@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import json
+import stat
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 
 from . import PROTOCOL_VERSION
 from .conformance import Diagnostic
-from .errors import LearningTutorError
+from .errors import FilesystemError, IntegrityError, LearningTutorError
 from .install import (
     INSTALL_ROOT,
     RECEIPT_PATH,
     InstallReceipt,
-    _project_path,
-    _read_receipt,
+    _claude_snippet,
+    _is_reparse_or_symlink,
+    _parse_receipt,
+    _portable_relative_path,
     _resolve_directory,
     _template_bytes,
 )
@@ -55,6 +58,11 @@ def _diagnostic(
     return Diagnostic(code, path, message, remediation)
 
 
+def _ordered_diagnostics(diagnostics: Sequence[Diagnostic]) -> list[Diagnostic]:
+    unique = dict.fromkeys(diagnostics)
+    return sorted(unique, key=lambda item: (item.code, item.path))
+
+
 def _relative_error_path(project: Path, value: object, fallback: str) -> str:
     try:
         path = Path(value)  # type: ignore[arg-type]
@@ -65,22 +73,129 @@ def _relative_error_path(project: Path, value: object, fallback: str) -> str:
         return fallback
 
 
-def _has_partial_install(project: Path) -> bool:
-    install_root = project / INSTALL_ROOT
-    if install_root.exists() or install_root.is_symlink():
-        return True
-    return any(
-        (project.joinpath(*PurePosixPath(relative).parts)).exists()
-        for relative in _PARTIAL_MARKERS
+def _safe_managed_path(project: Path, relative: str) -> Path:
+    if not _portable_relative_path(relative):
+        raise IntegrityError(
+            "managed path is not a control-free relative POSIX path",
+            path=relative,
+            remediation="repair the receipt before inspecting managed files",
+        )
+    candidate = project.joinpath(*PurePosixPath(relative).parts)
+    current = project
+    parts = PurePosixPath(relative).parts
+    for index, part in enumerate(parts):
+        current /= part
+        try:
+            status = current.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            break
+        except OSError as error:
+            raise FilesystemError(
+                f"managed path metadata could not be read: {error}",
+                path=relative,
+                remediation="check path permissions and rerun doctor",
+            ) from error
+        if _is_reparse_or_symlink(status):
+            raise IntegrityError(
+                "managed path contains a symlink or reparse point",
+                path=relative,
+                remediation="replace the unsafe path with a project-local regular path",
+            )
+        if index < len(parts) - 1 and not stat.S_ISDIR(status.st_mode):
+            raise IntegrityError(
+                "managed path has a non-directory parent",
+                path=relative,
+                remediation="replace the blocking parent with a project-local directory",
+            )
+    try:
+        resolved = candidate.resolve(strict=False)
+    except (OSError, RuntimeError) as error:
+        raise IntegrityError(
+            "managed path cannot be resolved safely",
+            path=relative,
+            remediation="replace the unsafe path with a project-local regular path",
+        ) from error
+    if not resolved.is_relative_to(project):
+        raise IntegrityError(
+            "managed path resolves outside the project",
+            path=relative,
+            remediation="replace the escaping path with a project-local regular path",
+        )
+    return candidate
+
+
+def _path_diagnostic(error: LearningTutorError, relative: str) -> Diagnostic:
+    code = (
+        "unsafe-managed-path"
+        if isinstance(error, IntegrityError)
+        else "managed-path-unreadable"
     )
+    return _diagnostic(
+        code,
+        relative,
+        error.message,
+        error.remediation or "inspect the managed path and rerun doctor",
+    )
+
+
+def _read_managed_bytes(
+    project: Path,
+    relative: str,
+) -> tuple[bytes | None, Diagnostic | None]:
+    try:
+        path = _safe_managed_path(project, relative)
+    except LearningTutorError as error:
+        return None, _path_diagnostic(error, relative)
+    try:
+        return path.read_bytes(), None
+    except FileNotFoundError:
+        return None, None
+    except OSError as error:
+        return None, _diagnostic(
+            "managed-path-unreadable",
+            relative,
+            f"managed path could not be read: {error}",
+            "check path permissions and rerun doctor",
+        )
+
+
+def _has_partial_install(project: Path) -> tuple[bool, list[Diagnostic]]:
+    diagnostics: list[Diagnostic] = []
+    found = False
+    for relative in (INSTALL_ROOT, *_PARTIAL_MARKERS):
+        try:
+            path = _safe_managed_path(project, relative)
+            path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except LearningTutorError as error:
+            diagnostics.append(_path_diagnostic(error, relative))
+            found = True
+            continue
+        except OSError as error:
+            diagnostics.append(
+                _diagnostic(
+                    "managed-path-unreadable",
+                    relative,
+                    f"managed path metadata could not be read: {error}",
+                    "check path permissions and rerun doctor",
+                )
+            )
+            found = True
+            continue
+        found = True
+    return found, diagnostics
 
 
 def _receipt_diagnostics(
     project: Path,
 ) -> tuple[InstallReceipt | None, list[Diagnostic]]:
-    receipt_path = project / RECEIPT_PATH
-    if not receipt_path.exists():
-        if _has_partial_install(project):
+    receipt_bytes, path_diagnostic = _read_managed_bytes(project, RECEIPT_PATH)
+    if path_diagnostic is not None:
+        return None, [path_diagnostic]
+    if receipt_bytes is None:
+        partial, partial_diagnostics = _has_partial_install(project)
+        if partial:
             return None, [
                 _diagnostic(
                     "missing-receipt",
@@ -90,7 +205,8 @@ def _receipt_diagnostics(
                         "preserve the partial installation and recovery artifacts, "
                         "then reinstall only after manual review"
                     ),
-                )
+                ),
+                *partial_diagnostics,
             ]
         return None, [
             _diagnostic(
@@ -101,7 +217,17 @@ def _receipt_diagnostics(
             )
         ]
     try:
-        receipt, _ = _read_receipt(project)
+        value = json.loads(receipt_bytes.decode("utf-8"))
+        receipt = _parse_receipt(value, project / RECEIPT_PATH)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        return None, [
+            _diagnostic(
+                "invalid-receipt",
+                RECEIPT_PATH,
+                f"installation receipt is not valid UTF-8 JSON: {error}",
+                "remove the invalid installation and reinstall",
+            )
+        ]
     except LearningTutorError as error:
         remediation = error.remediation or (
             "preserve the installation and reinstall after manual review"
@@ -128,37 +254,17 @@ def _owned_file_diagnostics(
     for relative in receipt.owned_paths:
         if relative == RECEIPT_PATH:
             continue
-        try:
-            path = _project_path(project, relative)
-        except LearningTutorError as error:
-            diagnostics.append(
-                _diagnostic(
-                    "invalid-owned-path",
-                    relative,
-                    error.message,
-                    error.remediation or "repair the receipt and reinstall",
-                )
-            )
+        content, path_diagnostic = _read_managed_bytes(project, relative)
+        if path_diagnostic is not None:
+            diagnostics.append(path_diagnostic)
             continue
-        try:
-            content = path.read_bytes()
-        except FileNotFoundError:
+        if content is None:
             diagnostics.append(
                 _diagnostic(
                     "owned-file-missing",
                     relative,
                     "an installation-owned file is missing",
                     "restore the owned file from a trusted installation or reinstall",
-                )
-            )
-            continue
-        except OSError as error:
-            diagnostics.append(
-                _diagnostic(
-                    "owned-file-unreadable",
-                    relative,
-                    f"an installation-owned file could not be read: {error}",
-                    "check filesystem permissions and inspect the file",
                 )
             )
             continue
@@ -176,10 +282,10 @@ def _owned_file_diagnostics(
 
 
 def _manifest_diagnostics(project: Path) -> list[Diagnostic]:
-    path = project / _MANIFEST_PATH
-    try:
-        manifest_bytes = path.read_bytes()
-    except OSError:
+    manifest_bytes, path_diagnostic = _read_managed_bytes(project, _MANIFEST_PATH)
+    if path_diagnostic is not None:
+        return [path_diagnostic]
+    if manifest_bytes is None:
         return []
     try:
         value = json.loads(manifest_bytes.decode("utf-8"))
@@ -197,9 +303,10 @@ def _manifest_diagnostics(project: Path) -> list[Diagnostic]:
     bundle = value["bundle"]
     assert isinstance(bundle, dict)
     bundle_relative = f"{INSTALL_ROOT}/{bundle['path']}"
-    try:
-        bundle_bytes = _project_path(project, bundle_relative).read_bytes()
-    except (LearningTutorError, OSError):
+    bundle_bytes, path_diagnostic = _read_managed_bytes(project, bundle_relative)
+    if path_diagnostic is not None:
+        return [path_diagnostic]
+    if bundle_bytes is None:
         return []
     if sha256_bytes(bundle_bytes) == bundle["sha256"]:
         return []
@@ -218,46 +325,101 @@ def _discovery_diagnostics(
     receipt: InstallReceipt,
 ) -> list[Diagnostic]:
     target = receipt.target
-    owned = set(receipt.owned_paths)
-    if target == "generic":
-        expected = _GENERIC_LOADER_PATH
-    elif target == "claude-code" and "CLAUDE.md" not in owned:
-        return []
-    else:
-        expected = _NATIVE_PATHS[target]
-    expected_path = project.joinpath(*PurePosixPath(expected).parts)
-    if not expected_path.is_file():
-        if target in ("cursor", "pi"):
-            expected_bytes = _template_bytes(f"{target}-skill.md", "../../../")
-        else:
-            expected_bytes = b""
-        wrong = next(
-            (
-                relative
-                for other_target, relative in _NATIVE_PATHS.items()
-                if other_target != target
-                and project.joinpath(*PurePosixPath(relative).parts).is_file()
-                and project.joinpath(*PurePosixPath(relative).parts).read_bytes()
-                == expected_bytes
-            ),
-            None,
-        )
-        if wrong is None:
-            return []
+    if receipt.loader_mode == "manual-snippet":
+        content, path_diagnostic = _read_managed_bytes(project, "CLAUDE.md")
+        if path_diagnostic is not None:
+            return [path_diagnostic]
+        if content is not None:
+            try:
+                text = content.decode("utf-8")
+            except UnicodeDecodeError as error:
+                return [
+                    _diagnostic(
+                        "managed-path-unreadable",
+                        "CLAUDE.md",
+                        f"manual Claude integration could not be verified as UTF-8: {error}",
+                        "save CLAUDE.md as UTF-8 and rerun doctor",
+                    )
+                ]
+            normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+            snippet = _claude_snippet().replace("\r\n", "\n").replace("\r", "\n")
+            if snippet.rstrip("\n") in normalized:
+                return []
         return [
             _diagnostic(
-                "wrong-native-discovery-path",
-                expected,
-                f"the {target} loader is published at the wrong discovery path: {wrong}",
-                f"restore the owned loader at {expected}",
+                "manual-integration-required",
+                "CLAUDE.md",
+                "the user-owned Claude file does not contain the exact required loader snippet",
+                (
+                    "append the exact emitted loader snippet to CLAUDE.md "
+                    "without replacing existing content"
+                ),
             )
         ]
+
+    if target == "generic":
+        expected = _GENERIC_LOADER_PATH
+    else:
+        expected = _NATIVE_PATHS[target]
+    if target == "generic":
+        expected_bytes = _template_bytes("generic-loader.md")
+    elif target in ("cursor", "pi"):
+        expected_bytes = _template_bytes(f"{target}-skill.md", "../../../")
+    else:
+        expected_bytes = _template_bytes("claude-loader.md")
+
+    content, path_diagnostic = _read_managed_bytes(project, expected)
+    if path_diagnostic is not None:
+        return [path_diagnostic]
+    if content is None:
+        candidate_diagnostics: list[Diagnostic] = []
+        wrong = None
+        candidates = (
+            _GENERIC_LOADER_PATH,
+            *_NATIVE_PATHS.values(),
+        )
+        for relative in candidates:
+            if relative == expected:
+                continue
+            candidate, candidate_diagnostic = _read_managed_bytes(project, relative)
+            if candidate_diagnostic is not None:
+                candidate_diagnostics.append(candidate_diagnostic)
+                continue
+            if candidate == expected_bytes:
+                wrong = relative
+                break
+        if wrong is not None:
+            candidate_diagnostics.append(
+                _diagnostic(
+                    "wrong-native-discovery-path",
+                    expected,
+                    f"the {target} loader is published at the wrong discovery path: {wrong}",
+                    f"restore the owned loader at {expected}",
+                )
+            )
+        else:
+            candidate_diagnostics.append(
+                _diagnostic(
+                    "discovery-path-missing",
+                    expected,
+                    f"the {target} loader is missing from its discovery path",
+                    f"restore the owned loader at {expected}",
+                )
+            )
+        return candidate_diagnostics
     try:
-        content = expected_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return []
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        return [
+            _diagnostic(
+                "managed-path-unreadable",
+                expected,
+                f"target loader is not valid UTF-8: {error}",
+                "restore the target loader from a trusted installation",
+            )
+        ]
     reference = _LOADER_REFERENCES[target]
-    if reference in content:
+    if reference in text:
         return []
     return [
         _diagnostic(
@@ -270,11 +432,22 @@ def _discovery_diagnostics(
 
 
 def _ignore_diagnostics(project: Path) -> list[Diagnostic]:
-    path = project / _IGNORE_PATH
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError):
+    content, path_diagnostic = _read_managed_bytes(project, _IGNORE_PATH)
+    if path_diagnostic is not None:
+        return [path_diagnostic]
+    if content is None:
         return []
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        return [
+            _diagnostic(
+                "managed-path-unreadable",
+                _IGNORE_PATH,
+                f"nested ignore file is not valid UTF-8: {error}",
+                "restore the nested ignore file from a trusted installation",
+            )
+        ]
     required = ("workspace/*", "!workspace/.gitkeep")
     missing = [rule for rule in required if rule not in lines]
     if not missing:
@@ -357,7 +530,7 @@ def diagnose(project: Path) -> list[Diagnostic]:
     resolved_project = _resolve_directory(project, "project")
     receipt, diagnostics = _receipt_diagnostics(resolved_project)
     if receipt is None:
-        return sorted(diagnostics, key=lambda item: (item.code, item.path))
+        return _ordered_diagnostics(diagnostics)
 
     if receipt.protocol_version != PROTOCOL_VERSION:
         diagnostics.append(
@@ -376,7 +549,7 @@ def diagnose(project: Path) -> list[Diagnostic]:
     diagnostics.extend(_discovery_diagnostics(resolved_project, receipt))
     diagnostics.extend(_ignore_diagnostics(resolved_project))
     diagnostics.extend(_git_diagnostics(resolved_project))
-    return sorted(diagnostics, key=lambda item: (item.code, item.path))
+    return _ordered_diagnostics(diagnostics)
 
 
 def format_diagnostics(diagnostics: Sequence[Diagnostic]) -> str:

@@ -41,6 +41,7 @@ _RECEIPT_KEYS = {
     "schema_version",
     "protocol_version",
     "target",
+    "loader_mode",
     "owned_paths",
     "hashes",
 }
@@ -63,6 +64,7 @@ class InstallReceipt:
     schema_version: int
     protocol_version: str
     target: str
+    loader_mode: str
     owned_paths: tuple[str, ...]
     hashes: tuple[tuple[str, str], ...]
 
@@ -71,6 +73,7 @@ class InstallReceipt:
             "schema_version": self.schema_version,
             "protocol_version": self.protocol_version,
             "target": self.target,
+            "loader_mode": self.loader_mode,
             "owned_paths": list(self.owned_paths),
             "hashes": dict(self.hashes),
         }
@@ -289,6 +292,13 @@ def _parse_receipt(value: object, path: Path) -> InstallReceipt:
             path=path,
             remediation="use the installer matching the recorded target",
         )
+    loader_mode = value["loader_mode"]
+    if loader_mode not in ("owned", "manual-snippet"):
+        raise IntegrityError(
+            "installation receipt loader mode is unsupported",
+            path=path,
+            remediation="remove the invalid installation and reinstall",
+        )
     owned_value = value["owned_paths"]
     if (
         type(owned_value) is not list
@@ -299,6 +309,17 @@ def _parse_receipt(value: object, path: Path) -> InstallReceipt:
     ):
         raise IntegrityError(
             "installation receipt owned paths are invalid",
+            path=path,
+            remediation="remove the invalid installation and reinstall",
+        )
+    claude_owned = "CLAUDE.md" in owned_value
+    if (
+        (loader_mode == "manual-snippet" and (target != "claude-code" or claude_owned))
+        or (loader_mode == "owned" and target == "claude-code" and not claude_owned)
+        or (target != "claude-code" and loader_mode != "owned")
+    ):
+        raise IntegrityError(
+            "installation receipt loader mode does not match target ownership",
             path=path,
             remediation="remove the invalid installation and reinstall",
         )
@@ -336,6 +357,7 @@ def _parse_receipt(value: object, path: Path) -> InstallReceipt:
         schema_version=MANIFEST_SCHEMA_VERSION,
         protocol_version=protocol,
         target=target,
+        loader_mode=loader_mode,
         owned_paths=tuple(owned_value),
         hashes=tuple(hashes),
     )
@@ -436,6 +458,11 @@ def _planned_files(
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "protocol_version": PROTOCOL_VERSION,
         "target": target,
+        "loader_mode": (
+            "owned"
+            if target != "claude-code" or include_claude_loader
+            else "manual-snippet"
+        ),
         "owned_paths": owned_paths,
         "hashes": hashes,
     }

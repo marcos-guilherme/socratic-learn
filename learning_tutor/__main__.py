@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from . import TARGETS
-from .errors import IntegrityError, LearningTutorError, UsageError
+from .errors import FilesystemError, IntegrityError, LearningTutorError, UsageError
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -86,11 +86,21 @@ def _dispatch_doctor(project: Path) -> int:
             raise
         raise _unavailable("doctor") from error
     diagnostics = diagnose(project)
-    if not diagnostics:
-        print("Installation healthy.")
-        return 0
-    sys.stdout.write(format_diagnostics(diagnostics))
-    return IntegrityError.exit_code
+    output = (
+        format_diagnostics(diagnostics)
+        if diagnostics
+        else "Installation healthy.\n"
+    )
+    try:
+        sys.stdout.write(output)
+        sys.stdout.flush()
+    except OSError as error:
+        raise FilesystemError(
+            "doctor output could not be written",
+            path="<stdout>",
+            remediation="check standard output and retry",
+        ) from error
+    return IntegrityError.exit_code if diagnostics else 0
 
 
 def _unavailable(command: str) -> IntegrityError:

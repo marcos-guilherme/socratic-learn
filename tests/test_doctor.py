@@ -4,8 +4,10 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import stat
 import subprocess
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -13,7 +15,13 @@ from learning_tutor import PROTOCOL_VERSION
 from learning_tutor.__main__ import main
 from learning_tutor.conformance import Diagnostic
 from learning_tutor.doctor import diagnose, format_diagnostics
-from learning_tutor.install import RECEIPT_PATH, apply_install, plan_install
+from learning_tutor.errors import FilesystemError
+from learning_tutor.install import (
+    RECEIPT_PATH,
+    _claude_snippet,
+    apply_install,
+    plan_install,
+)
 from learning_tutor.manifest import serialize_json
 
 
@@ -69,14 +77,33 @@ class DoctorTests(unittest.TestCase):
     def test_claude_user_file_is_not_treated_as_owned_loader(self) -> None:
         project = self._installed("claude-code", existing_claude=True)
         receipt_path, receipt = self._receipt(project)
+        original = (project / "CLAUDE.md").read_bytes()
 
         self.assertNotIn("CLAUDE.md", receipt["owned_paths"])
-        self.assertEqual([], diagnose(project))
-        self.assertEqual(
-            "# User-owned Claude instructions\n",
-            (project / "CLAUDE.md").read_text(encoding="utf-8"),
+        self.assertEqual("manual-snippet", receipt["loader_mode"])
+        diagnostic = next(
+            item
+            for item in diagnose(project)
+            if item.code == "manual-integration-required"
         )
+        self.assertEqual("CLAUDE.md", diagnostic.path)
+        self.assertEqual(
+            "append the exact emitted loader snippet to CLAUDE.md without replacing existing content",
+            diagnostic.remediation,
+        )
+        self.assertEqual(original, (project / "CLAUDE.md").read_bytes())
+
+        with (project / "CLAUDE.md").open("a", encoding="utf-8", newline="") as stream:
+            stream.write("\r\n" + _claude_snippet().replace("\n", "\r\n"))
+
+        self.assertEqual([], diagnose(project))
         self.assertTrue(receipt_path.is_file())
+
+    def test_receipt_records_owned_loader_mode_for_every_owned_target(self) -> None:
+        for target in ("generic", "cursor", "claude-code", "pi"):
+            with self.subTest(target=target):
+                _, receipt = self._receipt(self._installed(target))
+                self.assertEqual("owned", receipt["loader_mode"])
 
     def test_missing_receipt_diagnoses_partial_install_without_mutation(self) -> None:
         project = self._installed()
@@ -105,6 +132,32 @@ class DoctorTests(unittest.TestCase):
             if path.is_file()
         }
         self.assertEqual(before, after)
+
+    def test_partial_install_without_receipt_still_reports_unsafe_paths(self) -> None:
+        project = self._installed()
+        (project / RECEIPT_PATH).unlink()
+        manifest = project / ".learning-tutor/manifest.json"
+        real_stat = Path.stat
+
+        def marked_stat(path: Path, *, follow_symlinks: bool = True):
+            status = real_stat(path, follow_symlinks=follow_symlinks)
+            if path != manifest or follow_symlinks:
+                return status
+            return SimpleNamespace(
+                st_mode=status.st_mode,
+                st_file_attributes=getattr(
+                    stat,
+                    "FILE_ATTRIBUTE_REPARSE_POINT",
+                    1024,
+                ),
+            )
+
+        with mock.patch("pathlib.Path.stat", autospec=True, side_effect=marked_stat):
+            diagnostics = diagnose(project)
+
+        self.assertIn("missing-receipt", self._codes(diagnostics))
+        item = next(item for item in diagnostics if item.code == "unsafe-managed-path")
+        self.assertEqual(".learning-tutor/manifest.json", item.path)
 
     def test_invalid_receipt_schema_is_actionable(self) -> None:
         project = self._installed()
@@ -188,6 +241,112 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(".cursor/skills/learning-tutor/SKILL.md", item.path)
         self.assertIn(".pi/skills/learning-tutor/SKILL.md", item.message)
 
+    def test_wrong_known_discovery_paths_are_reported_for_every_owned_target(self) -> None:
+        cases = (
+            ("generic", ".learning-tutor/loader.md", ".cursor/skills/learning-tutor/SKILL.md"),
+            ("cursor", ".cursor/skills/learning-tutor/SKILL.md", ".pi/skills/learning-tutor/SKILL.md"),
+            ("claude-code", "CLAUDE.md", ".pi/skills/learning-tutor/SKILL.md"),
+            ("pi", ".pi/skills/learning-tutor/SKILL.md", ".cursor/skills/learning-tutor/SKILL.md"),
+        )
+        for target, expected, wrong in cases:
+            with self.subTest(target=target):
+                project = self._installed(target)
+                expected_path = project / expected
+                wrong_path = project / wrong
+                wrong_path.parent.mkdir(parents=True, exist_ok=True)
+                if wrong_path.exists():
+                    wrong_path.unlink()
+                expected_path.replace(wrong_path)
+
+                item = next(
+                    item
+                    for item in diagnose(project)
+                    if item.code == "wrong-native-discovery-path"
+                )
+                self.assertEqual(expected, item.path)
+                self.assertIn(wrong, item.message)
+
+    def test_unreadable_wrong_discovery_candidate_is_actionable(self) -> None:
+        project = self._installed("cursor")
+        expected = project / ".cursor/skills/learning-tutor/SKILL.md"
+        candidate = project / ".pi/skills/learning-tutor/SKILL.md"
+        candidate.parent.mkdir(parents=True)
+        expected.replace(candidate)
+        real_read_bytes = Path.read_bytes
+
+        def deny_candidate(path: Path) -> bytes:
+            if path == candidate:
+                raise PermissionError("injected candidate denial")
+            return real_read_bytes(path)
+
+        with mock.patch("pathlib.Path.read_bytes", autospec=True, side_effect=deny_candidate):
+            diagnostics = diagnose(project)
+
+        item = next(item for item in diagnostics if item.code == "managed-path-unreadable")
+        self.assertEqual(".pi/skills/learning-tutor/SKILL.md", item.path)
+        self.assertIn("injected candidate denial", item.message)
+
+    def test_reparse_managed_path_is_rejected_before_read(self) -> None:
+        project = self._installed()
+        manifest = project / ".learning-tutor/manifest.json"
+        real_stat = Path.stat
+        real_read_bytes = Path.read_bytes
+        read_attempted = False
+
+        def marked_stat(path: Path, *, follow_symlinks: bool = True):
+            status = real_stat(path, follow_symlinks=follow_symlinks)
+            if path != manifest or follow_symlinks:
+                return status
+            return SimpleNamespace(
+                st_mode=status.st_mode,
+                st_file_attributes=getattr(
+                    stat,
+                    "FILE_ATTRIBUTE_REPARSE_POINT",
+                    1024,
+                ),
+            )
+
+        def guarded_read(path: Path) -> bytes:
+            nonlocal read_attempted
+            if path == manifest:
+                read_attempted = True
+            return real_read_bytes(path)
+
+        with (
+            mock.patch("pathlib.Path.stat", autospec=True, side_effect=marked_stat),
+            mock.patch("pathlib.Path.read_bytes", autospec=True, side_effect=guarded_read),
+        ):
+            diagnostics = diagnose(project)
+
+        self.assertFalse(read_attempted)
+        item = next(item for item in diagnostics if item.code == "unsafe-managed-path")
+        self.assertEqual(".learning-tutor/manifest.json", item.path)
+        self.assertEqual(
+            1,
+            sum(
+                item.code == "unsafe-managed-path"
+                and item.path == ".learning-tutor/manifest.json"
+                for item in diagnostics
+            ),
+        )
+
+    def test_external_managed_symlink_is_rejected_without_reading_target(self) -> None:
+        project = self._installed()
+        manifest = project / ".learning-tutor/manifest.json"
+        outside = self.root / "outside-manifest.json"
+        outside.write_text('{"external": true}\n', encoding="utf-8")
+        manifest.unlink()
+        try:
+            manifest.symlink_to(outside)
+        except OSError as error:
+            self.skipTest(f"file symlinks unavailable: {error}")
+
+        diagnostics = diagnose(project)
+
+        item = next(item for item in diagnostics if item.code == "unsafe-managed-path")
+        self.assertEqual(".learning-tutor/manifest.json", item.path)
+        self.assertEqual('{"external": true}\n', outside.read_text(encoding="utf-8"))
+
     def test_missing_nested_ignore_rule_is_reported(self) -> None:
         project = self._installed()
         (project / ".learning-tutor/.gitignore").write_text(
@@ -268,6 +427,52 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(4, main(["doctor", str(project)]))
         self.assertIn("[owned-file-missing]", stdout.getvalue())
         self.assertIn("Remediation:", stdout.getvalue())
+
+    def test_cli_wraps_doctor_stdout_write_and_flush_failures(self) -> None:
+        project = self._installed()
+
+        class FailingStdout:
+            def __init__(self, failure: str) -> None:
+                self.failure = failure
+
+            def write(self, value: str) -> int:
+                if self.failure == "write":
+                    raise OSError("injected stdout write failure")
+                return len(value)
+
+            def flush(self) -> None:
+                if self.failure == "flush":
+                    raise OSError("injected stdout flush failure")
+
+        for failure in ("write", "flush"):
+            with self.subTest(failure=failure):
+                stderr = io.StringIO()
+                with (
+                    mock.patch("sys.stdout", FailingStdout(failure)),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    self.assertEqual(5, main(["doctor", str(project)]))
+                message = stderr.getvalue()
+                self.assertIn("doctor output could not be written", message)
+                self.assertIn("path: <stdout>", message)
+                self.assertIn("check standard output and retry", message)
+
+        (project / ".learning-tutor/loader.md").unlink()
+        stderr = io.StringIO()
+        with (
+            mock.patch("sys.stdout", FailingStdout("write")),
+            contextlib.redirect_stderr(stderr),
+        ):
+            self.assertEqual(5, main(["doctor", str(project)]))
+
+    def test_cli_does_not_mask_doctor_stdout_programmer_errors(self) -> None:
+        project = self._installed()
+        stream = mock.Mock()
+        stream.write.side_effect = RuntimeError("programmer failure")
+
+        with mock.patch("sys.stdout", stream):
+            with self.assertRaisesRegex(RuntimeError, "programmer failure"):
+                main(["doctor", str(project)])
 
 
 if __name__ == "__main__":
