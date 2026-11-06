@@ -1,6 +1,71 @@
 # Socratic Learn Installation
 
-## Requirements and scope
+## Normal installation
+
+Normal users install once and run `socratic`; they do not clone or build this
+repository. Native installers are intended for published x86-64 Windows,
+Linux, and macOS artifacts:
+
+```powershell
+$script = irm https://raw.githubusercontent.com/marcos-guilherme/socratic-learn/main/scripts/install.ps1; & ([scriptblock]::Create($script))
+```
+
+```sh
+sh -c 'tmp=$(mktemp) || exit; curl -fsSL https://raw.githubusercontent.com/marcos-guilherme/socratic-learn/main/scripts/install.sh -o "$tmp" && sh "$tmp"; status=$?; rm -f "$tmp"; exit $status'
+```
+
+This documentation does not claim that a public release or tag already exists.
+The first native binaries are unsigned. The installers warn that Windows
+SmartScreen or macOS Gatekeeper may intervene and require confirmation before
+download. SHA-256 verification proves that downloaded bytes match release
+metadata; it does not replace platform signing or notarization.
+
+Native installers reject unsupported architectures and honestly offer:
+
+```text
+pipx install socratic-learn
+```
+
+The pipx fallback requires Python 3.11 or newer and is also suitable when a
+Python-managed environment is preferred.
+
+## Native channel behavior
+
+The installer places `socratic` in a user-owned binary directory and records
+non-secret native channel metadata at `~/.socratic-learn/channel.json`. The
+metadata contains the schema version, the `native` channel name, the absolute
+executable path, and the canonical release-manifest URL. It contains no
+provider credentials.
+
+The Windows installer selects one exact `windows`/`x86_64` manifest artifact,
+then verifies its declared size and SHA-256 digest. The POSIX installer selects
+`socratic-linux-x86_64` or `socratic-macos-x86_64` and verifies the unique
+matching entry in `SHA256SUMS`. Redirects remain inside each installer's
+documented trusted boundary.
+
+`socratic update` downloads and verifies a replacement before publication.
+On POSIX it atomically replaces the executable; on Windows a detached helper
+waits for the running process to exit before replacement. Download or
+verification failure removes staging and preserves the previous executable:
+this is the update rollback guarantee.
+
+`socratic uninstall` removes the native executable and channel metadata but
+preserves learner data by default. `socratic uninstall --delete-data` requires
+interactive confirmation; `--yes` is accepted only with `--delete-data`.
+
+## Pipx channel behavior
+
+An installation with no native channel metadata is treated as Python/pipx
+managed. Socratic Learn never rewrites or removes that environment. Instead:
+
+- `socratic update` prints `pipx upgrade socratic-learn`;
+- `socratic uninstall` prints `pipx uninstall socratic-learn`.
+
+Pipx itself owns package update and removal. Learner profiles, progress, and
+sessions under `~/.socratic-learn/learning/` remain separate, so package
+removal preserves learner data.
+
+## Source and project-adapter requirements
 
 Use Python 3.11 or newer from the repository root. The distribution supports
 exactly four project-local targets: `generic`, `cursor`, `claude-code`, and

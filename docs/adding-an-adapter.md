@@ -1,8 +1,18 @@
 # Adding an Adapter
 
-An adapter is a thin discovery loader around the canonical generated prompt.
-It maps host capabilities and paths; it must not restate pedagogy, assessment,
-session, evidence, or curriculum prose.
+Socratic Learn has two adapter types:
+
+- A **project-discovery adapter** is a thin loader around the canonical
+  generated prompt. It places host-specific discovery files in an existing
+  project without starting the host.
+- A **launcher adapter** detects an installed host executable and constructs
+  the exact child-process argument vector used by `socratic`.
+
+This guide covers project-discovery adapters. Launcher hosts have a separate
+[launcher adapter contract](launcher-adapters.md), including inherited
+authentication and terminal behavior plus fake-executable acceptance tests.
+Neither adapter type may restate pedagogy, assessment, session, evidence, or
+curriculum prose.
 
 ## Template boundary
 

@@ -60,6 +60,7 @@ REQUIRED_PATHS = (
     "dist/socratic-learn.prompt.md",
     "dist/manifest.json",
     "docs/universal-installation.md",
+    "docs/launcher-adapters.md",
     "docs/manifest-reference.md",
     "docs/adding-an-adapter.md",
     "docs/superpowers/specs/2026-11-05-universal-distribution-design.md",
@@ -89,6 +90,34 @@ README_POSITIONING_REQUIREMENTS = (
     "A portable, evidence-aware Socratic protocol for learning anything.",
     "any subject or skill",
     "starter curricula",
+)
+README_LAUNCHER_REQUIREMENTS = (
+    "socratic",
+    'socratic "i want to learn linear algebra"',
+    "socratic --agent pi",
+    "socratic --here",
+    "socratic update",
+    "socratic uninstall",
+    "pipx install socratic-learn",
+    "no repository clone",
+    "does not store provider credentials",
+    "shell history",
+    "unsigned",
+    "smartscreen",
+    "gatekeeper",
+    "pi, claude code, and antigravity",
+    "cursor remains a project integration",
+)
+LAUNCHER_ADAPTER_REQUIREMENTS = (
+    "executable detection",
+    "exact command construction",
+    "protocol delivery",
+    "inherits authentication",
+    "inherits terminal",
+    "fake executable",
+    "`pi`",
+    "`claude`",
+    "`agy`",
 )
 ADAPTER_ROOTS = (".cursor", "adapters")
 LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
@@ -420,6 +449,25 @@ def validate(root: Path) -> list[str]:
             for phrase in README_POSITIONING_REQUIREMENTS
         ):
             errors.append("Narrow product positioning in README.md")
+        normalized_readme = normalize(readme_text).lower()
+        if not all(
+            requirement in normalized_readme
+            for requirement in README_LAUNCHER_REQUIREMENTS
+        ):
+            errors.append("README.md is missing public launcher onboarding")
+
+    launcher_adapters = root / "docs/launcher-adapters.md"
+    if launcher_adapters.is_file():
+        launcher_text = normalize(
+            launcher_adapters.read_text(encoding="utf-8")
+        ).lower()
+        if not all(
+            requirement in launcher_text
+            for requirement in LAUNCHER_ADAPTER_REQUIREMENTS
+        ):
+            errors.append(
+                "docs/launcher-adapters.md is missing launcher adapter contracts"
+            )
 
     legacy_package = root / "learning_tutor"
     allowed_legacy_modules = {"__init__.py", "__main__.py"}

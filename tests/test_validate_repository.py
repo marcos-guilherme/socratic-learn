@@ -32,6 +32,7 @@ UNIVERSAL_REQUIRED_PATHS = (
     "dist/manifest.json",
     "LICENSE",
     "docs/universal-installation.md",
+    "docs/launcher-adapters.md",
     "docs/manifest-reference.md",
     "docs/adding-an-adapter.md",
     "docs/superpowers/specs/2026-11-05-universal-distribution-design.md",
@@ -114,6 +115,15 @@ README_HEADINGS = (
 README_WORKSPACE_COMMANDS = (
     "Copy-Item -Recurse workspace.example\\* workspace",
     "cp -R workspace.example/. workspace/",
+)
+README_LAUNCHER_COMMANDS = (
+    "socratic",
+    'socratic "I want to learn linear algebra"',
+    "socratic --agent pi",
+    "socratic --here",
+    "socratic update",
+    "socratic uninstall",
+    "pipx install socratic-learn",
 )
 
 
@@ -323,6 +333,62 @@ class RepositoryValidationTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIn(command, text)
 
+    def test_readme_provides_public_launcher_onboarding(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "README.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split()).lower()
+
+        for command in README_LAUNCHER_COMMANDS:
+            with self.subTest(command=command):
+                self.assertIn(command, text)
+        for clause in (
+            "no repository clone",
+            "does not store provider credentials",
+            "shell history",
+            "unsigned",
+            "smartscreen",
+            "gatekeeper",
+            "pi, claude code, and antigravity",
+            "cursor remains a project integration",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, normalized)
+
+    def test_launcher_and_distribution_docs_define_public_contracts(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        launcher_path = root / "docs/launcher-adapters.md"
+        self.assertTrue(launcher_path.is_file(), "Missing docs/launcher-adapters.md")
+        launcher = launcher_path.read_text(encoding="utf-8")
+        launcher_normalized = " ".join(launcher.split()).lower()
+        for clause in (
+            "executable detection",
+            "exact command construction",
+            "protocol delivery",
+            "inherits authentication",
+            "inherits terminal",
+            "fake executable",
+        ):
+            with self.subTest(document="launcher adapters", clause=clause):
+                self.assertIn(clause, launcher_normalized)
+        for executable in ("`pi`", "`claude`", "`agy`"):
+            self.assertIn(executable, launcher)
+
+        installation = (
+            root / "docs/universal-installation.md"
+        ).read_text(encoding="utf-8")
+        installation_normalized = " ".join(installation.split()).lower()
+        for clause in (
+            "x86-64",
+            "sha-256",
+            "unsigned",
+            "rollback",
+            "pipx upgrade socratic-learn",
+            "pipx uninstall socratic-learn",
+            "preserves learner data",
+        ):
+            with self.subTest(document="installation", clause=clause):
+                self.assertIn(clause, installation_normalized)
+
     def test_validator_rejects_narrow_readme_positioning(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
@@ -336,6 +402,34 @@ class RepositoryValidationTests(unittest.TestCase):
 
         self.assertIn(
             "Narrow product positioning in README.md",
+            validate(root),
+        )
+
+    def test_validator_rejects_missing_public_launcher_contract(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        readme = root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "Socratic Learn does not store provider credentials",
+                "Authentication is handled elsewhere",
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertIn(
+            "README.md is missing public launcher onboarding",
+            validate(root),
+        )
+
+    def test_validator_rejects_incomplete_launcher_adapter_contract(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        launcher = root / "docs/launcher-adapters.md"
+        launcher.write_text("# Launcher Adapters\n", encoding="utf-8")
+
+        self.assertIn(
+            "docs/launcher-adapters.md is missing launcher adapter contracts",
             validate(root),
         )
 
