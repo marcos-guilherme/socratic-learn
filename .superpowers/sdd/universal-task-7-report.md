@@ -39,12 +39,15 @@ and validator enforcement made the repeated clone smoke clean.
 
 ## End-to-end smoke
 
-`tests/test_universal_smoke.py` copies only `git ls-files`, compares two
-in-memory builds and checked-in artifacts, installs Generic, Cursor, Claude
-Code, and Pi separately, requires healthy doctor results, verifies nested
-private-file ignore behavior in temporary Git repositories, performs unchanged
-updates, and confirms a tampered managed file causes refusal without any
-additional mutation.
+`tests/test_universal_smoke.py` copies only `git ls-files` and executes the
+copied repository's CLI with `sys.executable`, `cwd` set to the copy, and
+`PYTHONPATH` removed. It compares two CLI builds, installs Generic, Cursor,
+Claude Code, and Pi separately, requires healthy CLI doctor results, verifies
+nested private-file ignore behavior in temporary Git repositories, performs
+unchanged CLI updates, and confirms a tampered managed file causes refusal
+without any additional mutation. A separate regression removes the copied
+`learning_tutor/install.py` and proves installation fails instead of falling
+back to the valid live checkout.
 
 After commits `4c14680` and `56d3062`, a unique clean clone ran build, the full
 suite, and the validator. Rebuilding left `dist/` byte-identical and
@@ -62,10 +65,10 @@ git diff --check
 Results:
 
 - Build exited 0 with the checked-in bundle and manifest hashes.
-- Full suite: 193 tests passed, 5 skipped.
+- Full suite: 196 tests passed, 5 skipped.
 - Validator: `Repository validation passed.`
 - Diff check exited 0.
-- Post-commit clone: 193 tests passed, 5 skipped; validator passed; generated
+- Post-commit clone: 196 tests passed, 5 skipped; validator passed; generated
   artifact diff was empty; clone status was clean.
 
 The five skips are existing Windows symlink-privilege cases. Non-privileged
@@ -75,8 +78,34 @@ path-identity and recovery coverage passed.
 
 - `4c14680 docs: publish universal tutor workflow`
 - `56d3062 fix: preserve generated LF checkouts`
+- `8e46305 docs: record universal task 7 verification`
+- `838d946 fix: isolate universal validation smoke`
 
 ## Concerns
 
 No blocking concerns. Git EOL enforcement is intentionally scoped to `dist/*`;
 the deterministic builder normalizes canonical source line endings in memory.
+
+## Review fixes
+
+The Task 7 review identified four issues; all were corrected:
+
+- The tracked-copy smoke no longer imports live `learning_tutor` modules or
+  uses live functions/templates after copying. Copied CLI subprocesses cover
+  build, all four installs, doctor, unchanged update, and tamper refusal
+  without recursively invoking the smoke suite.
+- Required repository artifacts are checked with `Path.is_file()`. A directory
+  masquerading as `dist/manifest.json` now receives a clear non-file
+  diagnostic, distinct from a missing path.
+- Every Python subprocess launched by tests uses `sys.executable`; a full
+  `tests/**/*.py` search found no hardcoded `"python"` executable argument.
+- Installation documentation now distinguishes receipt-owned and hashed
+  managed files from operation-created parent, staging, backup, and recovery
+  directories. It documents normal temporary cleanup and conservative
+  preservation after uncertain or post-publication failure.
+
+Focused smoke tests passed twice consecutively with identical successful
+results. The corrected full suite passed 196 tests with 5 existing Windows
+symlink-privilege skips. Repository validation and `git diff --check` passed.
+After commit `838d946`, a unique clean clone rebuilt byte-identical `dist/`,
+passed all 196 tests and the validator, and remained clean.
