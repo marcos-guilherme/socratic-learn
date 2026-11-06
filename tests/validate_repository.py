@@ -380,7 +380,7 @@ def workflow_steps(job: str) -> list[str]:
     return [
         match.group(0)
         for match in re.finditer(
-            r"^      - .*?(?=^      - |\Z)",
+            r"^      - .*?(?=^      - |^  [a-z0-9-]+:\n|\Z)",
             job,
             re.MULTILINE | re.DOTALL,
         )
@@ -421,9 +421,15 @@ def workflow_action_input(step: str, name: str) -> str | None:
 
 def workflow_run_block(step: str) -> str:
     lines = step.splitlines()
-    try:
-        start = lines.index("        run: |") + 1
-    except ValueError:
+    start = next(
+        (
+            index + 1
+            for index, line in enumerate(lines)
+            if re.fullmatch(r"        run: \|[+-]?", line)
+        ),
+        None,
+    )
+    if start is None:
         return ""
     body: list[str] = []
     for line in lines[start:]:
@@ -434,6 +440,53 @@ def workflow_run_block(step: str) -> str:
         else:
             break
     return "\n".join(body)
+
+
+def workflow_python_step_uses_literal_run_block(step: str) -> bool:
+    return any(
+        re.fullmatch(r"        run: \|[+-]?", line)
+        for line in step.splitlines()
+    )
+
+
+def workflow_step_uses_python_shell(step: str) -> bool:
+    return any(
+        re.fullmatch(
+            r"""        shell: +(?:python(?: +\{0\})?"""
+            r"""|"python(?: \{0\})?"|'python(?: \{0\})?')"""
+            r"(?: +(?:#.*)?)?",
+            line,
+        )
+        for line in step.splitlines()
+    )
+
+
+def workflow_uses_run_shell_defaults(text: str) -> bool:
+    mappings: list[tuple[int, str]] = []
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indentation = len(line) - len(line.lstrip(" "))
+        while mappings and mappings[-1][0] >= indentation:
+            mappings.pop()
+        match = re.fullmatch(
+            r" *(?P<key>[A-Za-z][A-Za-z0-9_-]*):(?P<value>.*)",
+            line,
+        )
+        if match is None:
+            continue
+        key = match.group("key")
+        if (
+            key == "shell"
+            and len(mappings) >= 2
+            and [mapping[1] for mapping in mappings[-2:]]
+            == ["defaults", "run"]
+        ):
+            return True
+        value = match.group("value").strip()
+        if not value or value.startswith("#"):
+            mappings.append((indentation, key))
+    return False
 
 
 def workflow_python_assignment_matches(
@@ -458,25 +511,76 @@ def workflow_python_assignment_matches(
     return len(assignments) == 1 and ast.dump(assignments[0]) == ast.dump(expected)
 
 
-def version_step_imports_local_package(step: str) -> bool:
-    if "        shell: python" not in step.splitlines():
-        return False
+def workflow_python_tree(step: str) -> ast.Module | None:
+    if not workflow_step_uses_python_shell(step):
+        return None
     try:
-        statements = ast.parse(workflow_run_block(step)).body
+        return ast.parse(workflow_run_block(step))
     except SyntaxError:
-        return False
+        return None
 
+
+def workflow_python_local_imports(tree: ast.Module) -> list[ast.stmt]:
+    imports: list[ast.stmt] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(
+            alias.name == "socratic_learn"
+            or alias.name.startswith("socratic_learn.")
+            for alias in node.names
+        ):
+            imports.append(node)
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and (
+                node.module == "socratic_learn"
+                or node.module.startswith("socratic_learn.")
+            )
+        ):
+            imports.append(node)
+    return imports
+
+
+def workflow_python_step_imports_local_package(step: str) -> bool:
+    tree = workflow_python_tree(step)
+    return tree is not None and bool(workflow_python_local_imports(tree))
+
+
+def workflow_python_step_has_local_import_setup(step: str) -> bool:
+    tree = workflow_python_tree(step)
+    if tree is None:
+        return False
+    local_imports = workflow_python_local_imports(tree)
+    if not local_imports:
+        return True
     imported_at: dict[str, int] = {}
-    setup_at: int | None = None
-    version_import_at: int | None = None
     required_setup = ast.parse("sys.path.insert(0, os.getcwd())").body[0]
-    for index, statement in enumerate(statements):
+    setup_at: list[int] = []
+    for index, statement in enumerate(tree.body):
         if isinstance(statement, ast.Import):
             for alias in statement.names:
                 if alias.asname is None:
                     imported_at.setdefault(alias.name, index)
         if ast.dump(statement) == ast.dump(required_setup):
-            setup_at = index
+            setup_at.append(index)
+
+    return (
+        "os" in imported_at
+        and "sys" in imported_at
+        and len(setup_at) == 1
+        and imported_at["os"] < setup_at[0]
+        and imported_at["sys"] < setup_at[0]
+        and tree.body[setup_at[0]].lineno
+        < min(statement.lineno for statement in local_imports)
+    )
+
+
+def version_step_imports_local_package(step: str) -> bool:
+    tree = workflow_python_tree(step)
+    if tree is None or not workflow_python_step_has_local_import_setup(step):
+        return False
+    version_import_at: int | None = None
+    for index, statement in enumerate(tree.body):
         if (
             isinstance(statement, ast.ImportFrom)
             and statement.module == "socratic_learn"
@@ -488,15 +592,7 @@ def version_step_imports_local_package(step: str) -> bool:
         ):
             version_import_at = index
 
-    return (
-        "os" in imported_at
-        and "sys" in imported_at
-        and setup_at is not None
-        and version_import_at is not None
-        and imported_at["os"] < setup_at
-        and imported_at["sys"] < setup_at
-        and setup_at < version_import_at
-    )
+    return version_import_at is not None
 
 
 def validate_release_automation(root: Path) -> list[str]:
@@ -551,6 +647,37 @@ def validate_release_automation(root: Path) -> list[str]:
         )
         if not all(term in release for term in required_release_terms):
             errors.append("Release workflow is missing required triggers or artifacts")
+        if workflow_uses_run_shell_defaults(release):
+            errors.append(
+                "Release workflow must not use defaults.run.shell; "
+                "Python steps must declare shell explicitly"
+            )
+
+        python_steps = [
+            step
+            for step in workflow_steps(release)
+            if workflow_step_uses_python_shell(step)
+        ]
+        if any(
+            not workflow_python_step_uses_literal_run_block(step)
+            for step in python_steps
+        ):
+            errors.append(
+                "Release shell: python steps must use a literal run block"
+            )
+        local_import_steps = [
+            step
+            for step in python_steps
+            if workflow_python_step_imports_local_package(step)
+        ]
+        if any(
+            not workflow_python_step_has_local_import_setup(step)
+            for step in local_import_steps
+        ):
+            errors.append(
+                "Every release shell: python step importing socratic_learn "
+                "must add the checkout to sys.path before import"
+            )
 
         native = workflow_job(release, "native")
         macos_entries = [

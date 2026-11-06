@@ -156,10 +156,13 @@ jobs:
         run: |
           import hashlib
           import json
+          import os
           import pathlib
+          import sys
 
           import jsonschema
 
+          sys.path.insert(0, os.getcwd())
           from socratic_learn import __version__
           from socratic_learn.release import parse_release_manifest
 
