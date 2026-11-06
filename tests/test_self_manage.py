@@ -3,6 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +15,7 @@ from socratic_learn.errors import IntegrityError, UsageError
 from socratic_learn.release import ReleaseArtifact
 from socratic_learn.self_manage import (
     InstallChannel,
+    _replacement_script,
     load_install_channel,
     uninstall,
     update_installation,
@@ -319,12 +323,117 @@ class UpdateTests(unittest.TestCase):
                     for value in decoded
                 )
             )
-            self.assertIn("[System.IO.File]::Move($staged, $destination, $true)", script)
-            self.assertIn("Wait-Process", script)
-            self.assertIn(
-                "Remove-Item -LiteralPath $staged -Force "
-                "-ErrorAction SilentlyContinue",
+            self.assertIn("[System.IO.File]::Replace(", script)
+            self.assertNotIn(
+                "[System.IO.File]::Move($staged, $destination, $true)",
                 script,
+            )
+            self.assertIn("Wait-Process", script)
+            self.assertIn("$backup", script)
+            self.assertIn("$replacementSucceeded", script)
+            self.assertIn("$restorationSucceeded", script)
+
+    @unittest.skipUnless(os.name == "nt", "Windows helper executes on Windows")
+    def test_windows_helper_executes_under_windows_powershell_51(self) -> None:
+        powershell = shutil.which("powershell.exe")
+        if powershell is None:
+            self.skipTest("Windows PowerShell is unavailable")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            destination = root / "socratic.exe"
+            staged = root / "socratic.new.exe"
+            helper = root / "replace.ps1"
+            destination.write_bytes(b"old")
+            staged.write_bytes(b"new")
+            script = _replacement_script(staged, destination)
+            script = "\n".join(
+                "# wait omitted by focused helper test"
+                if line.startswith("Wait-Process -Id ")
+                else line
+                for line in script.splitlines()
+            )
+            helper.write_text(script, encoding="utf-8")
+
+            reflection = subprocess.run(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "$replace = [IO.File].GetMethods() | "
+                    "? { $_.Name -eq 'Replace' -and $_.GetParameters().Count -eq 3 }; "
+                    "$move = [IO.File].GetMethods() | "
+                    "? { $_.Name -eq 'Move' -and $_.GetParameters().Count -eq 3 }; "
+                    "if (-not $replace -or $move) { exit 91 }",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                0,
+                reflection.returncode,
+                reflection.stderr + reflection.stdout,
+            )
+            result = subprocess.run(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(helper),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+            self.assertEqual(b"new", destination.read_bytes())
+            self.assertFalse(staged.exists())
+            self.assertEqual(
+                {"socratic.exe"},
+                {path.name for path in root.iterdir()},
+            )
+
+            destination.write_bytes(b"old-again")
+            staged.write_bytes(b"new-again")
+            helper.write_text(
+                "\n".join(
+                    "# wait omitted by focused helper test"
+                    if line.startswith("Wait-Process -Id ")
+                    else (
+                        line + "\n    throw 'injected post-replacement failure'"
+                        if line
+                        == "    [System.IO.File]::Replace($staged, $destination, $backup)"
+                        else line
+                    )
+                    for line in _replacement_script(staged, destination).splitlines()
+                ),
+                encoding="utf-8",
+            )
+            failed = subprocess.run(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(helper),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(0, failed.returncode)
+            self.assertEqual(b"old-again", destination.read_bytes())
+            self.assertEqual(
+                {"socratic.exe"},
+                {path.name for path in root.iterdir()},
             )
 
 

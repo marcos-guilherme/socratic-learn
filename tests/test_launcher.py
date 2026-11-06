@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -171,6 +173,94 @@ class LauncherTests(unittest.TestCase):
             )
 
             self.assertEqual(1, calls[0].count(goal))
+
+    @unittest.skipUnless(os.name == "nt", "Windows shim acceptance runs on Windows")
+    def test_windows_batch_shim_uses_safe_powershell_counterpart(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shim = root / "pi.cmd"
+            counterpart = root / "pi.ps1"
+            receipt = root / "received.txt"
+            side_effect = root / "injected.txt"
+            shim.write_text(
+                f'@echo off\r\necho batch-ran> "{side_effect}"\r\n',
+                encoding="utf-8",
+            )
+            counterpart.write_text(
+                "[IO.File]::WriteAllText("
+                "$env:SOCRATIC_TEST_RECEIPT, $args[2], "
+                "(New-Object Text.UTF8Encoding($false)))\n",
+                encoding="utf-8",
+            )
+            goal = r"""learn & | < > ^ % ! " ' $() exactly"""
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "SOCRATIC_LEARN_HOME": str(root / "home"),
+                    "SOCRATIC_TEST_RECEIPT": str(receipt),
+                }
+            )
+
+            result = run_learning(
+                LaunchOptions(goal, "pi", False, root),
+                output=io.StringIO(),
+                which={"pi": str(shim)}.get,
+                run_process=lambda argv, **kwargs: subprocess.run(
+                    argv,
+                    env=environment,
+                    **kwargs,
+                ),
+                environ=environment,
+            )
+
+            self.assertEqual(0, result)
+            self.assertEqual(goal, receipt.read_text(encoding="utf-8"))
+            self.assertFalse(side_effect.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows shim policy runs on Windows")
+    def test_windows_batch_shim_without_safe_counterpart_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shim = root / "pi.cmd"
+            shim.write_text("@echo off\r\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(UsageError, "PowerShell counterpart") as raised:
+                run_learning(
+                    LaunchOptions("logic", "pi", False, root),
+                    output=io.StringIO(),
+                    which={"pi": str(shim)}.get,
+                    run_process=lambda argv, **kwargs: self.fail(
+                        "unsafe batch host must not run"
+                    ),
+                    environ={"SOCRATIC_LEARN_HOME": str(root / "home")},
+                )
+
+            self.assertIsNotNone(raised.exception.remediation)
+
+    @unittest.skipUnless(os.name == "nt", "Windows shim policy runs on Windows")
+    def test_windows_batch_shim_rejects_symlinked_counterpart(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shim = root / "pi.cmd"
+            shim.write_text("@echo off\r\n", encoding="utf-8")
+            real = root / "real.ps1"
+            real.write_text("exit 0\n", encoding="utf-8")
+            counterpart = root / "pi.ps1"
+            try:
+                counterpart.symlink_to(real)
+            except OSError:
+                self.skipTest("symbolic links are unavailable")
+
+            with self.assertRaisesRegex(UsageError, "safe regular file"):
+                run_learning(
+                    LaunchOptions("logic", "pi", False, root),
+                    output=io.StringIO(),
+                    which={"pi": str(shim)}.get,
+                    run_process=lambda argv, **kwargs: self.fail(
+                        "unsafe counterpart must not run"
+                    ),
+                    environ={"SOCRATIC_LEARN_HOME": str(root / "home")},
+                )
 
     def test_child_inherits_stdio_and_environment(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -108,10 +108,11 @@ staged="$install_dir/socratic.new"
 checksums="$install_dir/SHA256SUMS.new"
 channel_target="$channel_home/channel.json"
 channel_staged="$channel_home/channel.json.new"
+channel_backup="$channel_home/channel.json.previous"
 
 cleanup() {
     rm -f \
-        "$staged" "$checksums" "$channel_staged" \
+        "$staged" "$checksums" "$channel_staged" "$channel_backup" \
         "$staged.part" "$staged.headers" \
         "$checksums.part" "$checksums.headers"
 }
@@ -269,8 +270,23 @@ cat >"$channel_staged" <<EOF
 EOF
 
 chmod 755 "$staged"
+channel_existed=0
+if [ -e "$channel_target" ] || [ -L "$channel_target" ]; then
+    cat "$channel_target" >"$channel_backup"
+    channel_existed=1
+fi
 mv "$channel_staged" "$channel_target"
-mv "$staged" "$target"
+if mv "$staged" "$target"; then
+    rm -f "$channel_backup"
+else
+    publication_status=$?
+    if [ "$channel_existed" -eq 1 ]; then
+        mv "$channel_backup" "$channel_target"
+    else
+        rm -f "$channel_target"
+    fi
+    exit "$publication_status"
+fi
 
 case ":${PATH:-}:" in
     *":$install_dir:"*) ;;

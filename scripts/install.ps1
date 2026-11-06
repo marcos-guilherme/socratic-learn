@@ -276,10 +276,16 @@ $staged = Join-Path $installPath "socratic.new.exe"
 $channelHome = Join-Path $HOME ".socratic-learn"
 $channelTarget = Join-Path $channelHome "channel.json"
 $channelStaged = Join-Path $channelHome "channel.json.new"
+$channelPrevious = Join-Path $channelHome "channel.json.previous"
+$channelFailed = Join-Path $channelHome "channel.json.failed"
+$targetPrevious = Join-Path $installPath "socratic.previous.exe"
+$targetFailed = Join-Path $installPath "socratic.failed.exe"
 
 New-Item -ItemType Directory -Force -Path $installPath | Out-Null
 New-Item -ItemType Directory -Force -Path $channelHome | Out-Null
-Remove-Item -Force -ErrorAction SilentlyContinue $staged, $channelStaged
+Remove-Item -Force -ErrorAction SilentlyContinue `
+    $staged, $channelStaged, $channelPrevious, $channelFailed, `
+    $targetPrevious, $targetFailed
 
 $handler = New-Object Net.Http.HttpClientHandler
 $handler.AllowAutoRedirect = $false
@@ -393,15 +399,60 @@ try {
     $utf8WithoutBom = New-Object Text.UTF8Encoding($false)
     [IO.File]::WriteAllText($channelStaged, $channelJson, $utf8WithoutBom)
 
-    if ([IO.File]::Exists($channelTarget)) {
-        [IO.File]::Replace($channelStaged, $channelTarget, $null)
+    $channelExisted = [IO.File]::Exists($channelTarget)
+    if ($channelExisted) {
+        [IO.File]::Replace($channelStaged, $channelTarget, $channelPrevious)
     } else {
         [IO.File]::Move($channelStaged, $channelTarget)
     }
-    if ([IO.File]::Exists($target)) {
-        [IO.File]::Replace($staged, $target, $null)
-    } else {
-        [IO.File]::Move($staged, $target)
+    try {
+        if (
+            $trustMode -eq "loopback" -and
+            $env:SOCRATIC_TEST_FAIL_EXECUTABLE_PUBLICATION -eq "1"
+        ) {
+            throw "Injected executable publication failure"
+        }
+        if ([IO.File]::Exists($target)) {
+            [IO.File]::Replace($staged, $target, $targetPrevious)
+        } else {
+            [IO.File]::Move($staged, $target)
+        }
+        Remove-Item -Force -ErrorAction SilentlyContinue `
+            $channelPrevious, $targetPrevious
+    } catch {
+        $publicationError = $_
+        try {
+            if ([IO.File]::Exists($targetPrevious)) {
+                if ([IO.File]::Exists($target)) {
+                    [IO.File]::Replace(
+                        $targetPrevious,
+                        $target,
+                        $targetFailed
+                    )
+                } else {
+                    [IO.File]::Move($targetPrevious, $target)
+                }
+                Remove-Item -Force -ErrorAction SilentlyContinue $targetFailed
+            }
+            if ($channelExisted) {
+                if ([IO.File]::Exists($channelTarget)) {
+                    [IO.File]::Replace(
+                        $channelPrevious,
+                        $channelTarget,
+                        $channelFailed
+                    )
+                } else {
+                    [IO.File]::Move($channelPrevious, $channelTarget)
+                }
+                Remove-Item -Force -ErrorAction SilentlyContinue $channelFailed
+            } else {
+                Remove-Item -LiteralPath $channelTarget -Force `
+                    -ErrorAction SilentlyContinue
+            }
+        } catch {
+            throw "Executable publication failed and channel metadata rollback failed"
+        }
+        throw $publicationError
     }
 
     if (-not $installWasOverridden) {

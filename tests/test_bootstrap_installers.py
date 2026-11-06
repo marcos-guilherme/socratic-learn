@@ -188,6 +188,7 @@ class BootstrapInstallerTests(unittest.TestCase):
         *,
         consent: bool = True,
         input_text: str | None = None,
+        extra_environment: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         executable = shutil.which("powershell.exe") or shutil.which("pwsh")
         if executable is None:
@@ -202,6 +203,7 @@ class BootstrapInstallerTests(unittest.TestCase):
                 "PROCESSOR_ARCHITECTURE", "AMD64"
             ),
         }
+        environment.update(extra_environment or {})
         arguments = [
             executable,
             "-NoProfile",
@@ -243,8 +245,19 @@ class BootstrapInstallerTests(unittest.TestCase):
                     install_dir,
                     home,
                 )
+                reinstall = self._run_powershell(
+                    root,
+                    f"{base_url}/release-manifest.json",
+                    install_dir,
+                    home,
+                )
 
             self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+            self.assertEqual(
+                0,
+                reinstall.returncode,
+                reinstall.stderr + reinstall.stdout,
+            )
             executable = install_dir / "socratic.exe"
             self.assertEqual(self.payload, executable.read_bytes())
             channel = json.loads(
@@ -261,6 +274,8 @@ class BootstrapInstallerTests(unittest.TestCase):
                 },
                 channel,
             )
+            self.assertFalse((install_dir / "socratic.previous.exe").exists())
+            self.assertFalse((install_dir / "socratic.failed.exe").exists())
 
     @unittest.skipUnless(os.name == "nt", "Windows installer executes only on Windows")
     def test_windows_artifact_url_uses_original_manifest_directory(self) -> None:
@@ -410,6 +425,54 @@ class BootstrapInstallerTests(unittest.TestCase):
 
             self.assertNotEqual(0, result.returncode)
             self.assertEqual(b"existing", target.read_bytes())
+
+    @unittest.skipUnless(os.name == "nt", "Windows installer executes only on Windows")
+    def test_windows_executable_failure_rolls_back_channel_and_executable(self) -> None:
+        for reinstall in (False, True):
+            with self.subTest(reinstall=reinstall), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                home = root / "home"
+                home.mkdir()
+                install_dir = root / "install"
+                install_dir.mkdir()
+                target = install_dir / "socratic.exe"
+                channel = home / ".socratic-learn" / "channel.json"
+                previous_channel = b'\xef\xbb\xbf{"previous":"exact bytes"}\r\n'
+                if reinstall:
+                    target.write_bytes(b"existing")
+                    channel.parent.mkdir()
+                    channel.write_bytes(previous_channel)
+                self._write_windows_release(
+                    root,
+                    hashlib.sha256(self.payload).hexdigest(),
+                )
+
+                with fixture_server(root) as base_url:
+                    result = self._run_powershell(
+                        root,
+                        f"{base_url}/release-manifest.json",
+                        install_dir,
+                        home,
+                        extra_environment={
+                            "SOCRATIC_TEST_FAIL_EXECUTABLE_PUBLICATION": "1",
+                        },
+                    )
+
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn(
+                    "Injected executable publication failure",
+                    result.stderr + result.stdout,
+                )
+                if reinstall:
+                    self.assertEqual(b"existing", target.read_bytes())
+                    self.assertEqual(previous_channel, channel.read_bytes())
+                else:
+                    self.assertFalse(target.exists())
+                    self.assertFalse(channel.exists())
+                self.assertFalse((install_dir / "socratic.new.exe").exists())
+                self.assertFalse(
+                    (home / ".socratic-learn" / "channel.json.new").exists()
+                )
 
     @unittest.skipUnless(os.name == "nt", "Windows installer executes only on Windows")
     def test_windows_installer_preserves_existing_file_on_bad_hash(self) -> None:
@@ -779,60 +842,76 @@ printf '302'
             self.assertFalse((home / ".socratic-learn" / "channel.json").exists())
 
     @unittest.skipIf(os.name == "nt", "POSIX installer executes only on POSIX")
-    def test_posix_channel_failure_preserves_existing_executable(self) -> None:
+    def test_posix_executable_failure_rolls_back_channel_and_executable(self) -> None:
         required = ("sh", "curl", "uname", "awk", "sha256sum", "mv")
         if any(shutil.which(command) is None for command in required):
             self.skipTest("POSIX installer test dependencies are unavailable")
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            home = root / "home"
-            home.mkdir()
-            install_dir = root / "install"
-            install_dir.mkdir()
-            target = install_dir / "socratic"
-            target.write_bytes(b"existing")
-            system = {"Linux": "linux", "Darwin": "macos"}.get(platform.system())
-            if system is None or platform.machine().lower() not in ("x86_64", "amd64"):
-                self.skipTest("POSIX execution test requires an x86-64 Linux or macOS host")
-            asset = f"socratic-{system}-x86_64"
-            (root / asset).write_bytes(self.payload)
-            digest = hashlib.sha256(self.payload).hexdigest()
-            (root / "SHA256SUMS").write_text(
-                f"{digest}  {asset}\n", encoding="ascii"
-            )
-            real_mv = shutil.which("mv")
-            assert real_mv is not None
-            fake_mv = (
-                "#!/bin/sh\n"
-                'case "$2" in */channel.json) exit 73 ;; esac\n'
-                f"exec {shlex.quote(real_mv)} \"$@\"\n"
-            )
-            isolated_path = self._isolated_posix_path(
-                root,
-                overrides={"mv": fake_mv},
-            )
-            environment = os.environ.copy()
-            environment.update(
-                {
-                    "HOME": str(home),
-                    "PATH": str(isolated_path),
-                    "SOCRATIC_INSTALL_YES": "1",
-                    "SOCRATIC_INSTALL_DIR": str(install_dir),
-                }
-            )
-
-            with fixture_server(root) as base_url:
-                environment["SOCRATIC_RELEASE_BASE_URL"] = base_url
-                result = subprocess.run(
-                    [shutil.which("sh") or "sh", str(POSIX_INSTALLER)],
-                    capture_output=True,
-                    text=True,
-                    env=environment,
-                    check=False,
+        for reinstall in (False, True):
+            with self.subTest(reinstall=reinstall), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                home = root / "home"
+                home.mkdir()
+                install_dir = root / "install"
+                install_dir.mkdir()
+                target = install_dir / "socratic"
+                channel = home / ".socratic-learn" / "channel.json"
+                previous_channel = b'{"previous":"exact bytes"}\n'
+                if reinstall:
+                    target.write_bytes(b"existing")
+                    channel.parent.mkdir()
+                    channel.write_bytes(previous_channel)
+                system = {"Linux": "linux", "Darwin": "macos"}.get(platform.system())
+                if system is None or platform.machine().lower() not in (
+                    "x86_64",
+                    "amd64",
+                ):
+                    self.skipTest(
+                        "POSIX execution test requires an x86-64 Linux or macOS host"
+                    )
+                asset = f"socratic-{system}-x86_64"
+                (root / asset).write_bytes(self.payload)
+                digest = hashlib.sha256(self.payload).hexdigest()
+                (root / "SHA256SUMS").write_text(
+                    f"{digest}  {asset}\n", encoding="ascii"
+                )
+                real_mv = shutil.which("mv")
+                assert real_mv is not None
+                fake_mv = (
+                    "#!/bin/sh\n"
+                    'case "$2" in */socratic) exit 73 ;; esac\n'
+                    f"exec {shlex.quote(real_mv)} \"$@\"\n"
+                )
+                isolated_path = self._isolated_posix_path(
+                    root,
+                    overrides={"mv": fake_mv},
+                )
+                environment = os.environ.copy()
+                environment.update(
+                    {
+                        "HOME": str(home),
+                        "PATH": str(isolated_path),
+                        "SOCRATIC_INSTALL_YES": "1",
+                        "SOCRATIC_INSTALL_DIR": str(install_dir),
+                    }
                 )
 
-            self.assertEqual(73, result.returncode, result.stderr + result.stdout)
-            self.assertEqual(b"existing", target.read_bytes())
+                with fixture_server(root) as base_url:
+                    environment["SOCRATIC_RELEASE_BASE_URL"] = base_url
+                    result = subprocess.run(
+                        [shutil.which("sh") or "sh", str(POSIX_INSTALLER)],
+                        capture_output=True,
+                        text=True,
+                        env=environment,
+                        check=False,
+                    )
+
+                self.assertEqual(73, result.returncode, result.stderr + result.stdout)
+                if reinstall:
+                    self.assertEqual(b"existing", target.read_bytes())
+                    self.assertEqual(previous_channel, channel.read_bytes())
+                else:
+                    self.assertFalse(target.exists())
+                    self.assertFalse(channel.exists())
 
 
 if __name__ == "__main__":
