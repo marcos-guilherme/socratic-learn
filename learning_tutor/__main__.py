@@ -80,13 +80,17 @@ def _dispatch_install(target: str, project: Path, *, update: bool) -> int:
 
 def _dispatch_doctor(project: Path) -> int:
     try:
-        from .doctor import doctor
+        from .doctor import diagnose, format_diagnostics
     except ModuleNotFoundError as error:
         if error.name != "learning_tutor.doctor":
             raise
         raise _unavailable("doctor") from error
-    doctor(project)
-    return 0
+    diagnostics = diagnose(project)
+    if not diagnostics:
+        print("Installation healthy.")
+        return 0
+    sys.stdout.write(format_diagnostics(diagnostics))
+    return IntegrityError.exit_code
 
 
 def _unavailable(command: str) -> IntegrityError:
