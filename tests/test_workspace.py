@@ -91,3 +91,41 @@ class WorkspaceTests(unittest.TestCase):
 
             with self.assertRaises(IntegrityError):
                 prepare_personal_workspace(home)
+
+    def test_existing_record_directory_is_rejected_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            project.mkdir()
+            workspace = prepare_here_workspace(project)
+            profile = workspace.records / "learner-profile.md"
+            profile.unlink()
+            profile.mkdir()
+
+            with self.assertRaisesRegex(IntegrityError, "regular file"):
+                prepare_here_workspace(project)
+
+            self.assertTrue(profile.is_dir())
+            self.assertEqual([], list(profile.iterdir()))
+
+    def test_existing_record_symlink_is_rejected_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            project.mkdir()
+            workspace = prepare_here_workspace(project)
+            profile = workspace.records / "learner-profile.md"
+            outside = Path(temporary) / "outside.md"
+            outside.write_text("external learner evidence\n", encoding="utf-8")
+            profile.unlink()
+            try:
+                profile.symlink_to(outside)
+            except OSError as error:
+                self.skipTest(f"file symlinks unavailable: {error}")
+
+            with self.assertRaisesRegex(IntegrityError, "regular file"):
+                prepare_here_workspace(project)
+
+            self.assertTrue(profile.is_symlink())
+            self.assertEqual(
+                "external learner evidence\n",
+                outside.read_text(encoding="utf-8"),
+            )

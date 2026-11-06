@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,10 +64,18 @@ def _create_home(home: Path) -> Path:
 
 
 def _create_record(path: Path, content: bytes) -> None:
+    if _existing_record_is_valid(path):
+        return
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
-        return
+        if _existing_record_is_valid(path):
+            return
+        raise IntegrityError(
+            "private learning record changed while it was created",
+            path=path,
+            remediation="inspect the conflicting record path and retry",
+        )
     except OSError as error:
         raise IntegrityError(
             "private learning record could not be created",
@@ -75,6 +84,39 @@ def _create_record(path: Path, content: bytes) -> None:
         ) from error
     with os.fdopen(descriptor, "wb") as stream:
         stream.write(content)
+
+
+def _existing_record_is_valid(path: Path) -> bool:
+    try:
+        status = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise IntegrityError(
+            "private learning record could not be inspected",
+            path=path,
+            remediation="check the record path and retry",
+        ) from error
+    if not stat.S_ISREG(status.st_mode):
+        raise IntegrityError(
+            "existing private learning record must be a regular file",
+            path=path,
+            remediation="move the conflicting path and retry",
+        )
+    return True
+
+
+def _validate_existing_records(records: Path) -> None:
+    if not records.exists() and not records.is_symlink():
+        return
+    if records.is_symlink() or not records.is_dir():
+        raise IntegrityError(
+            "private records path is not a regular directory",
+            path=records,
+            remediation="restore the managed workspace directory and retry",
+        )
+    for name in _RECORD_TEMPLATES:
+        _existing_record_is_valid(records / name)
 
 
 def _prepare_records(records: Path) -> None:
@@ -100,13 +142,14 @@ def _prepare_records(records: Path) -> None:
 
 def _prepare_workspace(project: Path) -> LearningWorkspace:
     destination = _require_directory(project, "project")
+    records = destination / ".socratic-learn/workspace"
+    _validate_existing_records(records)
     receipt_path = destination.joinpath(*RECEIPT_PATH.split("/"))
     update = receipt_path.exists() or receipt_path.is_symlink()
     target = str(load_receipt(destination)["target"]) if update else "generic"
     with packaged_distribution_root() as source:
         plan = plan_install(source, destination, target, update=update)
         apply_install(plan)
-    records = destination / ".socratic-learn/workspace"
     _prepare_records(records)
     return LearningWorkspace(
         root=destination,
