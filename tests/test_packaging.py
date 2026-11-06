@@ -37,3 +37,76 @@ class PackagingTests(unittest.TestCase):
                     "socratic = socratic_learn.cli:entry_point",
                     archive.read(entry_points).decode("utf-8"),
                 )
+
+    def test_installed_console_version_preserves_module_cli(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            wheel_directory = temporary_path / "wheel"
+            environment = temporary_path / "venv"
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "build",
+                    "--wheel",
+                    "--outdir",
+                    str(wheel_directory),
+                ],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(environment)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            scripts = environment / (
+                "Scripts" if sys.platform == "win32" else "bin"
+            )
+            python = scripts / (
+                "python.exe" if sys.platform == "win32" else "python"
+            )
+            console = scripts / (
+                "socratic.exe" if sys.platform == "win32" else "socratic"
+            )
+            wheel = next(wheel_directory.glob("*.whl"))
+            subprocess.run(
+                [
+                    str(python),
+                    "-m",
+                    "pip",
+                    "--disable-pip-version-check",
+                    "install",
+                    "--no-deps",
+                    str(wheel),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            version = subprocess.run(
+                [str(console), "--version"],
+                cwd=temporary_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            module = subprocess.run(
+                [str(python), "-m", "socratic_learn"],
+                cwd=temporary_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(0, version.returncode, version.stderr)
+            self.assertTrue(
+                version.stdout.startswith("socratic-learn 0.1.0"),
+                version.stdout,
+            )
+            self.assertEqual(2, module.returncode, module.stderr)
