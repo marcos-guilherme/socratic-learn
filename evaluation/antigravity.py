@@ -7,6 +7,7 @@ import queue
 import re
 import subprocess
 import threading
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Literal, cast
@@ -28,13 +29,20 @@ from socratic_learn.hosts import ADAPTERS, command_for
 
 
 FailureKind = Literal["authentication", "quota", "network", "runtime", "timeout"]
-READ_TIMEOUT_SECONDS = 300.0
+TURN_TIMEOUT_SECONDS = 330.0
+PRE_SEND_GUARD_SECONDS = 0.05
+EXIT_SETTLE_SECONDS = 0.5
+STDERR_DRAIN_SECONDS = 0.5
+CLOSE_WAIT_SECONDS = 10.0
+TERMINATE_WAIT_SECONDS = 5.0
+KILL_WAIT_SECONDS = 1.0
+THREAD_JOIN_SECONDS = 0.25
+STDERR_TAIL_BYTES = 64 * 1024
 _FAILURE_KINDS = frozenset(
     {"authentication", "quota", "network", "runtime", "timeout"}
 )
-_READ_REQUEST = object()
-_STOP_READER = object()
 _READER_ERROR = object()
+_MISSING = object()
 _UNSAFE_DETAIL = re.compile(
     r"(?i)(?:"
     r"\b(?:authorization|api[_-]?key|access[_-]?token|secret|credential)\s*[:=]"
@@ -104,7 +112,11 @@ def _inside(candidate: Path, repository: Path) -> bool:
 
 
 def _append_private(path: Path, data: bytes, private_root: Path) -> None:
-    """Append one byte sequence beneath private_root with owner-only permissions."""
+    """Append bytes with an owner-only file mode beneath the private root.
+
+    On Windows the containing directory's effective privacy is governed by its
+    inherited ACL; chmod alone cannot replace the isolation provided by RunLayout.
+    """
     root = private_root.resolve(strict=True)
     destination = path.resolve(strict=False)
     try:
@@ -141,12 +153,28 @@ def _append_private(path: Path, data: bytes, private_root: Path) -> None:
             os.close(descriptor)
 
 
-def _result_succeeded(event: dict[str, JsonValue]) -> bool:
-    result = event.get("result")
-    if not isinstance(result, dict):
+def _captured_success_status(contract: StreamContract) -> JsonValue | object:
+    for sample in contract.sample_output_events:
+        if not is_completion(sample, contract):
+            continue
+        result = sample.get("result")
+        if isinstance(result, dict) and "status" in result:
+            return result["status"]
+    return _MISSING
+
+
+def _result_succeeded(
+    event: dict[str, JsonValue],
+    contract: StreamContract,
+) -> bool:
+    expected = _captured_success_status(contract)
+    if expected is _MISSING:
         return True
-    status = result.get("status")
-    return not isinstance(status, str) or status.upper() == "SUCCESS"
+    result = event.get("result")
+    if not isinstance(result, dict) or "status" not in result:
+        return False
+    actual = result["status"]
+    return type(actual) is type(expected) and actual == expected
 
 
 def _classify(stderr: bytes) -> FailureKind:
@@ -238,13 +266,16 @@ class AntigravitySession:
         self.popen = popen
 
         self._process: subprocess.Popen[bytes] | None = None
-        self._stdout_requests: queue.Queue[object] = queue.Queue()
         self._stdout_results: queue.Queue[object] = queue.Queue()
         self._stdout_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
-        self._stderr = bytearray()
+        self._stderr_tail = bytearray()
         self._stderr_lock = threading.Lock()
         self._send_lock = threading.Lock()
+        self._stderr_log_failed = False
+        self._output_log_failed = False
+        self._completed_turns = 0
+        self._failed = False
         self._closed = False
         self._returncode: int | None = None
 
@@ -254,6 +285,16 @@ class AntigravitySession:
 
         argv = antigravity_argv(self.executable, self.model, self.layout)
         environment = isolated_environment(self.layout, self.parent_environment)
+        try:
+            _append_private(
+                self.layout.raw / "antigravity.log",
+                b"",
+                self.layout.raw,
+            )
+        except Exception:
+            raise InfrastructureFailure(
+                "runtime", "Antigravity private logging could not be prepared."
+            ) from None
         if _inside(self.layout.cwd, self.repository) or _inside(
             self.layout.runtime_root, self.repository
         ):
@@ -278,7 +319,10 @@ class AntigravitySession:
             try:
                 process.kill()
             finally:
-                process.wait()
+                try:
+                    process.wait(timeout=KILL_WAIT_SECONDS)
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
             raise InfrastructureFailure(
                 "runtime", "Antigravity did not provide binary pipes."
             )
@@ -302,15 +346,31 @@ class AntigravitySession:
         if process is None or process.stdout is None:
             return
         while True:
-            request = self._stdout_requests.get()
-            if request is _STOP_READER:
-                return
             try:
                 line = process.stdout.readline()
             except Exception:
                 self._stdout_results.put(_READER_ERROR)
-            else:
-                self._stdout_results.put(line)
+                return
+            raw = bytes(line)
+            if raw:
+                try:
+                    _append_private(
+                        self.layout.raw / "output.ndjson",
+                        raw,
+                        self.layout.raw,
+                    )
+                except Exception:
+                    self._output_log_failed = True
+            self._stdout_results.put(raw)
+            if not raw:
+                return
+
+    def _remember_stderr(self, raw: bytes) -> None:
+        with self._stderr_lock:
+            self._stderr_tail.extend(raw)
+            excess = len(self._stderr_tail) - STDERR_TAIL_BYTES
+            if excess > 0:
+                del self._stderr_tail[:excess]
 
     def _stderr_reader(self) -> None:
         process = self._process
@@ -324,6 +384,7 @@ class AntigravitySession:
             if not chunk:
                 return
             raw = bytes(chunk)
+            self._remember_stderr(raw)
             try:
                 _append_private(
                     self.layout.raw / "stderr.log",
@@ -331,98 +392,180 @@ class AntigravitySession:
                     self.layout.raw,
                 )
             except Exception:
-                return
-            with self._stderr_lock:
-                self._stderr.extend(raw)
+                self._stderr_log_failed = True
 
     def _stderr_bytes(self) -> bytes:
-        thread = self._stderr_thread
-        if thread is not None:
-            thread.join(timeout=0.1)
         with self._stderr_lock:
-            return bytes(self._stderr)
+            return bytes(self._stderr_tail)
 
-    def _failure_from_stderr(self, *, early_eof: bool = False) -> InfrastructureFailure:
-        kind = _classify(self._stderr_bytes())
-        return InfrastructureFailure(kind, _detail(kind, early_eof=early_eof))
-
-    def _next_stdout_line(self) -> bytes:
-        self._stdout_requests.put(_READ_REQUEST)
+    def _bounded_wait(self, timeout: float) -> int | None:
+        process = self._process
+        if process is None:
+            return 0
+        returncode = process.poll()
+        if returncode is not None:
+            return returncode
         try:
-            result = self._stdout_results.get(timeout=READ_TIMEOUT_SECONDS)
+            return process.wait(timeout=timeout)
+        except (subprocess.TimeoutExpired, OSError):
+            return process.poll()
+
+    def _settled_failure(
+        self,
+        *,
+        early_eof_candidate: bool = False,
+    ) -> InfrastructureFailure:
+        returncode = self._bounded_wait(EXIT_SETTLE_SECONDS)
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(timeout=STDERR_DRAIN_SECONDS)
+        if self._stderr_log_failed or self._output_log_failed:
+            return InfrastructureFailure("runtime", _detail("runtime"))
+        kind = _classify(self._stderr_bytes())
+        return InfrastructureFailure(
+            kind,
+            _detail(
+                kind,
+                early_eof=early_eof_candidate and returncode == 0,
+            ),
+        )
+
+    def _queued_output_before_request(self) -> InfrastructureFailure | None:
+        if not self._completed_turns:
+            return None
+        try:
+            queued = self._stdout_results.get(timeout=PRE_SEND_GUARD_SECONDS)
         except queue.Empty:
-            self.close()
-            raise InfrastructureFailure(
-                "timeout", _detail("timeout")
-            ) from None
-        if result is _READER_ERROR or not isinstance(result, bytes):
-            raise InfrastructureFailure(
-                "runtime", "Antigravity output could not be read."
-            )
+            return None
+        if queued is _READER_ERROR:
+            return self._settled_failure()
+        if not isinstance(queued, bytes):
+            return InfrastructureFailure("runtime", _detail("runtime"))
+        if not queued:
+            return self._settled_failure(early_eof_candidate=True)
+        return InfrastructureFailure(
+            "runtime",
+            "Antigravity produced output before the next request.",
+        )
+
+    def _next_stdout_line(self, deadline: float) -> bytes:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise InfrastructureFailure("timeout", _detail("timeout"))
+        try:
+            result = self._stdout_results.get(timeout=remaining)
+        except queue.Empty:
+            raise InfrastructureFailure("timeout", _detail("timeout")) from None
+        if result is _READER_ERROR:
+            raise self._settled_failure()
+        if not isinstance(result, bytes):
+            raise InfrastructureFailure("runtime", _detail("runtime"))
         return result
+
+    def _send(self, text: str) -> TutorTurn:
+        process = self._process
+        if self._failed:
+            raise InfrastructureFailure(
+                "runtime", "Antigravity session has failed."
+            )
+        if self._closed or process is None:
+            raise InfrastructureFailure(
+                "runtime", "Antigravity session is not running."
+            )
+        if process.stdin is None:
+            raise InfrastructureFailure(
+                "runtime", "Antigravity input is unavailable."
+            )
+
+        queued_failure = self._queued_output_before_request()
+        if queued_failure is not None:
+            raise queued_failure
+
+        request = request_line(self.contract, text)
+        try:
+            _append_private(
+                self.layout.raw / "input.ndjson",
+                request,
+                self.layout.raw,
+            )
+        except Exception:
+            raise InfrastructureFailure(
+                "runtime", "Antigravity input could not be recorded."
+            ) from None
+        try:
+            process.stdin.write(request)
+            process.stdin.flush()
+        except Exception:
+            raise self._settled_failure() from None
+
+        deadline = time.monotonic() + TURN_TIMEOUT_SECONDS
+        events: list[dict[str, JsonValue]] = []
+        while True:
+            line = self._next_stdout_line(deadline)
+            if self._output_log_failed or self._stderr_log_failed:
+                raise InfrastructureFailure("runtime", _detail("runtime"))
+            if not line:
+                raise self._settled_failure(early_eof_candidate=True)
+            try:
+                parsed = parse_ndjson(line)
+            except ValueError:
+                raise InfrastructureFailure(
+                    "runtime", "Antigravity returned malformed output."
+                ) from None
+            if len(parsed) != 1:
+                raise InfrastructureFailure(
+                    "runtime", "Antigravity returned malformed output."
+                )
+            event = parsed[0]
+            events.append(event)
+            if is_completion(event, self.contract):
+                if not _result_succeeded(event, self.contract):
+                    raise self._settled_failure()
+                self._completed_turns += 1
+                return collect_tutor_turn(events, self.contract)
 
     def send(self, text: str) -> TutorTurn:
         with self._send_lock:
-            process = self._process
-            if self._closed or process is None:
-                raise InfrastructureFailure(
-                    "runtime", "Antigravity session is not running."
-                )
-            if process.stdin is None:
-                raise InfrastructureFailure(
-                    "runtime", "Antigravity input is unavailable."
-                )
-
-            request = request_line(self.contract, text)
             try:
-                process.stdin.write(request)
-                process.stdin.flush()
-                _append_private(
-                    self.layout.raw / "input.ndjson",
-                    request,
-                    self.layout.raw,
-                )
-            except Exception:
-                raise InfrastructureFailure(
-                    "runtime", "Antigravity input could not be sent."
-                ) from None
+                return self._send(text)
+            except InfrastructureFailure as failure:
+                self._failed = True
+                if failure.kind == "timeout":
+                    self.close()
+                raise
 
-            events: list[dict[str, JsonValue]] = []
-            while True:
-                line = self._next_stdout_line()
-                if not line:
-                    if process.poll() not in (None, 0):
-                        raise self._failure_from_stderr()
-                    raise self._failure_from_stderr(early_eof=True)
-                try:
-                    _append_private(
-                        self.layout.raw / "output.ndjson",
-                        line,
-                        self.layout.raw,
-                    )
-                except Exception:
-                    raise InfrastructureFailure(
-                        "runtime", "Antigravity output could not be recorded."
-                    ) from None
-                try:
-                    parsed = parse_ndjson(line)
-                except ValueError:
-                    raise InfrastructureFailure(
-                        "runtime", "Antigravity returned malformed output."
-                    ) from None
-                if len(parsed) != 1:
-                    raise InfrastructureFailure(
-                        "runtime", "Antigravity returned malformed output."
-                    )
-                event = parsed[0]
-                events.append(event)
-                if is_completion(event, self.contract):
-                    if not _result_succeeded(event):
-                        raise self._failure_from_stderr()
-                    return collect_tutor_turn(events, self.contract)
+    @staticmethod
+    def _close_pipe_if_reader_stopped(
+        pipe: object,
+        reader: threading.Thread | None,
+    ) -> None:
+        if reader is not None and reader.is_alive():
+            return
+        try:
+            pipe.close()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    def _finish_reader_cleanup(self) -> None:
+        process = self._process
+        if process is None:
+            return
+        for thread in (self._stdout_thread, self._stderr_thread):
+            if thread is not None:
+                thread.join(timeout=THREAD_JOIN_SECONDS)
+        if process.stdout is not None:
+            self._close_pipe_if_reader_stopped(
+                process.stdout,
+                self._stdout_thread,
+            )
+        if process.stderr is not None:
+            self._close_pipe_if_reader_stopped(
+                process.stderr,
+                self._stderr_thread,
+            )
 
     def close(self) -> int:
         if self._closed:
+            self._finish_reader_cleanup()
             return 0 if self._returncode is None else self._returncode
         self._closed = True
         process = self._process
@@ -436,33 +579,26 @@ class AntigravitySession:
             except Exception:
                 pass
 
-        try:
-            returncode = process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.terminate()
+        returncode = self._bounded_wait(CLOSE_WAIT_SECONDS)
+        if returncode is None:
             try:
-                returncode = process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
+                process.terminate()
+            except Exception:
+                pass
+            returncode = self._bounded_wait(TERMINATE_WAIT_SECONDS)
+        if returncode is None:
+            try:
                 process.kill()
-                returncode = process.wait()
-
-        if self._stderr_thread is not None:
-            self._stderr_thread.join(timeout=5)
-        if process.stdout is not None:
-            try:
-                process.stdout.close()
             except Exception:
                 pass
-        if process.stderr is not None:
-            try:
-                process.stderr.close()
-            except Exception:
-                pass
-        self._stdout_requests.put(_STOP_READER)
-        if self._stdout_thread is not None:
-            self._stdout_thread.join(timeout=1)
-        if self._stderr_thread is not None and self._stderr_thread.is_alive():
-            self._stderr_thread.join(timeout=1)
+            returncode = self._bounded_wait(KILL_WAIT_SECONDS)
 
-        self._returncode = cast(int, returncode)
+        self._finish_reader_cleanup()
+
+        confirmed = process.poll()
+        self._returncode = (
+            confirmed
+            if confirmed is not None
+            else (-9 if returncode is None else cast(int, returncode))
+        )
         return self._returncode
