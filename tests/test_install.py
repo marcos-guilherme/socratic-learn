@@ -20,10 +20,12 @@ from socratic_learn.errors import CollisionError, FilesystemError, IntegrityErro
 from socratic_learn.install import (
     OWNED_PATHS,
     apply_install,
+    install,
     load_receipt,
     plan_install,
 )
 from socratic_learn.manifest import sha256_bytes
+from socratic_learn.resources import packaged_distribution_root, resource_bytes
 from socratic_learn.__main__ import main
 from tests.legacy_install_fixture import create_valid_legacy_install
 
@@ -112,6 +114,23 @@ class InstallTests(unittest.TestCase):
             for path in install_root.rglob("*")
             if path.is_file()
         }
+
+    def test_packaged_resources_install_without_repository_cwd(self) -> None:
+        with TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            project.mkdir()
+            with packaged_distribution_root() as source:
+                install("generic", project, source_root=source)
+            self.assertEqual(
+                resource_bytes("manifest.json"),
+                (project / ".socratic-learn/manifest.json").read_bytes(),
+            )
+            self.assertEqual(
+                resource_bytes("socratic-learn.prompt.md"),
+                (
+                    project / ".socratic-learn/socratic-learn.prompt.md"
+                ).read_bytes(),
+            )
 
     def test_update_migrates_owned_legacy_installation_and_private_state(
         self,

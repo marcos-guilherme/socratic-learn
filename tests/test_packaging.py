@@ -24,6 +24,12 @@ class PackagingTests(unittest.TestCase):
                     "socratic_learn/data/socratic-learn.prompt.md",
                     names,
                 )
+                self.assertEqual(
+                    (root / "templates/learner-profile.md").read_bytes(),
+                    archive.read(
+                        "socratic_learn/data/templates/learner-profile.md"
+                    ),
+                )
                 entry_points = next(
                     name for name in names if name.endswith(".dist-info/entry_points.txt")
                 )
