@@ -815,6 +815,7 @@ class RepositoryValidationTests(unittest.TestCase):
             "--update",
             '"doctor", str(project)',
             "create_valid_legacy_install",
+            "sys.path.insert(0, str(root))",
             '"git", "diff", "--check"',
             '"git", "status", "--porcelain"',
         ):

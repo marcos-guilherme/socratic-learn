@@ -36,9 +36,10 @@ jobs:
           import sys
           import tempfile
 
+          root = pathlib.Path.cwd()
+          sys.path.insert(0, str(root))
           from tests.legacy_install_fixture import create_valid_legacy_install
 
-          root = pathlib.Path.cwd()
           with tempfile.TemporaryDirectory() as temporary:
               project = pathlib.Path(temporary) / "project"
               project.mkdir()
