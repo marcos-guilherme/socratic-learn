@@ -771,7 +771,9 @@ The algorithm is:
 Catch `KeyboardInterrupt` around the child only and return `130`. Do not catch
 unexpected exceptions. Convert executable disappearance between detection and
 spawn into `FilesystemError` naming the host and executable. Never pass
-`shell=True`, an environment containing credentials, or captured stdio.
+`shell=True` or captured stdio. Do not construct, inspect, log, or persist a
+child environment; omit the `env` argument so the host inherits its normal
+authentication environment directly from the parent process.
 
 - [ ] **Step 4: Add coverage for saved-host disappearance, `--here`, spaces, Unicode, and interrupt**
 
