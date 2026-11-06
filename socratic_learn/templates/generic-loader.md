@@ -1,5 +1,5 @@
 # Learning Tutor Loader
 
-Load and follow `.learning-tutor/learning-tutor.prompt.md` as the canonical learning tutor instructions.
+Load and follow `.socratic-learn/socratic-learn.prompt.md` as the canonical Socratic Learn instructions.
 
-Keep private learner records under `.learning-tutor/workspace/`. Do not add those records to version control.
+Keep private learner records under `.socratic-learn/workspace/`. Do not add those records to version control.

@@ -11,7 +11,11 @@ import unittest
 from unittest import mock
 
 import socratic_learn.safe_fs as safe_fs
-from socratic_learn import PROTOCOL_VERSION
+from socratic_learn import (
+    MANIFEST_SCHEMA_VERSION,
+    PRODUCT_ID,
+    PROTOCOL_VERSION,
+)
 from socratic_learn.errors import CollisionError, FilesystemError, IntegrityError, UsageError
 from socratic_learn.install import (
     OWNED_PATHS,
@@ -32,7 +36,7 @@ class InstallTests(unittest.TestCase):
         self.project = self.root / "project"
         self.source.mkdir()
         self.project.mkdir()
-        self._make_distribution(b"# Universal Learning Tutor\nProtocol: 1.0.0\n")
+        self._make_distribution(b"# Socratic Learn\nProtocol: 1.0.0\n")
 
     def assert_posix_same_principal_limit(self, error: BaseException) -> None:
         message = str(error).lower()
@@ -46,7 +50,7 @@ class InstallTests(unittest.TestCase):
         dist.mkdir(exist_ok=True)
         manifest = {
             "bundle": {
-                "path": "learning-tutor.prompt.md",
+                "path": "socratic-learn.prompt.md",
                 "sha256": sha256_bytes(prompt),
             },
             "capability_fallbacks": {
@@ -74,8 +78,9 @@ class InstallTests(unittest.TestCase):
                 "version": 1,
             },
             "language": "en",
+            "product": PRODUCT_ID,
             "protocol_version": PROTOCOL_VERSION,
-            "schema_version": 1,
+            "schema_version": MANIFEST_SCHEMA_VERSION,
             "session_headings": [
                 "## Outcome",
                 "## Diagnostic evidence",
@@ -89,7 +94,7 @@ class InstallTests(unittest.TestCase):
             "sources": [{"path": "core/test.md", "sha256": "0" * 64}],
             "targets": ["generic", "cursor", "claude-code", "pi"],
         }
-        (dist / "learning-tutor.prompt.md").write_bytes(prompt)
+        (dist / "socratic-learn.prompt.md").write_bytes(prompt)
         (dist / "manifest.json").write_text(
             json.dumps(manifest, sort_keys=True, indent=2) + "\n",
             encoding="utf-8",
@@ -100,7 +105,7 @@ class InstallTests(unittest.TestCase):
         apply_install(plan_install(self.source, self.project, "generic", False))
 
     def _snapshot(self) -> dict[str, bytes]:
-        install_root = self.project / ".learning-tutor"
+        install_root = self.project / ".socratic-learn"
         return {
             path.relative_to(install_root).as_posix(): path.read_bytes()
             for path in install_root.rglob("*")
@@ -128,7 +133,7 @@ class InstallTests(unittest.TestCase):
             plan.target = "cursor"  # type: ignore[misc]
 
     def test_initial_collision_is_rejected_without_mutation(self) -> None:
-        collision = self.project / ".learning-tutor"
+        collision = self.project / ".socratic-learn"
         collision.write_text("pre-existing", encoding="utf-8")
 
         with self.assertRaises(CollisionError):
@@ -139,18 +144,31 @@ class InstallTests(unittest.TestCase):
     def test_generic_layout_loader_ignore_and_receipt_are_exact(self) -> None:
         self._install()
 
-        install_root = self.project / ".learning-tutor"
+        install_root = self.project / ".socratic-learn"
         self.assertEqual(
             "workspace/*\n!workspace/.gitkeep\n",
             (install_root / ".gitignore").read_text(encoding="utf-8"),
         )
         loader = (install_root / "loader.md").read_text(encoding="utf-8")
-        self.assertIn(".learning-tutor/learning-tutor.prompt.md", loader)
+        self.assertIn(".socratic-learn/socratic-learn.prompt.md", loader)
         self.assertEqual(b"", (install_root / "workspace/.gitkeep").read_bytes())
         receipt = load_receipt(self.project)
+        self.assertEqual(2, receipt["schema_version"])
+        self.assertEqual(PRODUCT_ID, receipt["product"])
+        self.assertEqual(
+            {
+                "schema_version",
+                "product",
+                "protocol_version",
+                "target",
+                "owned_paths",
+                "hashes",
+            },
+            set(receipt),
+        )
         self.assertEqual(list(OWNED_PATHS), receipt["owned_paths"])
-        self.assertNotIn(".learning-tutor/install.json", receipt["hashes"])
-        self.assertEqual(set(OWNED_PATHS) - {".learning-tutor/install.json"}, set(receipt["hashes"]))
+        self.assertNotIn(".socratic-learn/install.json", receipt["hashes"])
+        self.assertEqual(set(OWNED_PATHS) - {".socratic-learn/install.json"}, set(receipt["hashes"]))
         for relative, digest in receipt["hashes"].items():
             self.assertEqual(
                 digest,
@@ -163,8 +181,8 @@ class InstallTests(unittest.TestCase):
 
     def test_cursor_and_pi_clean_installs_own_thin_resolving_skills(self) -> None:
         targets = {
-            "cursor": ".cursor/skills/learning-tutor/SKILL.md",
-            "pi": ".pi/skills/learning-tutor/SKILL.md",
+            "cursor": ".cursor/skills/socratic-learn/SKILL.md",
+            "pi": ".pi/skills/socratic-learn/SKILL.md",
         }
         for target, skill_path in targets.items():
             with self.subTest(target=target):
@@ -176,13 +194,13 @@ class InstallTests(unittest.TestCase):
 
                 skill = project / skill_path
                 text = skill.read_text(encoding="utf-8")
-                self.assertIn("../../../.learning-tutor/learning-tutor.prompt.md", text)
-                self.assertIn("../../../.learning-tutor/workspace/", text)
+                self.assertIn("../../../.socratic-learn/socratic-learn.prompt.md", text)
+                self.assertIn("../../../.socratic-learn/workspace/", text)
                 self.assertNotIn("## Responsive Socratic dialogue", text)
                 self.assertNotIn("## Connected foundations", text)
                 self.assertEqual(
-                    project / ".learning-tutor/learning-tutor.prompt.md",
-                    (skill.parent / "../../../.learning-tutor/learning-tutor.prompt.md").resolve(),
+                    project / ".socratic-learn/socratic-learn.prompt.md",
+                    (skill.parent / "../../../.socratic-learn/socratic-learn.prompt.md").resolve(),
                 )
                 receipt = load_receipt(project)
                 self.assertEqual(target, receipt["target"])
@@ -190,8 +208,8 @@ class InstallTests(unittest.TestCase):
 
     def test_native_skill_destination_collisions_abort_before_mutation(self) -> None:
         for target, relative in (
-            ("cursor", ".cursor/skills/learning-tutor"),
-            ("pi", ".pi/skills/learning-tutor"),
+            ("cursor", ".cursor/skills/socratic-learn"),
+            ("pi", ".pi/skills/socratic-learn"),
         ):
             for kind in ("empty-directory", "file"):
                 with self.subTest(target=target, kind=kind):
@@ -220,7 +238,7 @@ class InstallTests(unittest.TestCase):
                         for path in project.rglob("*")
                     }
                     self.assertEqual(before, after)
-                    self.assertFalse((project / ".learning-tutor").exists())
+                    self.assertFalse((project / ".socratic-learn").exists())
 
     def test_native_skill_ancestor_file_collision_aborts_before_mutation(self) -> None:
         for target, relative in (("cursor", ".cursor"), ("pi", ".pi")):
@@ -234,7 +252,7 @@ class InstallTests(unittest.TestCase):
                     plan_install(self.source, project, target, False)
 
                 self.assertEqual(b"user data", collision.read_bytes())
-                self.assertFalse((project / ".learning-tutor").exists())
+                self.assertFalse((project / ".socratic-learn").exists())
 
     def test_claude_absent_root_is_owned_thin_loader_and_updates(self) -> None:
         plan = plan_install(self.source, self.project, "claude-code", False)
@@ -243,7 +261,7 @@ class InstallTests(unittest.TestCase):
 
         claude = self.project / "CLAUDE.md"
         first = claude.read_bytes()
-        self.assertIn(b".learning-tutor/learning-tutor.prompt.md", first)
+        self.assertIn(b".socratic-learn/socratic-learn.prompt.md", first)
         self.assertNotIn(b"## Responsive Socratic dialogue", first)
         self.assertIn("CLAUDE.md", load_receipt(self.project)["owned_paths"])
 
@@ -263,13 +281,13 @@ class InstallTests(unittest.TestCase):
         plan = plan_install(self.source, self.project, "claude-code", False)
         self.assertEqual(
             (
-                "Read and follow `.learning-tutor/learning-tutor.prompt.md` before "
+                "Read and follow `.socratic-learn/socratic-learn.prompt.md` before "
                 "starting any learning session.\n\n"
                 "Capability mapping:\n"
                 "- Use configured web tools for primary-source verification; "
                 "otherwise mark volatile claims unverified in conversation.\n"
                 "- Use configured filesystem tools to keep private learner state "
-                "under `.learning-tutor/workspace/` and out of version control; "
+                "under `.socratic-learn/workspace/` and out of version control; "
                 "otherwise return the record in conversation.\n"
             ),
             plan.emitted_snippet,
@@ -294,11 +312,11 @@ class InstallTests(unittest.TestCase):
             plan_install(self.source, self.project, "claude-code", False)
 
         self.assertTrue((self.project / "CLAUDE.md").is_dir())
-        self.assertFalse((self.project / ".learning-tutor").exists())
+        self.assertFalse((self.project / ".socratic-learn").exists())
 
     def test_target_templates_never_enter_universal_prompt(self) -> None:
         marker = "before starting any learning session"
-        prompt = (self.source / "dist/learning-tutor.prompt.md").read_text(
+        prompt = (self.source / "dist/socratic-learn.prompt.md").read_text(
             encoding="utf-8"
         )
 
@@ -358,13 +376,13 @@ class InstallTests(unittest.TestCase):
                 self.assertTrue(all(phrase in text for phrase in phrases))
                 self.assertTrue(all(phrase not in text for phrase in forbidden))
                 if target in ("cursor", "pi"):
-                    self.assertTrue(text.startswith("---\nname: learning-tutor\n"))
+                    self.assertTrue(text.startswith("---\nname: socratic-learn\n"))
                     self.assertIn("description:", text)
 
     def test_commit_time_destination_races_preserve_external_bytes(self) -> None:
         cases = (
-            ("cursor", ".cursor/skills/learning-tutor/SKILL.md"),
-            ("pi", ".pi/skills/learning-tutor/SKILL.md"),
+            ("cursor", ".cursor/skills/socratic-learn/SKILL.md"),
+            ("pi", ".pi/skills/socratic-learn/SKILL.md"),
             ("claude-code", "CLAUDE.md"),
         )
         install_module = __import__("socratic_learn.install", fromlist=["_stage"])
@@ -390,11 +408,11 @@ class InstallTests(unittest.TestCase):
                         apply_install(plan)
 
                 self.assertEqual(b"external race winner", external.read_bytes())
-                self.assertFalse((project / ".learning-tutor").exists())
+                self.assertFalse((project / ".socratic-learn").exists())
                 self.assertFalse(
                     any(
                         path.name.startswith(
-                            (".learning-tutor-stage-", ".learning-tutor-backup-")
+                            (".socratic-learn-stage-", ".socratic-learn-backup-")
                         )
                         for path in project.iterdir()
                     )
@@ -419,10 +437,10 @@ class InstallTests(unittest.TestCase):
                 apply_install(plan)
 
         self.assertEqual(b"external replacement", claude.read_bytes())
-        self.assertFalse((self.project / ".learning-tutor").exists())
+        self.assertFalse((self.project / ".socratic-learn").exists())
         self.assertTrue(
             any(
-                path.name.startswith(".learning-tutor-stage-")
+                path.name.startswith(".socratic-learn-stage-")
                 for path in self.project.iterdir()
             )
         )
@@ -454,12 +472,12 @@ class InstallTests(unittest.TestCase):
         ):
             apply_install(plan)
 
-        manifest = self.project / ".learning-tutor/manifest.json"
-        receipt = self.project / ".learning-tutor/install.json"
+        manifest = self.project / ".socratic-learn/manifest.json"
+        receipt = self.project / ".socratic-learn/install.json"
         stages = [
             path
             for path in self.project.iterdir()
-            if path.name.startswith(".learning-tutor-stage-")
+            if path.name.startswith(".socratic-learn-stage-")
         ]
         self.assertTrue(manifest.is_file())
         self.assertFalse(receipt.exists())
@@ -500,20 +518,20 @@ class InstallTests(unittest.TestCase):
         backups = [
             path
             for path in self.project.iterdir()
-            if path.name.startswith(".learning-tutor-backup-")
+            if path.name.startswith(".socratic-learn-backup-")
         ]
         stages = [
             path
             for path in self.project.iterdir()
-            if path.name.startswith(".learning-tutor-stage-")
+            if path.name.startswith(".socratic-learn-stage-")
         ]
-        manifest = self.project / ".learning-tutor/manifest.json"
-        receipt = self.project / ".learning-tutor/install.json"
+        manifest = self.project / ".socratic-learn/manifest.json"
+        receipt = self.project / ".socratic-learn/install.json"
         self.assertTrue(manifest.is_file())
         self.assertTrue(receipt.is_file())
         old_receipt = json.loads(receipt.read_text(encoding="utf-8"))
         self.assertNotEqual(
-            old_receipt["hashes"][".learning-tutor/manifest.json"],
+            old_receipt["hashes"][".socratic-learn/manifest.json"],
             sha256_bytes(manifest.read_bytes()),
         )
         self.assertEqual(1, len(backups))
@@ -530,11 +548,11 @@ class InstallTests(unittest.TestCase):
                 project.mkdir()
                 apply_install(plan_install(self.source, project, target, False))
 
-                self.assertTrue((project / ".learning-tutor/install.json").is_file())
+                self.assertTrue((project / ".socratic-learn/install.json").is_file())
                 self.assertFalse(
                     any(
                         path.name.startswith(
-                            (".learning-tutor-stage-", ".learning-tutor-backup-")
+                            (".socratic-learn-stage-", ".socratic-learn-backup-")
                         )
                         for path in project.iterdir()
                     )
@@ -542,7 +560,7 @@ class InstallTests(unittest.TestCase):
 
     def test_parent_replacement_before_link_preserves_external_tree(self) -> None:
         plan = plan_install(self.source, self.project, "cursor", False)
-        parent = self.project / ".cursor/skills/learning-tutor"
+        parent = self.project / ".cursor/skills/socratic-learn"
         detached = self.project / "detached-before-link"
         sentinel = parent / "external.txt"
         injected = False
@@ -574,11 +592,11 @@ class InstallTests(unittest.TestCase):
             linked = detached / "SKILL.md"
             if linked.exists():
                 self.assertIn("parent chain", str(raised.exception).lower())
-        self.assertFalse((self.project / ".learning-tutor").exists())
+        self.assertFalse((self.project / ".socratic-learn").exists())
 
     def test_parent_replacement_after_link_preserves_external_tree(self) -> None:
         plan = plan_install(self.source, self.project, "cursor", False)
-        parent = self.project / ".cursor/skills/learning-tutor"
+        parent = self.project / ".cursor/skills/socratic-learn"
         detached = self.project / "detached-after-link"
         sentinel = parent / "external.txt"
         injected = False
@@ -611,11 +629,11 @@ class InstallTests(unittest.TestCase):
             linked = detached / "SKILL.md"
             if linked.exists():
                 self.assertIn("parent chain", str(raised.exception).lower())
-        self.assertFalse((self.project / ".learning-tutor").exists())
+        self.assertFalse((self.project / ".socratic-learn").exists())
 
     def test_parent_symlink_swap_preserves_external_directory(self) -> None:
         plan = plan_install(self.source, self.project, "cursor", False)
-        parent = self.project / ".cursor/skills/learning-tutor"
+        parent = self.project / ".cursor/skills/socratic-learn"
         detached = self.project / "detached-symlink-parent"
         outside = self.root / "outside-parent"
         outside.mkdir()
@@ -648,7 +666,7 @@ class InstallTests(unittest.TestCase):
 
     def test_failure_never_deletes_external_replacement_of_published_file(self) -> None:
         plan = plan_install(self.source, self.project, "cursor", False)
-        skill = self.project / ".cursor/skills/learning-tutor/SKILL.md"
+        skill = self.project / ".cursor/skills/socratic-learn/SKILL.md"
         install_module = __import__(
             "socratic_learn.install",
             fromlist=["_link_staged_file"],
@@ -681,7 +699,7 @@ class InstallTests(unittest.TestCase):
 
     def test_failure_never_deletes_replaced_published_directory(self) -> None:
         plan = plan_install(self.source, self.project, "cursor", False)
-        native_directory = self.project / ".cursor/skills/learning-tutor"
+        native_directory = self.project / ".cursor/skills/socratic-learn"
         external = native_directory / "external.txt"
         install_module = __import__(
             "socratic_learn.install",
@@ -718,8 +736,8 @@ class InstallTests(unittest.TestCase):
         install_module = __import__("socratic_learn.install", fromlist=["_stage"])
         real_stage = install_module._stage
         for target, relative in (
-            ("cursor", ".cursor/skills/learning-tutor"),
-            ("pi", ".pi/skills/learning-tutor"),
+            ("cursor", ".cursor/skills/socratic-learn"),
+            ("pi", ".pi/skills/socratic-learn"),
         ):
             with self.subTest(target=target):
                 project = self.root / f"{target}-directory-race"
@@ -740,13 +758,13 @@ class InstallTests(unittest.TestCase):
                         apply_install(plan)
 
                 self.assertEqual([], list(external_directory.iterdir()))
-                self.assertFalse((project / ".learning-tutor").exists())
+                self.assertFalse((project / ".socratic-learn").exists())
 
     def test_generic_package_race_during_staging_preserves_external_tree(self) -> None:
         plan = plan_install(self.source, self.project, "generic", False)
         install_module = __import__("socratic_learn.install", fromlist=["_stage"])
         real_stage = install_module._stage
-        external_root = self.project / ".learning-tutor"
+        external_root = self.project / ".socratic-learn"
         sentinel = external_root / "external.txt"
 
         def stage_then_race(current_plan):
@@ -764,7 +782,7 @@ class InstallTests(unittest.TestCase):
         self.assertFalse(
             any(
                 path.name.startswith(
-                    (".learning-tutor-stage-", ".learning-tutor-backup-")
+                    (".socratic-learn-stage-", ".socratic-learn-backup-")
                 )
                 for path in self.project.iterdir()
             )
@@ -775,7 +793,7 @@ class InstallTests(unittest.TestCase):
         plan = plan_install(self.source, self.project, "generic", True)
         install_module = __import__("socratic_learn.install", fromlist=["_stage"])
         real_stage = install_module._stage
-        manifest = self.project / ".learning-tutor/manifest.json"
+        manifest = self.project / ".socratic-learn/manifest.json"
 
         def stage_then_modify(current_plan):
             staged = real_stage(current_plan)
@@ -792,22 +810,22 @@ class InstallTests(unittest.TestCase):
         backups = [
             path
             for path in self.project.iterdir()
-            if path.name.startswith(".learning-tutor-backup-")
+            if path.name.startswith(".socratic-learn-backup-")
         ]
         self.assertEqual(1, len(backups))
-        backup_manifest = backups[0] / ".learning-tutor/manifest.json"
+        backup_manifest = backups[0] / ".socratic-learn/manifest.json"
         self.assertEqual(b"changed after preflight", backup_manifest.read_bytes())
         self.assertFalse(manifest.exists())
         self.assertIn(str(backup_manifest), str(raised.exception))
         self.assertTrue(
-            any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir())
+            any(path.name.startswith(".socratic-learn-stage-") for path in self.project.iterdir())
         )
 
     @unittest.skipUnless(os.name == "nt", "requires Windows source handle binding")
     def test_update_backup_rejects_final_source_replacement(self) -> None:
         self._install()
         plan = plan_install(self.source, self.project, "generic", True)
-        manifest = self.project / ".learning-tutor/manifest.json"
+        manifest = self.project / ".socratic-learn/manifest.json"
         detached = self.project / "detached-manifest"
         original = manifest.read_bytes()
         injected = False
@@ -818,7 +836,7 @@ class InstallTests(unittest.TestCase):
                 not injected
                 and source == manifest
                 and destination.name == "manifest.json"
-                and ".learning-tutor-backup-" in str(destination)
+                and ".socratic-learn-backup-" in str(destination)
             ):
                 injected = True
                 manifest.rename(detached)
@@ -836,17 +854,17 @@ class InstallTests(unittest.TestCase):
         backups = [
             path
             for path in self.project.iterdir()
-            if path.name.startswith(".learning-tutor-backup-")
+            if path.name.startswith(".socratic-learn-backup-")
         ]
         self.assertEqual(1, len(backups))
-        backup_manifest = backups[0] / ".learning-tutor/manifest.json"
+        backup_manifest = backups[0] / ".socratic-learn/manifest.json"
         self.assertTrue(injected)
         self.assertEqual(original, detached.read_bytes())
         self.assertEqual(b"external source replacement", manifest.read_bytes())
         self.assertFalse(backup_manifest.exists())
         self.assertIn(str(backup_manifest), str(raised.exception))
         self.assertTrue(
-            any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir())
+            any(path.name.startswith(".socratic-learn-stage-") for path in self.project.iterdir())
         )
 
     def test_update_identity_failure_after_backup_move_preserves_only_copy(self) -> None:
@@ -863,7 +881,7 @@ class InstallTests(unittest.TestCase):
 
         def fail_backup_identity(path: Path):
             if (
-                ".learning-tutor-backup-" in str(path)
+                ".socratic-learn-backup-" in str(path)
                 and path.as_posix().endswith(relative)
             ):
                 raise OSError("injected backup identity failure")
@@ -881,7 +899,7 @@ class InstallTests(unittest.TestCase):
         backups = [
             path
             for path in self.project.iterdir()
-            if path.name.startswith(".learning-tutor-backup-")
+            if path.name.startswith(".socratic-learn-backup-")
         ]
         self.assertEqual(1, len(backups))
         preserved = backups[0].joinpath(*relative.split("/"))
@@ -919,7 +937,7 @@ class InstallTests(unittest.TestCase):
         backups = [
             path
             for path in self.project.iterdir()
-            if path.name.startswith(".learning-tutor-backup-")
+            if path.name.startswith(".socratic-learn-backup-")
         ]
         self.assertEqual(1, len(backups))
         preserved = backups[0].joinpath(*relative.split("/"))
@@ -931,7 +949,7 @@ class InstallTests(unittest.TestCase):
     def test_update_restore_preserves_external_destination_and_backup(self) -> None:
         self._install()
         plan = plan_install(self.source, self.project, "generic", True)
-        manifest = self.project / ".learning-tutor/manifest.json"
+        manifest = self.project / ".socratic-learn/manifest.json"
         real_link = os.link
         injected_restore_collision = False
 
@@ -941,11 +959,11 @@ class InstallTests(unittest.TestCase):
             nonlocal injected_restore_collision
             source_path = Path(source)
             destination_path = Path(destination)
-            if ".learning-tutor-stage-" in str(source_path):
+            if ".socratic-learn-stage-" in str(source_path):
                 raise OSError("injected publication failure")
             if (
                 not injected_restore_collision
-                and ".learning-tutor-backup-" in str(source_path)
+                and ".socratic-learn-backup-" in str(source_path)
                 and destination_path == manifest
             ):
                 injected_restore_collision = True
@@ -964,25 +982,25 @@ class InstallTests(unittest.TestCase):
         backups = [
             path
             for path in self.project.iterdir()
-            if path.name.startswith(".learning-tutor-backup-")
+            if path.name.startswith(".socratic-learn-backup-")
         ]
         self.assertEqual(b"external restore winner", manifest.read_bytes())
         self.assertEqual(1, len(backups))
-        backup_manifest = backups[0] / ".learning-tutor/manifest.json"
+        backup_manifest = backups[0] / ".socratic-learn/manifest.json"
         self.assertTrue(backup_manifest.is_file())
         self.assertIn(str(manifest), str(raised.exception))
         self.assertIn(str(backup_manifest), str(raised.exception))
 
     def test_native_target_update_preserves_ownership_and_private_state(self) -> None:
         for target, skill_path in (
-            ("cursor", ".cursor/skills/learning-tutor/SKILL.md"),
-            ("pi", ".pi/skills/learning-tutor/SKILL.md"),
+            ("cursor", ".cursor/skills/socratic-learn/SKILL.md"),
+            ("pi", ".pi/skills/socratic-learn/SKILL.md"),
         ):
             with self.subTest(target=target):
                 project = self.root / f"{target}-update"
                 project.mkdir()
                 apply_install(plan_install(self.source, project, target, False))
-                private = project / ".learning-tutor/workspace/private.md"
+                private = project / ".socratic-learn/workspace/private.md"
                 private.write_bytes(b"private")
 
                 apply_install(plan_install(self.source, project, target, True))
@@ -997,7 +1015,7 @@ class InstallTests(unittest.TestCase):
             plan_install(self.source, self.project, "pi", True)
 
         self.assertTrue(
-            (self.project / ".cursor/skills/learning-tutor/SKILL.md").is_file()
+            (self.project / ".cursor/skills/socratic-learn/SKILL.md").is_file()
         )
         self.assertFalse((self.project / ".pi").exists())
 
@@ -1009,7 +1027,7 @@ class InstallTests(unittest.TestCase):
             destination: Path,
         ):
             if str(destination).endswith(
-                os.path.join(".cursor", "skills", "learning-tutor", "SKILL.md")
+                os.path.join(".cursor", "skills", "socratic-learn", "SKILL.md")
             ):
                 raise OSError("injected native move failure")
             raise AssertionError("native destination must be linked first")
@@ -1021,14 +1039,14 @@ class InstallTests(unittest.TestCase):
             with self.assertRaises(FilesystemError) as raised:
                 apply_install(plan)
 
-        self.assertFalse((self.project / ".learning-tutor").exists())
-        self.assertTrue((self.project / ".cursor/skills/learning-tutor").is_dir())
+        self.assertFalse((self.project / ".socratic-learn").exists())
+        self.assertTrue((self.project / ".cursor/skills/socratic-learn").is_dir())
         self.assertIn(".cursor", str(raised.exception))
         self.assert_posix_same_principal_limit(raised.exception)
 
     def test_unchanged_update_replaces_managed_files_and_preserves_private_state(self) -> None:
         self._install()
-        private = self.project / ".learning-tutor/workspace/private.md"
+        private = self.project / ".socratic-learn/workspace/private.md"
         private.write_text("private", encoding="utf-8")
         new_prompt = b"# Universal Learning Tutor\nProtocol: 1.0.0\nUpdated.\n"
         self._make_distribution(new_prompt)
@@ -1037,7 +1055,7 @@ class InstallTests(unittest.TestCase):
 
         self.assertEqual(
             new_prompt,
-            (self.project / ".learning-tutor/learning-tutor.prompt.md").read_bytes(),
+            (self.project / ".socratic-learn/socratic-learn.prompt.md").read_bytes(),
         )
         self.assertEqual("private", private.read_text(encoding="utf-8"))
 
@@ -1061,8 +1079,8 @@ class InstallTests(unittest.TestCase):
         self.assertIn("RENAME_NOREPLACE", str(raised.exception))
         self.assertFalse(
             any(
-                path.name.startswith(".learning-tutor-stage-")
-                or path.name.startswith(".learning-tutor-backup-")
+                path.name.startswith(".socratic-learn-stage-")
+                or path.name.startswith(".socratic-learn-backup-")
                 for path in self.project.iterdir()
             )
         )
@@ -1070,12 +1088,12 @@ class InstallTests(unittest.TestCase):
     def test_update_refuses_modified_or_missing_owned_file_before_mutation(self) -> None:
         for state in ("modified", "missing"):
             with self.subTest(state=state):
-                if (self.project / ".learning-tutor").exists():
+                if (self.project / ".socratic-learn").exists():
                     import shutil
 
-                    shutil.rmtree(self.project / ".learning-tutor")
+                    shutil.rmtree(self.project / ".socratic-learn")
                 self._install()
-                managed = self.project / ".learning-tutor/loader.md"
+                managed = self.project / ".socratic-learn/loader.md"
                 if state == "modified":
                     managed.write_text("user edit\n", encoding="utf-8")
                 else:
@@ -1086,18 +1104,18 @@ class InstallTests(unittest.TestCase):
                     plan_install(self.source, self.project, "generic", True)
 
                 self.assertEqual(before, set(self.root.iterdir()))
-                self.assertFalse(any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir()))
-                self.assertFalse(any(path.name.startswith(".learning-tutor-backup-") for path in self.project.iterdir()))
+                self.assertFalse(any(path.name.startswith(".socratic-learn-stage-") for path in self.project.iterdir()))
+                self.assertFalse(any(path.name.startswith(".socratic-learn-backup-") for path in self.project.iterdir()))
 
     def test_update_refuses_missing_invalid_or_escaping_receipt(self) -> None:
         for state in ("missing", "invalid", "escape"):
             with self.subTest(state=state):
-                if (self.project / ".learning-tutor").exists():
+                if (self.project / ".socratic-learn").exists():
                     import shutil
 
-                    shutil.rmtree(self.project / ".learning-tutor")
+                    shutil.rmtree(self.project / ".socratic-learn")
                 self._install()
-                receipt_path = self.project / ".learning-tutor/install.json"
+                receipt_path = self.project / ".socratic-learn/install.json"
                 if state == "missing":
                     receipt_path.unlink()
                 elif state == "invalid":
@@ -1115,10 +1133,10 @@ class InstallTests(unittest.TestCase):
 
     def test_update_refuses_unowned_target_collision(self) -> None:
         self._install()
-        receipt_path = self.project / ".learning-tutor/install.json"
+        receipt_path = self.project / ".socratic-learn/install.json"
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-        receipt["owned_paths"].remove(".learning-tutor/loader.md")
-        receipt["hashes"].pop(".learning-tutor/loader.md")
+        receipt["owned_paths"].remove(".socratic-learn/loader.md")
+        receipt["hashes"].pop(".socratic-learn/loader.md")
         receipt_path.write_text(
             json.dumps(receipt, sort_keys=True, indent=2) + "\n",
             encoding="utf-8",
@@ -1127,7 +1145,7 @@ class InstallTests(unittest.TestCase):
         with self.assertRaises(CollisionError):
             plan_install(self.source, self.project, "generic", True)
 
-        self.assertTrue((self.project / ".learning-tutor/loader.md").exists())
+        self.assertTrue((self.project / ".socratic-learn/loader.md").exists())
 
     def test_staging_failure_removes_only_operation_paths(self) -> None:
         sentinel = self.project / "sentinel"
@@ -1142,8 +1160,8 @@ class InstallTests(unittest.TestCase):
                 apply_install(plan)
 
         self.assertEqual("keep", sentinel.read_text(encoding="utf-8"))
-        self.assertFalse((self.project / ".learning-tutor").exists())
-        self.assertFalse(any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir()))
+        self.assertFalse((self.project / ".socratic-learn").exists())
+        self.assertFalse(any(path.name.startswith(".socratic-learn-stage-") for path in self.project.iterdir()))
 
     def test_staging_cleanup_preserves_raced_directory_replacement(self) -> None:
         plan = plan_install(self.source, self.project, "generic", False)
@@ -1216,7 +1234,7 @@ class InstallTests(unittest.TestCase):
 
         assert inserted is not None
         self.assertEqual(b"external", inserted.read_bytes())
-        self.assertTrue((inserted.parent / ".learning-tutor/manifest.json").is_file())
+        self.assertTrue((inserted.parent / ".socratic-learn/manifest.json").is_file())
 
     def test_parent_rename_diagnostic_reports_observed_identities_and_location(self) -> None:
         install_module = __import__(
@@ -1260,10 +1278,10 @@ class InstallTests(unittest.TestCase):
         with self.assertRaisesRegex(IntegrityError, "staged file hash"):
             apply_install(bad_plan)
 
-        self.assertFalse((self.project / ".learning-tutor").exists())
+        self.assertFalse((self.project / ".socratic-learn").exists())
         self.assertFalse(
             any(
-                path.name.startswith(".learning-tutor-stage-")
+                path.name.startswith(".socratic-learn-stage-")
                 for path in self.project.iterdir()
             )
         )
@@ -1287,11 +1305,11 @@ class InstallTests(unittest.TestCase):
         message = str(raised.exception)
         self.assertIn("injected staging write failure", message)
         self.assertIn("injected locked stage", message)
-        self.assertIn(".learning-tutor-stage-", message)
+        self.assertIn(".socratic-learn-stage-", message)
         stages = [
             path
             for path in self.project.iterdir()
-            if path.name.startswith(".learning-tutor-stage-")
+            if path.name.startswith(".socratic-learn-stage-")
         ]
         self.assertEqual(1, len(stages))
         self.assertEqual(stages[0], Path(raised.exception.path))
@@ -1309,11 +1327,11 @@ class InstallTests(unittest.TestCase):
                 apply_install(plan)
 
         self.assertEqual("keep", sentinel.read_text(encoding="utf-8"))
-        self.assertTrue((self.project / ".learning-tutor").is_dir())
+        self.assertTrue((self.project / ".socratic-learn").is_dir())
         self.assert_posix_same_principal_limit(raised.exception)
         self.assertTrue(
             any(
-                path.name.startswith(".learning-tutor-stage-")
+                path.name.startswith(".socratic-learn-stage-")
                 for path in self.project.iterdir()
             )
         )
@@ -1350,9 +1368,9 @@ class InstallTests(unittest.TestCase):
 
         self.assertIn("injected initial commit failure", str(raised.exception))
         self.assert_posix_same_principal_limit(raised.exception)
-        self.assertTrue((self.project / ".learning-tutor").is_dir())
+        self.assertTrue((self.project / ".socratic-learn").is_dir())
         self.assertTrue(
-            any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir())
+            any(path.name.startswith(".socratic-learn-stage-") for path in self.project.iterdir())
         )
 
     def test_ambiguous_backup_move_failure_preserves_backup_tree(self) -> None:
@@ -1370,7 +1388,7 @@ class InstallTests(unittest.TestCase):
 
         def fail_backup(source_descriptor: int, destination: Path) -> None:
             nonlocal backup_moves
-            if ".learning-tutor-backup-" in str(destination):
+            if ".socratic-learn-backup-" in str(destination):
                 backup_moves += 1
                 if backup_moves == 2:
                     raise OSError("injected backup failure")
@@ -1386,7 +1404,7 @@ class InstallTests(unittest.TestCase):
         backups = [
             path
             for path in self.project.iterdir()
-            if path.name.startswith(".learning-tutor-backup-")
+            if path.name.startswith(".socratic-learn-backup-")
         ]
         self.assertEqual(1, len(backups))
         preserved = backups[0].joinpath(*first_relative.split("/"))
@@ -1397,7 +1415,7 @@ class InstallTests(unittest.TestCase):
     def test_update_backup_move_binds_original_source_parent(self) -> None:
         self._install()
         plan = plan_install(self.source, self.project, "generic", True)
-        managed = self.project / ".learning-tutor"
+        managed = self.project / ".socratic-learn"
         detached = self.project / "detached-install"
         manifest = managed / "manifest.json"
         original = manifest.read_bytes()
@@ -1408,7 +1426,7 @@ class InstallTests(unittest.TestCase):
             if (
                 not injected
                 and source == manifest
-                and ".learning-tutor-backup-" in str(destination)
+                and ".socratic-learn-backup-" in str(destination)
             ):
                 injected = True
                 managed.rename(detached)
@@ -1497,7 +1515,7 @@ class InstallTests(unittest.TestCase):
         self.assert_posix_same_principal_limit(raised.exception)
         self.assertTrue(
             any(
-                path.name.startswith((".learning-tutor-stage-", ".learning-tutor-backup-"))
+                path.name.startswith((".socratic-learn-stage-", ".socratic-learn-backup-"))
                 for path in self.project.iterdir()
             )
         )
@@ -1555,20 +1573,20 @@ class InstallTests(unittest.TestCase):
         self.assert_posix_same_principal_limit(raised.exception)
         self.assertTrue(
             any(
-                path.name.startswith((".learning-tutor-stage-", ".learning-tutor-backup-"))
+                path.name.startswith((".socratic-learn-stage-", ".socratic-learn-backup-"))
                 for path in self.project.iterdir()
             )
         )
 
     def test_update_failure_preserves_operation_created_parent(self) -> None:
         self._install()
-        workspace = self.project / ".learning-tutor/workspace"
+        workspace = self.project / ".socratic-learn/workspace"
         (workspace / ".gitkeep").unlink()
         workspace.rmdir()
-        receipt_path = self.project / ".learning-tutor/install.json"
+        receipt_path = self.project / ".socratic-learn/install.json"
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-        receipt["owned_paths"].remove(".learning-tutor/workspace/.gitkeep")
-        receipt["hashes"].pop(".learning-tutor/workspace/.gitkeep")
+        receipt["owned_paths"].remove(".socratic-learn/workspace/.gitkeep")
+        receipt["hashes"].pop(".socratic-learn/workspace/.gitkeep")
         receipt_path.write_text(
             json.dumps(receipt, sort_keys=True, indent=2) + "\n",
             encoding="utf-8",
@@ -1593,7 +1611,7 @@ class InstallTests(unittest.TestCase):
                 apply_install(plan)
 
         self.assertTrue(workspace.is_dir())
-        self.assertTrue((self.project / ".learning-tutor/loader.md").is_file())
+        self.assertTrue((self.project / ".socratic-learn/loader.md").is_file())
         self.assertIn(str(workspace), str(raised.exception))
 
     def test_restore_failure_keeps_backup_and_reports_recovery_path(self) -> None:
@@ -1608,9 +1626,9 @@ class InstallTests(unittest.TestCase):
             **kwargs,
         ) -> None:
             source_path = Path(source)
-            if ".learning-tutor-stage-" in str(source_path):
+            if ".socratic-learn-stage-" in str(source_path):
                 raise OSError("injected commit failure")
-            if ".learning-tutor-backup-" in str(source_path):
+            if ".socratic-learn-backup-" in str(source_path):
                 raise OSError("injected restore failure")
             real_link(source, destination, *args, **kwargs)
 
@@ -1621,9 +1639,9 @@ class InstallTests(unittest.TestCase):
             with self.assertRaises(FilesystemError) as raised:
                 apply_install(plan)
 
-        self.assertIn(".learning-tutor-backup-", str(raised.exception))
+        self.assertIn(".socratic-learn-backup-", str(raised.exception))
         self.assert_posix_same_principal_limit(raised.exception)
-        self.assertTrue(any(path.name.startswith(".learning-tutor-backup-") for path in self.project.iterdir()))
+        self.assertTrue(any(path.name.startswith(".socratic-learn-backup-") for path in self.project.iterdir()))
 
     def test_cli_prints_loader_and_update_transition(self) -> None:
         stdout = io.StringIO()
@@ -1632,7 +1650,7 @@ class InstallTests(unittest.TestCase):
             contextlib.redirect_stdout(stdout),
         ):
             self.assertEqual(0, main(["install", "generic", str(self.project)]))
-        self.assertIn(".learning-tutor/learning-tutor.prompt.md", stdout.getvalue())
+        self.assertIn(".socratic-learn/socratic-learn.prompt.md", stdout.getvalue())
 
         stdout = io.StringIO()
         with (

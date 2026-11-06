@@ -11,7 +11,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from . import MANIFEST_SCHEMA_VERSION, PROTOCOL_VERSION, TARGETS
+from . import (
+    MANIFEST_SCHEMA_VERSION,
+    PRODUCT_ID,
+    PROTOCOL_VERSION,
+    TARGETS,
+)
 from .errors import (
     CollisionError,
     FilesystemError,
@@ -19,7 +24,7 @@ from .errors import (
     LearningTutorError,
     UsageError,
 )
-from .manifest import serialize_json, sha256_bytes, validate_manifest
+from .manifest import BUNDLE_NAME, serialize_json, sha256_bytes, validate_manifest
 from .safe_fs import (
     AtomicNoReplaceUnsupportedError,
     IdentityMismatchError,
@@ -37,27 +42,30 @@ from .safe_fs import (
 )
 
 
-INSTALL_ROOT = ".learning-tutor"
+INSTALL_ROOT = ".socratic-learn"
 RECEIPT_PATH = f"{INSTALL_ROOT}/install.json"
+LEGACY_INSTALL_ROOT = ".learning-tutor"
+LEGACY_RECEIPT_PATH = f"{LEGACY_INSTALL_ROOT}/install.json"
 OWNED_PATHS = (
     f"{INSTALL_ROOT}/manifest.json",
-    f"{INSTALL_ROOT}/learning-tutor.prompt.md",
+    f"{INSTALL_ROOT}/{BUNDLE_NAME}",
     RECEIPT_PATH,
     f"{INSTALL_ROOT}/loader.md",
     f"{INSTALL_ROOT}/.gitignore",
     f"{INSTALL_ROOT}/workspace/.gitkeep",
 )
 _NATIVE_SKILL_PATHS = {
-    "cursor": ".cursor/skills/learning-tutor/SKILL.md",
-    "pi": ".pi/skills/learning-tutor/SKILL.md",
+    "cursor": ".cursor/skills/socratic-learn/SKILL.md",
+    "pi": ".pi/skills/socratic-learn/SKILL.md",
 }
-_RECEIPT_KEYS = {
+_LEGACY_RECEIPT_KEYS = {
     "schema_version",
     "protocol_version",
     "target",
     "owned_paths",
     "hashes",
 }
+_CANONICAL_RECEIPT_KEYS = _LEGACY_RECEIPT_KEYS | {"product"}
 _IGNORE_BYTES = b"workspace/*\n!workspace/.gitkeep\n"
 
 
@@ -75,14 +83,17 @@ class InstallReceipt:
     """Validated ownership metadata used to authorize an update."""
 
     schema_version: int
+    product: str
     protocol_version: str
     target: str
     owned_paths: tuple[str, ...]
     hashes: tuple[tuple[str, str], ...]
+    receipt_path: str
 
     def as_dict(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
+            "product": self.product,
             "protocol_version": self.protocol_version,
             "target": self.target,
             "owned_paths": list(self.owned_paths),
@@ -224,7 +235,7 @@ def _read_bytes(path: Path, label: str) -> bytes:
         ) from error
 
 
-def _load_distribution(source_root: Path) -> tuple[bytes, bytes]:
+def _load_distribution(source_root: Path) -> tuple[bytes, bytes, str]:
     manifest_path = source_root / "dist/manifest.json"
     manifest_bytes = _read_bytes(manifest_path, "distribution manifest")
     try:
@@ -233,13 +244,13 @@ def _load_distribution(source_root: Path) -> tuple[bytes, bytes]:
         raise IntegrityError(
             "distribution manifest is not valid UTF-8 JSON",
             path=manifest_path,
-            remediation="run 'learning-tutor build'",
+            remediation="run 'socratic-learn build'",
         ) from error
     if not isinstance(manifest, dict):
         raise IntegrityError(
             "distribution manifest must contain a JSON object",
             path=manifest_path,
-            remediation="run 'learning-tutor build'",
+            remediation="run 'socratic-learn build'",
         )
     validate_manifest(manifest)
     bundle = manifest["bundle"]
@@ -250,29 +261,45 @@ def _load_distribution(source_root: Path) -> tuple[bytes, bytes]:
         raise IntegrityError(
             "distribution prompt hash does not match the manifest",
             path=bundle_path,
-            remediation="run 'learning-tutor build'",
+            remediation="run 'socratic-learn build'",
         )
-    return manifest_bytes, bundle_bytes
+    return manifest_bytes, bundle_bytes, str(bundle["path"])
 
 
-def _parse_receipt(value: object, path: Path) -> InstallReceipt:
+def _parse_receipt(
+    value: object,
+    path: Path,
+    *,
+    legacy: bool = False,
+) -> InstallReceipt:
     if not isinstance(value, Mapping):
         raise IntegrityError(
             "installation receipt must contain a JSON object",
             path=path,
             remediation="remove the invalid installation and reinstall",
         )
-    if set(value) != _RECEIPT_KEYS:
+    expected_keys = _LEGACY_RECEIPT_KEYS if legacy else _CANONICAL_RECEIPT_KEYS
+    if set(value) != expected_keys:
         raise IntegrityError(
             "installation receipt has missing or unknown properties",
             path=path,
             remediation="remove the invalid installation and reinstall",
         )
-    if value["schema_version"] != MANIFEST_SCHEMA_VERSION:
+    expected_schema = 1 if legacy else MANIFEST_SCHEMA_VERSION
+    if value["schema_version"] != expected_schema:
         raise IntegrityError(
             "installation receipt schema version is unsupported",
             path=path,
-            remediation="install with a compatible learning-tutor version",
+            remediation="install with a compatible Socratic Learn version",
+        )
+    product = "learning-tutor" if legacy else value["product"]
+    if type(product) is not str or product != (
+        "learning-tutor" if legacy else PRODUCT_ID
+    ):
+        raise IntegrityError(
+            "installation receipt product is invalid",
+            path=path,
+            remediation="remove the invalid installation and reinstall",
         )
     protocol = value["protocol_version"]
     if type(protocol) is not str or not protocol:
@@ -289,12 +316,13 @@ def _parse_receipt(value: object, path: Path) -> InstallReceipt:
             remediation="use the installer matching the recorded target",
         )
     owned_value = value["owned_paths"]
+    expected_receipt_path = LEGACY_RECEIPT_PATH if legacy else RECEIPT_PATH
     if (
         type(owned_value) is not list
         or not owned_value
         or any(not _portable_relative_path(item) for item in owned_value)
         or len(set(owned_value)) != len(owned_value)
-        or RECEIPT_PATH not in owned_value
+        or expected_receipt_path not in owned_value
     ):
         raise IntegrityError(
             "installation receipt owned paths are invalid",
@@ -308,7 +336,7 @@ def _parse_receipt(value: object, path: Path) -> InstallReceipt:
             path=path,
             remediation="remove the invalid installation and reinstall",
         )
-    expected_hash_paths = set(owned_value) - {RECEIPT_PATH}
+    expected_hash_paths = set(owned_value) - {expected_receipt_path}
     if set(hashes_value) != expected_hash_paths:
         raise IntegrityError(
             "installation receipt must hash every owned path except itself",
@@ -317,7 +345,7 @@ def _parse_receipt(value: object, path: Path) -> InstallReceipt:
         )
     hashes: list[tuple[str, str]] = []
     for relative in owned_value:
-        if relative == RECEIPT_PATH:
+        if relative == expected_receipt_path:
             continue
         digest = hashes_value.get(relative)
         if (
@@ -332,11 +360,13 @@ def _parse_receipt(value: object, path: Path) -> InstallReceipt:
             )
         hashes.append((relative, digest))
     return InstallReceipt(
-        schema_version=MANIFEST_SCHEMA_VERSION,
+        schema_version=expected_schema,
+        product=product,
         protocol_version=protocol,
         target=target,
         owned_paths=tuple(owned_value),
         hashes=tuple(hashes),
+        receipt_path=expected_receipt_path,
     )
 
 
@@ -373,14 +403,14 @@ def _verify_owned_files(
         path = _project_path(project, relative)
         content = _read_bytes(path, "owned installation file")
         digest = sha256_bytes(content)
-        if relative != RECEIPT_PATH and digest != hashes[relative]:
+        if relative != receipt.receipt_path and digest != hashes[relative]:
             raise IntegrityError(
                 "owned installation file was modified",
                 path=relative,
                 remediation="restore the installed file or perform a clean install",
             )
         expected.append((relative, digest))
-    if sha256_bytes(receipt_bytes) != dict(expected)[RECEIPT_PATH]:
+    if sha256_bytes(receipt_bytes) != dict(expected)[receipt.receipt_path]:
         raise AssertionError("receipt snapshot changed while it was read")
     return tuple(expected)
 
@@ -394,7 +424,7 @@ def _template_bytes(name: str, path_base: str = "") -> bytes:
         raise IntegrityError(
             f"{name} template is not valid UTF-8",
             path=template_path,
-            remediation="reinstall the learning-tutor package",
+            remediation="reinstall the socratic-learn package",
         ) from error
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     rendered = normalized.replace("{{PATH_BASE}}", path_base)
@@ -404,13 +434,14 @@ def _template_bytes(name: str, path_base: str = "") -> bytes:
 def _planned_files(
     manifest: bytes,
     bundle: bytes,
+    bundle_name: str,
     target: str,
     *,
     include_claude_loader: bool,
 ) -> tuple[PlannedFile, ...]:
     content_by_path = {
         f"{INSTALL_ROOT}/manifest.json": manifest,
-        f"{INSTALL_ROOT}/learning-tutor.prompt.md": bundle,
+        f"{INSTALL_ROOT}/{bundle_name}": bundle,
         f"{INSTALL_ROOT}/loader.md": _template_bytes("generic-loader.md"),
         f"{INSTALL_ROOT}/.gitignore": _IGNORE_BYTES,
         f"{INSTALL_ROOT}/workspace/.gitkeep": b"",
@@ -433,6 +464,7 @@ def _planned_files(
     }
     receipt = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
+        "product": PRODUCT_ID,
         "protocol_version": PROTOCOL_VERSION,
         "target": target,
         "owned_paths": owned_paths,
@@ -548,10 +580,11 @@ def plan_install(
         if target == "claude-code" and "CLAUDE.md" in previous_receipt.owned_paths:
             include_claude_loader = True
             emitted_snippet = None
-    manifest, bundle = _load_distribution(source)
+    manifest, bundle, bundle_name = _load_distribution(source)
     files = _planned_files(
         manifest,
         bundle,
+        bundle_name,
         target,
         include_claude_loader=include_claude_loader,
     )
@@ -1110,7 +1143,7 @@ def _stage(plan: InstallPlan) -> tuple[Path, Path, TrackedDirectory]:
     stage_directory: TrackedDirectory | None = None
     try:
         stage = Path(
-            tempfile.mkdtemp(prefix=".learning-tutor-stage-", dir=plan.project)
+            tempfile.mkdtemp(prefix=".socratic-learn-stage-", dir=plan.project)
         )
         stage_directory = track_directory(stage)
         staged_install = stage / INSTALL_ROOT
@@ -1242,7 +1275,7 @@ def _apply_update(
     backup_phase = True
     try:
         backup = Path(
-            tempfile.mkdtemp(prefix=".learning-tutor-backup-", dir=plan.project)
+            tempfile.mkdtemp(prefix=".socratic-learn-backup-", dir=plan.project)
         )
         backup_directory = track_directory(backup)
         assert plan.previous_receipt is not None
