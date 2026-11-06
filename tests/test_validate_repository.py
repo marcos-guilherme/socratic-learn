@@ -53,6 +53,7 @@ RELEASE_REQUIRED_PATHS = (
     "scripts/install.ps1",
     "scripts/install.sh",
     ".github/workflows/release.yml",
+    "docs/superpowers/plans/2026-11-06-one-command-learning-launcher.md",
 )
 
 CURRICULUM_FIELDS = (
@@ -192,7 +193,8 @@ class RepositoryValidationTests(unittest.TestCase):
             root = root / "workspace" / "repository"
             root.mkdir(parents=True)
         (root / ".gitignore").write_text(
-            "workspace/*\n!workspace/.gitkeep\n__pycache__/\n*.py[cod]\n",
+            "workspace/*\n!workspace/.gitkeep\n__pycache__/\n*.py[cod]\n"
+            "/package-dist/\n",
             encoding="utf-8",
         )
         (root / ".gitattributes").write_text(
@@ -1245,6 +1247,72 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn(
             "Native safety matrix must install .[build] before tests",
             errors,
+        )
+
+    def test_local_release_gates_isolate_package_output_from_canonical_dist(
+        self,
+    ) -> None:
+        root = Path(__file__).resolve().parents[1]
+        plan = (
+            root
+            / "docs/superpowers/plans/2026-11-06-one-command-learning-launcher.md"
+        ).read_text(encoding="utf-8")
+        commands = re.findall(r"(?m)^python -m build(?:[ \t].*)?$", plan)
+
+        self.assertEqual(
+            ["python -m build --outdir package-dist"] * 3,
+            commands,
+        )
+        self.assertIn("/package-dist/", (root / ".gitignore").read_text("utf-8"))
+        self.assertEqual(
+            {"manifest.json", "socratic-learn.prompt.md"},
+            {path.name for path in (root / "dist").iterdir()},
+        )
+        self.assertNotEqual("dist", "package-dist")
+
+    def test_validator_rejects_bare_local_build_and_missing_package_ignore(
+        self,
+    ) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        plan = (
+            root
+            / "docs/superpowers/plans/2026-11-06-one-command-learning-launcher.md"
+        )
+        plan.write_text(
+            plan.read_text(encoding="utf-8").replace(
+                "python -m build --outdir package-dist",
+                "python -m build",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        gitignore = root / ".gitignore"
+        gitignore.write_text(
+            gitignore.read_text(encoding="utf-8").replace("/package-dist/\n", ""),
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Active local release gates must use "
+            "python -m build --outdir package-dist",
+            errors,
+        )
+        self.assertIn(".gitignore must ignore /package-dist/", errors)
+
+    def test_validator_rejects_package_artifacts_in_canonical_dist(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        (root / "dist/socratic_learn-0.1.0-py3-none-any.whl").write_bytes(
+            b"package"
+        )
+
+        self.assertIn(
+            "Canonical dist/ must contain exactly manifest.json and "
+            "socratic-learn.prompt.md; package builds use package-dist/",
+            validate(root),
         )
 
     def test_validator_rejects_unsafe_publish_gates_and_dependencies(self) -> None:

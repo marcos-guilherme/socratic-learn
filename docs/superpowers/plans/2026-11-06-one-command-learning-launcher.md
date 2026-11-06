@@ -1505,7 +1505,7 @@ Run:
 python -m socratic_learn build
 python -m unittest tests.test_validate_repository -v
 python tests/validate_repository.py
-python -m build
+python -m build --outdir package-dist
 python -m PyInstaller socratic-learn.spec --noconfirm --distpath dist-native --workpath build-native
 .\dist-native\socratic.exe --version
 git diff --check
@@ -1622,7 +1622,7 @@ Run:
 python -m socratic_learn build
 python -m unittest discover -s tests -p "test_*.py" -v
 python tests/validate_repository.py
-python -m build
+python -m build --outdir package-dist
 git diff --check
 git status --short --branch
 ```
@@ -1671,7 +1671,7 @@ Run:
 python -m socratic_learn build
 python -m unittest discover -s tests -p "test_*.py" -v
 python tests/validate_repository.py
-python -m build
+python -m build --outdir package-dist
 python -m PyInstaller socratic-learn.spec --noconfirm --distpath dist-native --workpath build-native
 .\dist-native\socratic.exe --version
 git diff --check

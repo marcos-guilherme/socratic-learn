@@ -74,6 +74,7 @@ REQUIRED_PATHS = (
     "scripts/install.ps1",
     "scripts/install.sh",
     ".github/workflows/release.yml",
+    "docs/superpowers/plans/2026-11-06-one-command-learning-launcher.md",
 )
 SKILL_PATHS = (
     ".cursor/skills/socratic-learn/SKILL.md",
@@ -202,6 +203,11 @@ POSIX_THREAT_MODEL_TERMS = (
     "leaf-entry toctou",
 )
 IMPOSSIBLE_SAFETY_CLAIM = "no external data was deleted"
+LOCAL_RELEASE_PLAN = (
+    "docs/superpowers/plans/2026-11-06-one-command-learning-launcher.md"
+)
+LOCAL_PACKAGE_BUILD_COMMAND = "python -m build --outdir package-dist"
+CANONICAL_DIST_FILES = {"manifest.json", "socratic-learn.prompt.md"}
 
 
 def markdown_files(root: Path) -> list[Path]:
@@ -473,6 +479,33 @@ def validate_release_automation(root: Path) -> list[str]:
     return errors
 
 
+def validate_local_release_gate(root: Path) -> list[str]:
+    errors: list[str] = []
+    plan_path = root / LOCAL_RELEASE_PLAN
+    if plan_path.is_file():
+        commands = re.findall(
+            r"(?m)^python -m build(?:[ \t].*)?$",
+            plan_path.read_text(encoding="utf-8"),
+        )
+        if not commands or any(
+            command != LOCAL_PACKAGE_BUILD_COMMAND for command in commands
+        ):
+            errors.append(
+                "Active local release gates must use "
+                f"{LOCAL_PACKAGE_BUILD_COMMAND}"
+            )
+
+    dist = root / "dist"
+    if dist.is_dir():
+        actual = {path.name for path in dist.iterdir()}
+        if actual != CANONICAL_DIST_FILES:
+            errors.append(
+                "Canonical dist/ must contain exactly manifest.json and "
+                "socratic-learn.prompt.md; package builds use package-dist/"
+            )
+    return errors
+
+
 def validate(root: Path) -> list[str]:
     errors: list[str] = []
 
@@ -715,6 +748,8 @@ def validate(root: Path) -> list[str]:
         rules = gitignore.read_text(encoding="utf-8").splitlines()
         if "workspace/*" not in rules or "!workspace/.gitkeep" not in rules:
             errors.append(".gitignore must ignore workspace except .gitkeep")
+        if "/package-dist/" not in rules:
+            errors.append(".gitignore must ignore /package-dist/")
 
     gitattributes = root / ".gitattributes"
     if gitattributes.is_file():
@@ -735,6 +770,7 @@ def validate(root: Path) -> list[str]:
 
     errors.extend(validate_distribution(root))
     errors.extend(validate_release_automation(root))
+    errors.extend(validate_local_release_gate(root))
     return errors
 
 

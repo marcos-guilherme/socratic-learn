@@ -9,6 +9,7 @@ __pycache__/
 /build/
 /build-native/
 /dist-native/
+/package-dist/
 /.dist-backup-*/
 /.dist-staging-*/
 /dist/*.whl
