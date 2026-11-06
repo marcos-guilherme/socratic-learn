@@ -1161,7 +1161,7 @@ class RepositoryValidationTests(unittest.TestCase):
             "workflow_dispatch:",
             "windows-latest",
             "ubuntu-latest",
-            "macos-13",
+            "macos-15-intel",
             "python-version: \"3.11\"",
             "python -m unittest discover",
             "python tests/validate_repository.py",
@@ -1195,6 +1195,7 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertEqual(1, release.count("contents: write"))
         self.assertIn("github.ref_name", release)
         self.assertIn("__version__", release)
+        self.assertNotIn("macos-13", release)
 
         normal = (root / ".github/workflows/native-python.yml").read_text(
             encoding="utf-8"
@@ -1246,6 +1247,131 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn("Release workflow must default to contents: read", errors)
         self.assertIn(
             "Native safety matrix must install .[build] before tests",
+            errors,
+        )
+
+    def test_release_workflow_rejects_retired_macos_intel_runner(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        release.write_text(
+            release.read_text(encoding="utf-8").replace(
+                "macos-15-intel",
+                "macos-13",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Native macOS release matrix must use macos-15-intel "
+            "with an empty extension",
+            errors,
+        )
+
+    def test_release_workflow_rejects_arm_macos_runner_with_comment_decoy(
+        self,
+    ) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        release.write_text(
+            release.read_text(encoding="utf-8").replace(
+                "          - os: macos-15-intel\n"
+                "            platform: macos\n",
+                "          - os: macos-15  # macos-15-intel\n"
+                "            platform: macos\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Native macOS release matrix must use macos-15-intel "
+            "with an empty extension",
+            errors,
+        )
+
+    def test_release_workflow_rejects_arm_macos_runner_with_matrix_decoy(
+        self,
+    ) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        text = release.read_text(encoding="utf-8").replace(
+            "          - os: macos-15-intel\n"
+            "            platform: macos\n",
+            "          - os: macos-15\n"
+            "            platform: macos\n",
+            1,
+        )
+        text = text.replace(
+            "          - os: windows-latest\n",
+            "          - os: macos-15-intel\n"
+            "            platform: decoy\n"
+            '            extension: ""\n'
+            "          - os: windows-latest\n",
+            1,
+        )
+        release.write_text(text, encoding="utf-8")
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Native macOS release matrix must use macos-15-intel "
+            "with an empty extension",
+            errors,
+        )
+
+    def test_release_workflow_rejects_arm64_rename_with_comment_decoy(
+        self,
+    ) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        expected = "f\"socratic-{os.environ['RELEASE_PLATFORM']}-x86_64\""
+        text = release.read_text(encoding="utf-8").replace(
+            expected,
+            "f\"socratic-{os.environ['RELEASE_PLATFORM']}-arm64\"\n"
+            f"              # {expected}",
+            1,
+        )
+        release.write_text(text, encoding="utf-8")
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Native rename and upload steps must produce x86_64 artifacts",
+            errors,
+        )
+
+    def test_release_workflow_rejects_arm64_upload_path_with_comment_decoy(
+        self,
+    ) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        expected = (
+            "path: native-artifacts/socratic-${{ matrix.platform }}"
+            "-x86_64${{ matrix.extension }}"
+        )
+        text = release.read_text(encoding="utf-8").replace(
+            expected,
+            "path: native-artifacts/socratic-${{ matrix.platform }}"
+            "-arm64${{ matrix.extension }}\n"
+            f"          # {expected}",
+            1,
+        )
+        release.write_text(text, encoding="utf-8")
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Native rename and upload steps must produce x86_64 artifacts",
             errors,
         )
 
