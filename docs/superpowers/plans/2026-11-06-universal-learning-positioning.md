@@ -312,7 +312,7 @@ Use this shorter installed-template description in
 `socratic_learn/templates/pi-skill.md`:
 
 ```yaml
-description: Run a diagnostic, evidence-aware learning session for any subject or skill.
+description: Run diagnostic, evidence-aware learning sessions for any subject or skill.
 ```
 
 - [ ] **Step 6: Clarify optional curricula and adapter scope**
