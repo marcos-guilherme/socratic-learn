@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "socratic-learn"
+dynamic = ["version"]
+description = "A portable, evidence-aware Socratic protocol for learning anything."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Marcos Guilherme" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Education",
+]
+dependencies = []
+
+[project.optional-dependencies]
+build = [
+  "build>=1.2,<2",
+  "pyinstaller>=6.10,<7",
+]
+
+[project.scripts]
+socratic = "socratic_learn.cli:entry_point"
+
+[project.urls]
+Homepage = "https://github.com/marcos-guilherme/socratic-learn"
+Repository = "https://github.com/marcos-guilherme/socratic-learn"
+Issues = "https://github.com/marcos-guilherme/socratic-learn/issues"
+
+[tool.hatch.version]
+path = "socratic_learn/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/LICENSE",
+  "/README.md",
+  "/dist",
+  "/templates",
+  "/socratic_learn",
+  "/learning_tutor",
+]
+
+[tool.hatch.build.targets.sdist.force-include]
+"dist/manifest.json" = "dist/manifest.json"
+"dist/socratic-learn.prompt.md" = "dist/socratic-learn.prompt.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["socratic_learn", "learning_tutor"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"dist/manifest.json" = "socratic_learn/data/manifest.json"
+"dist/socratic-learn.prompt.md" = "socratic_learn/data/socratic-learn.prompt.md"
+"templates/learner-profile.md" = "socratic_learn/data/templates/learner-profile.md"
+"templates/learning-goal.md" = "socratic_learn/data/templates/learning-goal.md"
+"templates/progress.md" = "socratic_learn/data/templates/progress.md"
+"templates/session-log.md" = "socratic_learn/data/templates/session-log.md"

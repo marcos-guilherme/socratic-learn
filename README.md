@@ -25,10 +25,12 @@ The canonical behavior lives in four small documents:
 - [assessment](core/assessment.md), based on observable evidence; and
 - [evidence policy](core/evidence-policy.md), including sourcing rules.
 
-One deterministic prompt bundle installs through four project-local adapters:
-Generic, Cursor, Claude Code, and Pi. Capability fallbacks keep the method
-usable when an agent lacks web search, structured quizzes, rendering,
-subagents, persistent memory, or filesystem access.
+The `socratic` launcher delivers one deterministic prompt bundle to Pi, Claude
+Code, or Antigravity. These launcher hosts provide the model, authentication,
+and interactive terminal. Cursor remains a project integration, alongside the
+Generic, Claude Code, and Pi project-discovery adapters. Capability fallbacks
+keep the method usable when a host lacks web search, structured quizzes,
+rendering, subagents, persistent memory, or filesystem access.
 
 Socratic Learn asks a question only when the next step is reasonably
 discoverable from the learner's demonstrated knowledge. When it is not, the
@@ -37,52 +39,87 @@ prediction.
 
 ## Quick start
 
-Requirements: Git and Python 3.11 or newer. Socratic Learn has no third-party
-runtime dependencies.
+Normal use requires no repository clone and no source build. The native
+installers target x86-64 Windows, Linux, and macOS. Native installation is
+available only after GitHub Release v0.1.0 is published. When that release
+exists, download its version-scoped installer asset to a temporary file and
+review it before execution.
 
-Clone the repository and build the checked-in distribution:
-
-```powershell
-git clone https://github.com/marcos-guilherme/socratic-learn.git
-cd socratic-learn
-python -m socratic_learn build
-```
-
-To try it without changing an existing project, create an empty directory:
+Windows PowerShell:
 
 ```powershell
-New-Item -ItemType Directory C:\temp\socratic-learn-demo
-python -m socratic_learn install generic C:\temp\socratic-learn-demo
-python -m socratic_learn doctor C:\temp\socratic-learn-demo
+$installer = Join-Path $env:TEMP "socratic-install-v0.1.0.ps1"
+Invoke-WebRequest https://github.com/marcos-guilherme/socratic-learn/releases/download/v0.1.0/install.ps1 -OutFile $installer
+Get-Content $installer
 ```
 
-To use this repository itself as a learning workspace, copy the fictitious
-starter profile into the ignored private area.
-
-PowerShell:
+After reviewing the downloaded file:
 
 ```powershell
-Copy-Item -Recurse workspace.example\* workspace
+& $installer
 ```
 
-POSIX shell:
+Linux or macOS:
 
 ```sh
-cp -R workspace.example/. workspace/
+installer=$(mktemp)
+curl -fL https://github.com/marcos-guilherme/socratic-learn/releases/download/v0.1.0/install.sh -o "$installer"
+cat "$installer"
 ```
 
-Then ask your agent for an observable learning outcome, for example:
+After reviewing the downloaded file:
+
+```sh
+sh "$installer"
+rm -f "$installer"
+```
+
+The installers verify release hashes and require confirmation before
+downloading. The first native binaries are unsigned and may trigger Windows
+SmartScreen or macOS Gatekeeper warnings. A checksum verifies downloaded bytes;
+it is not a substitute for code signing. This documentation does not claim
+that a public release or tag already exists.
+
+The x86-64 native build is the preferred install-once channel. On another
+architecture, or if you prefer a Python-managed environment, use Python 3.11+
+and pipx after package publication. The pipx command is available only after
+socratic-learn 0.1.0 is published on PyPI.
 
 ```text
-I want to learn to write a persuasive policy brief well enough to produce and
-revise one for a real audience. First diagnose only the prerequisites needed
-for that outcome.
+pipx install socratic-learn
 ```
 
+Start the launcher without a goal:
+
 ```text
-I want to understand self-attention well enough to implement it with tensor
-operations. First diagnose only the prerequisites needed for that outcome.
+socratic
 ```
+
+It detects Pi, Claude Code, and Antigravity, asks you to select an available
+launcher host on first use, and remembers that selection. No-argument prompting
+is the privacy default because it avoids putting the learning goal in shell
+history. Socratic Learn does not store provider credentials; the selected host
+uses its own authentication.
+
+You can pass a goal directly for convenience, but it may enter your shell
+history:
+
+```text
+socratic "I want to learn linear algebra"
+socratic --agent pi
+```
+
+By default, personal launcher profiles, progress, and sessions live under
+`~/.socratic-learn/learning/.socratic-learn/workspace/`. To use the current
+directory as the learning project instead, run:
+
+```text
+socratic --here
+```
+
+The launcher prepares the protocol and private workspace, then runs the chosen
+host in that workspace. The host retains its normal terminal, authentication,
+permissions, and model selection, and `socratic` returns its exit status.
 
 ## How a learning session works
 
@@ -102,7 +139,9 @@ self-report do not count as mastery without observable application.
 
 ## Install for your agent
 
-Choose one project-local target:
+The launcher is the normal user path. Project-discovery adapters are separate:
+they install protocol instructions into an existing project for an agent that
+opens that project. Choose one project-local target:
 
 | Target | Command | Discovery path |
 | --- | --- | --- |
@@ -111,7 +150,7 @@ Choose one project-local target:
 | Claude Code | `python -m socratic_learn install claude-code PROJECT` | owned `CLAUDE.md` or an emitted snippet |
 | Pi | `python -m socratic_learn install pi PROJECT` | `.pi/skills/socratic-learn/SKILL.md` |
 
-The repository-native adapters are documented separately:
+The project adapters are documented separately:
 
 - [Cursor adapter](adapters/cursor/README.md)
 - [Claude Code adapter](adapters/claude-code/README.md)
@@ -123,32 +162,34 @@ are never merged or overwritten automatically.
 
 ## Commands
 
-Run commands from the repository root:
+Native installs update their own verified executable. Pipx installs do not
+mutate their environment; these commands print the matching pipx instruction.
+Uninstall preserves learner data unless deletion is explicitly requested and
+confirmed.
 
-```powershell
-python -m socratic_learn build
-python -m socratic_learn export prompt --output socratic-learn.prompt.md
-python -m socratic_learn install cursor C:/path/to/project
-python -m socratic_learn install cursor C:/path/to/project --update
-python -m socratic_learn doctor C:/path/to/project
+```text
+socratic update
+socratic uninstall
 ```
 
-`build` produces deterministic checked-in artifacts. `export prompt` validates
-the manifest before writing exact bundle bytes. `install` and `--update` use
-ownership receipts. `doctor` is read-only and reports tampering, missing
-files, invalid discovery links, and private-state mistakes.
-
-There is no `--force` option.
-
-See the [installation guide](docs/universal-installation.md), [manifest
+For pipx, the corresponding commands are `pipx upgrade socratic-learn` and
+`pipx uninstall socratic-learn`. See the [installation
+guide](docs/universal-installation.md), [launcher adapter
+contract](docs/launcher-adapters.md), [manifest
 reference](docs/manifest-reference.md), and [adapter extension
 guide](docs/adding-an-adapter.md).
 
+Source-only administrative commands (`build`, `export`, project `install`, and
+`doctor`) are for contributors and project integrations. There is no `--force`
+option.
+
 ## Private learner state
 
-In this repository, real goals, profiles, progress, and session records belong
-under `workspace/`. In distributed installations they belong under
-`.socratic-learn/workspace/`. Both locations are ignored by version control
+Personal launcher state belongs under
+`~/.socratic-learn/learning/.socratic-learn/workspace/`. Project adapters store
+private state under `PROJECT/.socratic-learn/workspace/`. In this source
+repository, real goals, profiles, progress, and session records belong under
+`workspace/`. Project and repository locations are ignored by version control
 except for their tracked `.gitkeep` placeholders.
 
 Verify the repository workspace before publishing:
@@ -201,6 +242,24 @@ It forwards to Socratic Learn and prints a deprecation warning. New
 installations use only Socratic Learn names.
 
 ## Development
+
+Contributors, unlike normal users, clone and build the source:
+
+```powershell
+git clone https://github.com/marcos-guilherme/socratic-learn.git
+cd socratic-learn
+python -m socratic_learn build
+```
+
+To populate this repository's ignored example workspace:
+
+```powershell
+Copy-Item -Recurse workspace.example\* workspace
+```
+
+```sh
+cp -R workspace.example/. workspace/
+```
 
 Run the complete local checks:
 

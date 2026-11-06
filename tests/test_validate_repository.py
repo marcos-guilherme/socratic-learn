@@ -10,7 +10,12 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from tests.validate_repository import main, validate, without_fenced_code
+from tests.validate_repository import (
+    UNSAFE_INSTALLER_PATTERNS,
+    main,
+    validate,
+    without_fenced_code,
+)
 
 UNIVERSAL_REQUIRED_PATHS = (
     "learning_tutor/__init__.py",
@@ -32,6 +37,7 @@ UNIVERSAL_REQUIRED_PATHS = (
     "dist/manifest.json",
     "LICENSE",
     "docs/universal-installation.md",
+    "docs/launcher-adapters.md",
     "docs/manifest-reference.md",
     "docs/adding-an-adapter.md",
     "docs/superpowers/specs/2026-11-05-universal-distribution-design.md",
@@ -39,6 +45,15 @@ UNIVERSAL_REQUIRED_PATHS = (
     "docs/superpowers/specs/2026-11-05-socratic-learn-rename-design.md",
     "docs/superpowers/plans/2026-11-05-socratic-learn-rename.md",
     ".github/workflows/native-python.yml",
+)
+RELEASE_REQUIRED_PATHS = (
+    "pyproject.toml",
+    "release-manifest.schema.json",
+    "socratic-learn.spec",
+    "scripts/install.ps1",
+    "scripts/install.sh",
+    ".github/workflows/release.yml",
+    "docs/superpowers/plans/2026-11-06-one-command-learning-launcher.md",
 )
 
 CURRICULUM_FIELDS = (
@@ -107,6 +122,29 @@ README_WORKSPACE_COMMANDS = (
     "Copy-Item -Recurse workspace.example\\* workspace",
     "cp -R workspace.example/. workspace/",
 )
+README_LAUNCHER_COMMANDS = (
+    "socratic",
+    'socratic "I want to learn linear algebra"',
+    "socratic --agent pi",
+    "socratic --here",
+    "socratic update",
+    "socratic uninstall",
+    "pipx install socratic-learn",
+)
+NATIVE_RELEASE_CAVEAT = (
+    "Native installation is available only after GitHub Release v0.1.0 "
+    "is published."
+)
+PYPI_RELEASE_CAVEAT = (
+    "The pipx command is available only after socratic-learn 0.1.0 "
+    "is published on PyPI."
+)
+VERSIONED_INSTALLER_URLS = (
+    "https://github.com/marcos-guilherme/socratic-learn/releases/download/"
+    "v0.1.0/install.ps1",
+    "https://github.com/marcos-guilherme/socratic-learn/releases/download/"
+    "v0.1.0/install.sh",
+)
 
 
 def parse_curriculum_nodes(text: str) -> list[tuple[str, dict[str, str]]]:
@@ -155,7 +193,8 @@ class RepositoryValidationTests(unittest.TestCase):
             root = root / "workspace" / "repository"
             root.mkdir(parents=True)
         (root / ".gitignore").write_text(
-            "workspace/*\n!workspace/.gitkeep\n__pycache__/\n*.py[cod]\n",
+            "workspace/*\n!workspace/.gitkeep\n__pycache__/\n*.py[cod]\n"
+            "/package-dist/\n",
             encoding="utf-8",
         )
         (root / ".gitattributes").write_text(
@@ -188,6 +227,7 @@ class RepositoryValidationTests(unittest.TestCase):
             "workspace.example/sessions/2026-01-15-example.md",
             "workspace/.gitkeep",
             *UNIVERSAL_REQUIRED_PATHS,
+            *RELEASE_REQUIRED_PATHS,
         ):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -196,6 +236,7 @@ class RepositoryValidationTests(unittest.TestCase):
         for relative in (
             "README.md",
             *UNIVERSAL_REQUIRED_PATHS,
+            *RELEASE_REQUIRED_PATHS,
             "core/pedagogy.md",
             "core/session-protocol.md",
             "core/assessment.md",
@@ -313,6 +354,108 @@ class RepositoryValidationTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIn(command, text)
 
+    def test_readme_provides_public_launcher_onboarding(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "README.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split()).lower()
+
+        for command in README_LAUNCHER_COMMANDS:
+            with self.subTest(command=command):
+                self.assertIn(command, text)
+        for clause in (
+            "no repository clone",
+            "does not store provider credentials",
+            "shell history",
+            "unsigned",
+            "smartscreen",
+            "gatekeeper",
+            "pi, claude code, and antigravity",
+            "cursor remains a project integration",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, normalized)
+
+    def test_readme_orders_onboarding_and_scopes_channel_availability(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "README.md").read_text(encoding="utf-8")
+        quick_start = text.split("## Quick start", 1)[1].split(
+            "## How a learning session works",
+            1,
+        )[0]
+        normalized_quick_start = " ".join(quick_start.split())
+
+        ordered_markers = (
+            VERSIONED_INSTALLER_URLS[0],
+            VERSIONED_INSTALLER_URLS[1],
+            "pipx install socratic-learn",
+            "\nsocratic\n",
+            'socratic "I want to learn linear algebra"',
+            "socratic --agent pi",
+            "socratic --here",
+        )
+        previous = -1
+        for marker in ordered_markers:
+            position = quick_start.find(marker)
+            with self.subTest(marker=marker):
+                self.assertGreater(position, previous)
+            previous = position
+        self.assertIn(NATIVE_RELEASE_CAVEAT, normalized_quick_start)
+        self.assertIn(PYPI_RELEASE_CAVEAT, normalized_quick_start)
+        self.assertLess(
+            normalized_quick_start.index(NATIVE_RELEASE_CAVEAT),
+            normalized_quick_start.index(VERSIONED_INSTALLER_URLS[0]),
+        )
+        self.assertLess(
+            normalized_quick_start.index(PYPI_RELEASE_CAVEAT),
+            normalized_quick_start.index("pipx install socratic-learn"),
+        )
+        self.assertNotIn("raw.githubusercontent.com", quick_start)
+        self.assertNotRegex(quick_start, r"(?is)\birm\b[^\n|]*\|\s*iex\b")
+        self.assertNotRegex(quick_start, r"(?is)\bcurl\b[^\n|]*\|\s*(?:ba)?sh\b")
+
+    def test_launcher_and_distribution_docs_define_public_contracts(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        launcher_path = root / "docs/launcher-adapters.md"
+        self.assertTrue(launcher_path.is_file(), "Missing docs/launcher-adapters.md")
+        launcher = launcher_path.read_text(encoding="utf-8")
+        launcher_normalized = " ".join(launcher.split()).lower()
+        for clause in (
+            "executable detection",
+            "exact command construction",
+            "protocol delivery",
+            "inherits authentication",
+            "inherits terminal",
+            "fake executable",
+        ):
+            with self.subTest(document="launcher adapters", clause=clause):
+                self.assertIn(clause, launcher_normalized)
+        for executable in ("`pi`", "`claude`", "`agy`"):
+            self.assertIn(executable, launcher)
+
+        installation = (
+            root / "docs/universal-installation.md"
+        ).read_text(encoding="utf-8")
+        installation_normalized = " ".join(installation.split()).lower()
+        for clause in (
+            "x86-64",
+            "sha-256",
+            "unsigned",
+            "rollback",
+            "pipx upgrade socratic-learn",
+            "pipx uninstall socratic-learn",
+            "preserves learner data",
+        ):
+            with self.subTest(document="installation", clause=clause):
+                self.assertIn(clause, installation_normalized)
+        self.assertIn(NATIVE_RELEASE_CAVEAT.lower(), installation_normalized)
+        self.assertIn(PYPI_RELEASE_CAVEAT.lower(), installation_normalized)
+        self.assertNotIn("raw.githubusercontent.com", installation)
+        self.assertNotRegex(installation, r"(?is)\birm\b[^\n|]*\|\s*iex\b")
+        self.assertNotRegex(
+            installation,
+            r"(?is)\bcurl\b[^\n|]*\|\s*(?:ba)?sh\b",
+        )
+
     def test_validator_rejects_narrow_readme_positioning(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
@@ -328,6 +471,160 @@ class RepositoryValidationTests(unittest.TestCase):
             "Narrow product positioning in README.md",
             validate(root),
         )
+
+    def test_validator_rejects_missing_public_launcher_contract(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        readme = root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "Socratic Learn does not store provider credentials",
+                "Authentication is handled elsewhere",
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertIn(
+            "README.md is missing public launcher onboarding",
+            validate(root),
+        )
+
+    def test_validator_rejects_incomplete_launcher_adapter_contract(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        launcher = root / "docs/launcher-adapters.md"
+        launcher.write_text("# Launcher Adapters\n", encoding="utf-8")
+
+        self.assertIn(
+            "docs/launcher-adapters.md is missing launcher adapter contracts",
+            validate(root),
+        )
+
+    def test_validator_rejects_missing_channel_availability_caveats(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        for relative in ("README.md", "docs/universal-installation.md"):
+            with self.subTest(relative=relative):
+                path = root / relative
+                original = path.read_text(encoding="utf-8")
+                unsafe = re.sub(
+                    r"Native installation is\s+available only after GitHub "
+                    r"Release\s+v0[.]1[.]0 is published[.]",
+                    "Install the native release.",
+                    original,
+                )
+                unsafe = re.sub(
+                    r"The pipx command is available only after\s+"
+                    r"socratic-learn 0[.]1[.]0 is published on\s+PyPI[.]",
+                    "Install with pipx.",
+                    unsafe,
+                )
+                path.write_text(unsafe, encoding="utf-8")
+                self.assertIn(
+                    f"{relative} must condition native and PyPI instructions "
+                    "on publication",
+                    validate(root),
+                )
+                path.write_text(original, encoding="utf-8")
+
+    def test_validator_rejects_mutable_or_piped_installer_commands(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        unsafe_examples = (
+            (
+                VERSIONED_INSTALLER_URLS[0],
+                "https://raw.githubusercontent.com/marcos-guilherme/"
+                "socratic-learn/main/scripts/install.ps1",
+            ),
+            (
+                VERSIONED_INSTALLER_URLS[0],
+                "https://github.com/marcos-guilherme/socratic-learn/"
+                "raw/main/scripts/install.ps1",
+            ),
+            (
+                VERSIONED_INSTALLER_URLS[1],
+                "https://github.com/marcos-guilherme/socratic-learn/"
+                "blob/main/scripts/install.sh",
+            ),
+            (
+                VERSIONED_INSTALLER_URLS[0],
+                "https://github.com/marcos-guilherme/socratic-learn/"
+                "releases/latest/download/install.ps1",
+            ),
+            ("& $installer", "IWR $url | Invoke-Expression"),
+            ("sh \"$installer\"", "wget -qO- $url | bash"),
+        )
+        for relative in ("README.md", "docs/universal-installation.md"):
+            path = root / relative
+            original = path.read_text(encoding="utf-8")
+            for expected, unsafe in unsafe_examples:
+                with self.subTest(relative=relative, unsafe=unsafe):
+                    path.write_text(
+                        original.replace(expected, unsafe, 1),
+                        encoding="utf-8",
+                    )
+                    self.assertIn(
+                        f"{relative} contains unsafe or mutable "
+                        "installer instructions",
+                        validate(root),
+                    )
+            path.write_text(original, encoding="utf-8")
+
+    def test_unsafe_installer_regexes_cover_remote_execution_variants(self) -> None:
+        self.assertTrue(
+            all(
+                isinstance(pattern, re.Pattern)
+                for pattern in UNSAFE_INSTALLER_PATTERNS
+            )
+        )
+        unsafe_examples = (
+            "https://raw.githubusercontent.com/org/repo/main/scripts/install.sh",
+            "https://github.com/org/repo/raw/main/scripts/install.ps1",
+            "https://github.com/org/repo/blob/main/scripts/install.sh",
+            "https://github.com/org/repo/releases/latest/download/install.ps1",
+            "IrM   https://example.invalid/install.ps1   |   IEX",
+            "iWr -UseBasicParsing $url\t|\tInvoke-Expression",
+            "Invoke-WebRequest $url -UseBasicParsing\n | iex",
+            "curl -fLsS https://example.invalid/install.sh | bash",
+            "wget -qO- https://example.invalid/install.sh\n  |  sh -s",
+        )
+        for command in unsafe_examples:
+            with self.subTest(command=command):
+                self.assertTrue(
+                    any(pattern.search(command) for pattern in UNSAFE_INSTALLER_PATTERNS)
+                )
+
+        safe_examples = (
+            "Invoke-WebRequest $url -OutFile $installer",
+            "curl -fL $url -o \"$installer\"",
+            "wget $url -O \"$installer\"",
+            "& $installer",
+            "sh \"$installer\"",
+        )
+        for command in safe_examples:
+            with self.subTest(command=command):
+                self.assertFalse(
+                    any(pattern.search(command) for pattern in UNSAFE_INSTALLER_PATTERNS)
+                )
+
+    def test_validator_requires_each_exact_installer_url_on_each_surface(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        for relative in ("README.md", "docs/universal-installation.md"):
+            path = root / relative
+            original = path.read_text(encoding="utf-8")
+            for url in VERSIONED_INSTALLER_URLS:
+                with self.subTest(relative=relative, url=url):
+                    path.write_text(
+                        original.replace(url, "https://example.invalid/installer", 1),
+                        encoding="utf-8",
+                    )
+                    self.assertIn(
+                        f"{relative} must use exact v0.1.0 PowerShell and "
+                        "POSIX installer URLs",
+                        validate(root),
+                    )
+            path.write_text(original, encoding="utf-8")
 
     def test_repository_uses_mit_license(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -843,6 +1140,213 @@ class RepositoryValidationTests(unittest.TestCase):
         for relative in UNIVERSAL_REQUIRED_PATHS:
             with self.subTest(path=relative):
                 self.assertIn(f"Missing required path: {relative}", errors)
+
+    def test_native_release_automation_contract(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        for relative in RELEASE_REQUIRED_PATHS:
+            with self.subTest(path=relative):
+                self.assertTrue((root / relative).is_file(), f"Missing {relative}")
+
+        pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn(
+            'socratic = "socratic_learn.cli:entry_point"',
+            pyproject,
+        )
+
+        release = (root / ".github/workflows/release.yml").read_text(
+            encoding="utf-8"
+        )
+        for value in (
+            'tags: ["v*"]',
+            "workflow_dispatch:",
+            "windows-latest",
+            "ubuntu-latest",
+            "macos-13",
+            "python-version: \"3.11\"",
+            "python -m unittest discover",
+            "python tests/validate_repository.py",
+            "python -m PyInstaller socratic-learn.spec",
+            "socratic --version",
+            "actions/download-artifact@v4",
+            "hashlib.sha256",
+            "release-manifest.schema.json",
+            "'  '",
+            "pypa/gh-action-pypi-publish@release/v1",
+            "environment: pypi",
+            "id-token: write",
+            "contents: write",
+            "scripts/install.ps1",
+            "scripts/install.sh",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, release)
+        self.assertLess(
+            release.index("python -m unittest discover"),
+            release.index("python -m PyInstaller socratic-learn.spec"),
+        )
+        publish_gate = (
+            "if: github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/v')"
+        )
+        self.assertEqual(2, release.count(publish_gate))
+        pypi = release.split("  publish-pypi:", 1)[1]
+        self.assertIn("needs: [python-package, native, manifest]", pypi)
+        self.assertIn("permissions:\n  contents: read", release)
+        self.assertEqual(1, release.count("contents: write"))
+        self.assertIn("github.ref_name", release)
+        self.assertIn("__version__", release)
+
+        normal = (root / ".github/workflows/native-python.yml").read_text(
+            encoding="utf-8"
+        )
+        install = 'python -m pip install -e ".[build]"'
+        wheel = "python -m build --wheel"
+        tests = "python -m unittest discover"
+        self.assertIn(install, normal)
+        self.assertIn(wheel, normal)
+        self.assertIn("socratic --version", normal)
+        self.assertLess(normal.index(install), normal.index(tests))
+        self.assertNotIn("PyInstaller", normal)
+
+    def test_release_paths_are_required_by_validator(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        for relative in RELEASE_REQUIRED_PATHS:
+            (root / relative).unlink()
+
+        errors = validate(root)
+
+        for relative in RELEASE_REQUIRED_PATHS:
+            with self.subTest(path=relative):
+                self.assertIn(f"Missing required path: {relative}", errors)
+
+    def test_release_workflow_safety_is_validated(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        release.write_text(
+            release.read_text(encoding="utf-8").replace(
+                "permissions:\n  contents: read",
+                "permissions:\n  contents: write",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        normal = root / ".github/workflows/native-python.yml"
+        normal.write_text(
+            normal.read_text(encoding="utf-8").replace(
+                'python -m pip install -e ".[build]"',
+                "python -m pip install -e .",
+            ),
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+
+        self.assertIn("Release workflow must default to contents: read", errors)
+        self.assertIn(
+            "Native safety matrix must install .[build] before tests",
+            errors,
+        )
+
+    def test_local_release_gates_isolate_package_output_from_canonical_dist(
+        self,
+    ) -> None:
+        root = Path(__file__).resolve().parents[1]
+        plan = (
+            root
+            / "docs/superpowers/plans/2026-11-06-one-command-learning-launcher.md"
+        ).read_text(encoding="utf-8")
+        commands = re.findall(r"(?m)^python -m build(?:[ \t].*)?$", plan)
+
+        self.assertEqual(
+            ["python -m build --outdir package-dist"] * 3,
+            commands,
+        )
+        self.assertIn("/package-dist/", (root / ".gitignore").read_text("utf-8"))
+        self.assertEqual(
+            {"manifest.json", "socratic-learn.prompt.md"},
+            {path.name for path in (root / "dist").iterdir()},
+        )
+        self.assertNotEqual("dist", "package-dist")
+
+    def test_validator_rejects_bare_local_build_and_missing_package_ignore(
+        self,
+    ) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        plan = (
+            root
+            / "docs/superpowers/plans/2026-11-06-one-command-learning-launcher.md"
+        )
+        plan.write_text(
+            plan.read_text(encoding="utf-8").replace(
+                "python -m build --outdir package-dist",
+                "python -m build",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        gitignore = root / ".gitignore"
+        gitignore.write_text(
+            gitignore.read_text(encoding="utf-8").replace("/package-dist/\n", ""),
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Active local release gates must use "
+            "python -m build --outdir package-dist",
+            errors,
+        )
+        self.assertIn(".gitignore must ignore /package-dist/", errors)
+
+    def test_validator_rejects_package_artifacts_in_canonical_dist(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        (root / "dist/socratic_learn-0.1.0-py3-none-any.whl").write_bytes(
+            b"package"
+        )
+
+        self.assertIn(
+            "Canonical dist/ must contain exactly manifest.json and "
+            "socratic-learn.prompt.md; package builds use package-dist/",
+            validate(root),
+        )
+
+    def test_validator_rejects_unsafe_publish_gates_and_dependencies(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        strong_gate = (
+            "if: github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/v')"
+        )
+        text = release.read_text(encoding="utf-8")
+        text = text.replace(
+            strong_gate,
+            "if: startsWith(github.ref, 'refs/tags/v')",
+        )
+        before_pypi, pypi = text.split("  publish-pypi:", 1)
+        pypi = pypi.replace(
+            "needs: [python-package, native, manifest]",
+            "needs: python-package",
+            1,
+        )
+        text = before_pypi + "  publish-pypi:" + pypi
+        release.write_text(text, encoding="utf-8")
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Release publishing must require a push event and version tag",
+            errors,
+        )
+        self.assertIn(
+            "PyPI publishing must wait for package, native, and manifest jobs",
+            errors,
+        )
 
     def test_native_ci_workflow_covers_required_platforms_and_checks(self) -> None:
         workflow = Path(__file__).resolve().parents[1] / (

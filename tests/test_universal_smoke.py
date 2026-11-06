@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -59,6 +60,251 @@ class UniversalSmokeTests(unittest.TestCase):
             for path in project.rglob("*")
             if path.is_file() and ".git" not in path.relative_to(project).parts
         }
+
+    @staticmethod
+    def _repository_state(root: Path) -> tuple[bytes, bytes, bytes]:
+        return tuple(
+            subprocess.run(
+                command,
+                cwd=root,
+                check=True,
+                capture_output=True,
+            ).stdout
+            for command in (
+                ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                ["git", "diff", "--binary"],
+                ["git", "diff", "--cached", "--binary"],
+            )
+        )
+
+    @staticmethod
+    def _tree_snapshot(root: Path) -> dict[str, tuple[str, bytes | str]]:
+        snapshot: dict[str, tuple[str, bytes | str]] = {}
+        for directory, directory_names, file_names in os.walk(
+            root,
+            followlinks=False,
+        ):
+            current = Path(directory)
+            relative_directory = current.relative_to(root).as_posix()
+            if relative_directory != ".":
+                snapshot[relative_directory] = ("directory", "")
+            for name in tuple(directory_names):
+                path = current / name
+                if path.is_symlink():
+                    relative = path.relative_to(root).as_posix()
+                    snapshot[relative] = ("symlink", os.readlink(path))
+                    directory_names.remove(name)
+            for name in file_names:
+                path = current / name
+                relative = path.relative_to(root).as_posix()
+                if path.is_symlink():
+                    snapshot[relative] = ("symlink", os.readlink(path))
+                else:
+                    snapshot[relative] = ("file", path.read_bytes())
+        return snapshot
+
+    def test_installed_wheel_launches_fake_pi_end_to_end(self) -> None:
+        repository = Path(__file__).resolve().parents[1]
+        before_repository = self._repository_state(repository)
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            wheelhouse = root / "wheelhouse"
+            wheelhouse.mkdir()
+            build = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "build",
+                    "--wheel",
+                    "--outdir",
+                    str(wheelhouse),
+                ],
+                cwd=repository,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, build.returncode, build.stdout + build.stderr)
+            wheels = tuple(wheelhouse.glob("socratic_learn-*.whl"))
+            self.assertEqual(1, len(wheels), wheels)
+
+            environment = root / "venv"
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(environment)],
+                check=True,
+            )
+            scripts = environment / ("Scripts" if os.name == "nt" else "bin")
+            python = scripts / ("python.exe" if os.name == "nt" else "python")
+            subprocess.run(
+                [
+                    str(python),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--disable-pip-version-check",
+                    "--no-deps",
+                    str(wheels[0]),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            site_packages = Path(
+                subprocess.run(
+                    [
+                        str(python),
+                        "-c",
+                        "import site; print(site.getsitepackages()[0])",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+            )
+            record = root / "fake-pi-record.json"
+            (site_packages / "fake_pi.py").write_text(
+                "import json, os, sys\n"
+                "def main():\n"
+                "    record = {'argv': sys.argv[1:], 'cwd': os.getcwd()}\n"
+                "    with open(os.environ['FAKE_PI_RECORD'], 'w', "
+                "encoding='utf-8') as output:\n"
+                "        json.dump(record, output)\n"
+                "    return 17\n",
+                encoding="utf-8",
+            )
+            make_fake = subprocess.run(
+                [
+                    str(python),
+                    "-c",
+                    (
+                        "import sys; "
+                        "from pip._vendor.distlib.scripts import ScriptMaker; "
+                        f"maker=ScriptMaker(None, {str(scripts)!r}); "
+                        "maker.executable=sys.executable; "
+                        "maker.variants={''}; "
+                        "maker.make('pi=fake_pi:main')"
+                    ),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                0,
+                make_fake.returncode,
+                make_fake.stdout + make_fake.stderr,
+            )
+
+            home = root / "home"
+            home.mkdir()
+            sentinel = root / "untouched-sibling" / "nested" / "sentinel.bin"
+            sentinel.parent.mkdir(parents=True)
+            sentinel_bytes = b"\x00UNCHANGED\xff\n"
+            sentinel.write_bytes(sentinel_bytes)
+            before_controlled_root = self._tree_snapshot(root)
+            before_launch_repository = self._repository_state(repository)
+            self.assertEqual(
+                before_repository,
+                before_launch_repository,
+                "wheel and fake-host setup must not mutate the source repository",
+            )
+
+            run_environment = os.environ.copy()
+            run_environment.update(
+                {
+                    "FAKE_PI_RECORD": str(record),
+                    "HOME": str(home),
+                    "PATH": str(scripts),
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "SOCRATIC_LEARN_HOME": str(home),
+                    "USERPROFILE": str(home),
+                }
+            )
+            run_environment.pop("PYTHONPATH", None)
+            console = scripts / ("socratic.exe" if os.name == "nt" else "socratic")
+            first_run = subprocess.run(
+                [str(console), "choose pi"],
+                cwd=root,
+                env=run_environment,
+                input="1\n",
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                17,
+                first_run.returncode,
+                first_run.stdout + first_run.stderr,
+            )
+            self.assertEqual(
+                {"schema_version": 1, "default_agent": "pi"},
+                json.loads((home / "config.json").read_text(encoding="utf-8")),
+            )
+
+            result = subprocess.run(
+                [
+                    str(console),
+                    "--agent",
+                    "pi",
+                    "learn graph theory",
+                ],
+                cwd=root,
+                env=run_environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(17, result.returncode, result.stdout + result.stderr)
+            invocation = json.loads(record.read_text(encoding="utf-8"))
+            protocol = (
+                home
+                / "learning"
+                / ".socratic-learn"
+                / "socratic-learn.prompt.md"
+            ).resolve()
+            self.assertEqual(
+                ["--append-system-prompt", str(protocol), "learn graph theory"],
+                invocation["argv"],
+            )
+            self.assertEqual(str((home / "learning").resolve()), invocation["cwd"])
+            private = home / "learning" / ".socratic-learn" / "workspace"
+            self.assertTrue((private / "learner-profile.md").is_file())
+            self.assertTrue((private / "learning-goal.md").is_file())
+            self.assertTrue((private / "progress.md").is_file())
+            self.assertTrue((private / "sessions").is_dir())
+            self.assertEqual(sentinel_bytes, sentinel.read_bytes())
+            after_controlled_root = self._tree_snapshot(root)
+            changed_paths = {
+                path
+                for path in before_controlled_root.keys()
+                | after_controlled_root.keys()
+                if before_controlled_root.get(path)
+                != after_controlled_root.get(path)
+            }
+            self.assertTrue(changed_paths, "launch must create controlled state")
+            self.assertTrue(
+                all(
+                    path == "fake-pi-record.json"
+                    or path == "home"
+                    or path.startswith("home/")
+                    for path in changed_paths
+                ),
+                f"launch changed paths outside defined boundaries: {changed_paths}",
+            )
+            self.assertEqual(
+                before_launch_repository,
+                self._repository_state(repository),
+                "installed launch must not mutate the source repository",
+            )
+
+        self.assertEqual(
+            before_repository,
+            self._repository_state(repository),
+            "installed-wheel acceptance must not mutate the source repository",
+        )
 
     def test_tracked_copy_end_to_end_contract(self) -> None:
         with TemporaryDirectory() as temporary:

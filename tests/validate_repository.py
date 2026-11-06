@@ -60,6 +60,7 @@ REQUIRED_PATHS = (
     "dist/socratic-learn.prompt.md",
     "dist/manifest.json",
     "docs/universal-installation.md",
+    "docs/launcher-adapters.md",
     "docs/manifest-reference.md",
     "docs/adding-an-adapter.md",
     "docs/superpowers/specs/2026-11-05-universal-distribution-design.md",
@@ -67,6 +68,13 @@ REQUIRED_PATHS = (
     "docs/superpowers/specs/2026-11-05-socratic-learn-rename-design.md",
     "docs/superpowers/plans/2026-11-05-socratic-learn-rename.md",
     ".github/workflows/native-python.yml",
+    "pyproject.toml",
+    "release-manifest.schema.json",
+    "socratic-learn.spec",
+    "scripts/install.ps1",
+    "scripts/install.sh",
+    ".github/workflows/release.yml",
+    "docs/superpowers/plans/2026-11-06-one-command-learning-launcher.md",
 )
 SKILL_PATHS = (
     ".cursor/skills/socratic-learn/SKILL.md",
@@ -83,6 +91,84 @@ README_POSITIONING_REQUIREMENTS = (
     "A portable, evidence-aware Socratic protocol for learning anything.",
     "any subject or skill",
     "starter curricula",
+)
+README_LAUNCHER_REQUIREMENTS = (
+    "socratic",
+    'socratic "i want to learn linear algebra"',
+    "socratic --agent pi",
+    "socratic --here",
+    "socratic update",
+    "socratic uninstall",
+    "pipx install socratic-learn",
+    "no repository clone",
+    "does not store provider credentials",
+    "shell history",
+    "unsigned",
+    "smartscreen",
+    "gatekeeper",
+    "pi, claude code, and antigravity",
+    "cursor remains a project integration",
+)
+NATIVE_RELEASE_CAVEAT = (
+    "native installation is available only after github release v0.1.0 "
+    "is published."
+)
+PYPI_RELEASE_CAVEAT = (
+    "the pipx command is available only after socratic-learn 0.1.0 "
+    "is published on pypi."
+)
+VERSIONED_INSTALLER_URLS = (
+    "https://github.com/marcos-guilherme/socratic-learn/releases/download/"
+    "v0.1.0/install.ps1",
+    "https://github.com/marcos-guilherme/socratic-learn/releases/download/"
+    "v0.1.0/install.sh",
+)
+README_ONBOARDING_ORDER = (
+    *VERSIONED_INSTALLER_URLS,
+    "pipx install socratic-learn",
+    "\nsocratic\n",
+    'socratic "i want to learn linear algebra"',
+    "socratic --agent pi",
+    "socratic --here",
+)
+UNSAFE_INSTALLER_PATTERNS = (
+    re.compile(
+        r"https?://raw[.]githubusercontent[.]com/"
+        r"[^\s<>()`]+/main/",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"https?://github[.]com/[^\s<>()`]+/(?:raw|blob)/main/"
+        r"[^\s<>()`]*(?:install[.]ps1|install[.]sh)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"https?://github[.]com/[^\s<>()`]+/releases/latest/download/"
+        r"[^\s<>()`]*(?:install[.]ps1|install[.]sh)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:irm|invoke-restmethod|iwr|invoke-webrequest)\b"
+        r"[^\r\n|]*(?:\r?\n[ \t]*)?[|][ \t]*"
+        r"(?:iex|invoke-expression)\b",
+        re.IGNORECASE | re.MULTILINE,
+    ),
+    re.compile(
+        r"\b(?:curl|wget)\b[^\r\n|]*"
+        r"(?:\r?\n[ \t]*)?[|][ \t]*(?:sh|bash)\b",
+        re.IGNORECASE | re.MULTILINE,
+    ),
+)
+LAUNCHER_ADAPTER_REQUIREMENTS = (
+    "executable detection",
+    "exact command construction",
+    "protocol delivery",
+    "inherits authentication",
+    "inherits terminal",
+    "fake executable",
+    "`pi`",
+    "`claude`",
+    "`agy`",
 )
 ADAPTER_ROOTS = (".cursor", "adapters")
 LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
@@ -117,6 +203,11 @@ POSIX_THREAT_MODEL_TERMS = (
     "leaf-entry toctou",
 )
 IMPOSSIBLE_SAFETY_CLAIM = "no external data was deleted"
+LOCAL_RELEASE_PLAN = (
+    "docs/superpowers/plans/2026-11-06-one-command-learning-launcher.md"
+)
+LOCAL_PACKAGE_BUILD_COMMAND = "python -m build --outdir package-dist"
+CANONICAL_DIST_FILES = {"manifest.json", "socratic-learn.prompt.md"}
 
 
 def markdown_files(root: Path) -> list[Path]:
@@ -243,6 +334,178 @@ def validate_distribution(root: Path) -> list[str]:
     return errors
 
 
+def workflow_job(text: str, name: str) -> str:
+    match = re.search(
+        rf"^  {re.escape(name)}:\n(?P<body>.*?)(?=^  [a-z0-9-]+:\n|\Z)",
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+    return match.group(0) if match else ""
+
+
+def validate_release_automation(root: Path) -> list[str]:
+    errors: list[str] = []
+    pyproject = root / "pyproject.toml"
+    if pyproject.is_file() and (
+        'socratic = "socratic_learn.cli:entry_point"'
+        not in pyproject.read_text(encoding="utf-8")
+    ):
+        errors.append("pyproject.toml must map the socratic console entry point")
+
+    spec = root / "socratic-learn.spec"
+    if spec.is_file():
+        spec_text = spec.read_text(encoding="utf-8")
+        required_spec_terms = (
+            "socratic_learn",
+            "learning_tutor",
+            "socratic_learn/data",
+            "manifest.json",
+            "socratic-learn.prompt.md",
+            "learner-profile.md",
+            "learning-goal.md",
+            "progress.md",
+            "session-log.md",
+            'name="socratic"',
+            "console=True",
+            '"git", "diff", "--exit-code"',
+            '"git", "status", "--porcelain"',
+        )
+        if not all(term in spec_text for term in required_spec_terms):
+            errors.append("PyInstaller spec does not preserve the native build contract")
+
+    release_path = root / ".github/workflows/release.yml"
+    if release_path.is_file():
+        release = release_path.read_text(encoding="utf-8")
+        if "permissions:\n  contents: read" not in release:
+            errors.append("Release workflow must default to contents: read")
+        if release.count("contents: write") != 1:
+            errors.append(
+                "Release workflow must grant contents: write only to GitHub publishing"
+            )
+        required_release_terms = (
+            'tags: ["v*"]',
+            "workflow_dispatch:",
+            "windows-latest",
+            "ubuntu-latest",
+            "macos-13",
+            "actions/download-artifact@v4",
+            "hashlib.sha256",
+            "release-manifest.schema.json",
+            "scripts/install.ps1",
+            "scripts/install.sh",
+        )
+        if not all(term in release for term in required_release_terms):
+            errors.append("Release workflow is missing required triggers or artifacts")
+
+        native = workflow_job(release, "native")
+        suite = "python -m unittest discover"
+        pyinstaller = "python -m PyInstaller socratic-learn.spec"
+        if (
+            not native
+            or suite not in native
+            or pyinstaller not in native
+            or native.index(suite) > native.index(pyinstaller)
+            or "python tests/validate_repository.py" not in native
+            or "--version" not in native
+        ):
+            errors.append(
+                "Every native release build must test and validate before PyInstaller"
+            )
+
+        manifest = workflow_job(release, "manifest")
+        if (
+            "actions/download-artifact@v4" not in manifest
+            or "hashlib.sha256" not in manifest
+            or manifest.index("actions/download-artifact@v4")
+            > manifest.index("hashlib.sha256")
+            or "path.stat().st_size" not in manifest
+            or "separator = '  '" not in manifest
+        ):
+            errors.append(
+                "Release manifest must hash downloaded native artifacts and use two spaces"
+            )
+
+        publish_gate = (
+            "if: github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/v')"
+        )
+        github_publish = workflow_job(release, "publish-github")
+        if (
+            publish_gate not in github_publish
+            or "contents: write" not in github_publish
+        ):
+            errors.append(
+                "Release publishing must require a push event and version tag"
+            )
+
+        pypi_publish = workflow_job(release, "publish-pypi")
+        if (
+            publish_gate not in pypi_publish
+            or "id-token: write" not in pypi_publish
+            or "environment: pypi" not in pypi_publish
+            or "pypa/gh-action-pypi-publish@release/v1" not in pypi_publish
+        ):
+            errors.append("PyPI publishing must use tag-only trusted publishing")
+        if "needs: [python-package, native, manifest]" not in pypi_publish:
+            errors.append(
+                "PyPI publishing must wait for package, native, and manifest jobs"
+            )
+
+        version_job = workflow_job(release, "verify-version")
+        if (
+            "github.ref_name" not in release
+            or "__version__" not in version_job
+            or "refs/tags/v" not in version_job
+        ):
+            errors.append("Release tags must exactly match the package version")
+
+    normal_path = root / ".github/workflows/native-python.yml"
+    if normal_path.is_file():
+        normal = normal_path.read_text(encoding="utf-8")
+        install = 'python -m pip install -e ".[build]"'
+        suite = "python -m unittest discover"
+        if (
+            install not in normal
+            or suite not in normal
+            or normal.index(install) > normal.index(suite)
+        ):
+            errors.append("Native safety matrix must install .[build] before tests")
+        if "python -m build --wheel" not in normal or "--version" not in normal:
+            errors.append(
+                "Native safety matrix must build and smoke-test an installed wheel"
+            )
+        if "PyInstaller" in normal:
+            errors.append("Native safety matrix must not run PyInstaller")
+    return errors
+
+
+def validate_local_release_gate(root: Path) -> list[str]:
+    errors: list[str] = []
+    plan_path = root / LOCAL_RELEASE_PLAN
+    if plan_path.is_file():
+        commands = re.findall(
+            r"(?m)^python -m build(?:[ \t].*)?$",
+            plan_path.read_text(encoding="utf-8"),
+        )
+        if not commands or any(
+            command != LOCAL_PACKAGE_BUILD_COMMAND for command in commands
+        ):
+            errors.append(
+                "Active local release gates must use "
+                f"{LOCAL_PACKAGE_BUILD_COMMAND}"
+            )
+
+    dist = root / "dist"
+    if dist.is_dir():
+        actual = {path.name for path in dist.iterdir()}
+        if actual != CANONICAL_DIST_FILES:
+            errors.append(
+                "Canonical dist/ must contain exactly manifest.json and "
+                "socratic-learn.prompt.md; package builds use package-dist/"
+            )
+    return errors
+
+
 def validate(root: Path) -> list[str]:
     errors: list[str] = []
 
@@ -269,6 +532,97 @@ def validate(root: Path) -> list[str]:
             for phrase in README_POSITIONING_REQUIREMENTS
         ):
             errors.append("Narrow product positioning in README.md")
+        normalized_readme = normalize(readme_text).lower()
+        if not all(
+            requirement in normalized_readme
+            for requirement in README_LAUNCHER_REQUIREMENTS
+        ):
+            errors.append("README.md is missing public launcher onboarding")
+        quick_start = readme_text.split("## Quick start", 1)
+        quick_start_text = (
+            quick_start[1].split("## How a learning session works", 1)[0]
+            if len(quick_start) == 2
+            else ""
+        )
+        order_positions = [
+            quick_start_text.lower().find(marker)
+            for marker in README_ONBOARDING_ORDER
+        ]
+        if (
+            any(position < 0 for position in order_positions)
+            or order_positions != sorted(order_positions)
+        ):
+            errors.append("README.md public onboarding is out of order")
+
+    installer_docs = (
+        (
+            root / "README.md",
+            "## Quick start",
+            "## How a learning session works",
+        ),
+        (
+            root / "docs/universal-installation.md",
+            "## Normal installation",
+            "## Native channel behavior",
+        ),
+    )
+    for path, section_start, section_end in installer_docs:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        _before_section, separator, after_start = text.partition(section_start)
+        section_text = (
+            after_start.partition(section_end)[0]
+            if separator
+            else ""
+        )
+        normalized_text = normalize(section_text).lower()
+        exact_urls_present = all(
+            url in normalized_text for url in VERSIONED_INSTALLER_URLS
+        )
+        if not exact_urls_present:
+            relative = path.relative_to(root).as_posix()
+            errors.append(
+                f"{relative} must use exact v0.1.0 PowerShell and POSIX "
+                "installer URLs"
+            )
+        caveats_are_contextual = (
+            NATIVE_RELEASE_CAVEAT in normalized_text
+            and PYPI_RELEASE_CAVEAT in normalized_text
+            and exact_urls_present
+            and "pipx install socratic-learn" in normalized_text
+            and normalized_text.index(NATIVE_RELEASE_CAVEAT)
+            < min(
+                normalized_text.index(url)
+                for url in VERSIONED_INSTALLER_URLS
+            )
+            and normalized_text.index(PYPI_RELEASE_CAVEAT)
+            < normalized_text.index("pipx install socratic-learn")
+        )
+        if not caveats_are_contextual:
+            relative = path.relative_to(root).as_posix()
+            errors.append(
+                f"{relative} must condition native and PyPI instructions "
+                "on publication"
+            )
+        if any(pattern.search(text) for pattern in UNSAFE_INSTALLER_PATTERNS):
+            relative = path.relative_to(root).as_posix()
+            errors.append(
+                f"{relative} contains unsafe or mutable installer instructions"
+            )
+
+    launcher_adapters = root / "docs/launcher-adapters.md"
+    if launcher_adapters.is_file():
+        launcher_text = normalize(
+            launcher_adapters.read_text(encoding="utf-8")
+        ).lower()
+        if not all(
+            requirement in launcher_text
+            for requirement in LAUNCHER_ADAPTER_REQUIREMENTS
+        ):
+            errors.append(
+                "docs/launcher-adapters.md is missing launcher adapter contracts"
+            )
 
     legacy_package = root / "learning_tutor"
     allowed_legacy_modules = {"__init__.py", "__main__.py"}
@@ -394,6 +748,8 @@ def validate(root: Path) -> list[str]:
         rules = gitignore.read_text(encoding="utf-8").splitlines()
         if "workspace/*" not in rules or "!workspace/.gitkeep" not in rules:
             errors.append(".gitignore must ignore workspace except .gitkeep")
+        if "/package-dist/" not in rules:
+            errors.append(".gitignore must ignore /package-dist/")
 
     gitattributes = root / ".gitattributes"
     if gitattributes.is_file():
@@ -413,6 +769,8 @@ def validate(root: Path) -> list[str]:
         errors.append("Tracked private learner files: " + ", ".join(tracked_private))
 
     errors.extend(validate_distribution(root))
+    errors.extend(validate_release_automation(root))
+    errors.extend(validate_local_release_gate(root))
     return errors
 
 
