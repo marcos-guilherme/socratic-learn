@@ -1542,6 +1542,283 @@ class RepositoryValidationTests(unittest.TestCase):
             errors,
         )
 
+    def test_release_manifest_step_establishes_local_importability(self) -> None:
+        release = (
+            Path(__file__).resolve().parents[1] / ".github/workflows/release.yml"
+        ).read_text(encoding="utf-8")
+        manifest = release.split("  manifest:", 1)[1].split(
+            "  publish-github:", 1
+        )[0]
+
+        self.assertIn("          import os\n", manifest)
+        self.assertIn("          import sys\n", manifest)
+        self.assertIn(
+            "          sys.path.insert(0, os.getcwd())\n",
+            manifest,
+        )
+        self.assertLess(
+            manifest.index("          sys.path.insert(0, os.getcwd())\n"),
+            manifest.index("          from socratic_learn import __version__\n"),
+        )
+
+    def test_release_manifest_import_setup_mutations_are_rejected(self) -> None:
+        mutations = {
+            "missing": "",
+            "commented": "# sys.path.insert(0, os.getcwd())",
+            "nested dead code": (
+                "if False:\n"
+                "              sys.path.insert(0, os.getcwd())"
+            ),
+            "after local import": (
+                "from socratic_learn import __version__\n"
+                "          sys.path.insert(0, os.getcwd())"
+            ),
+        }
+        for label, replacement in mutations.items():
+            with self.subTest(label=label):
+                temp, root = self.make_root()
+                self.addCleanup(temp.cleanup)
+                release = root / ".github/workflows/release.yml"
+                before_manifest, manifest = release.read_text(
+                    encoding="utf-8"
+                ).split("  manifest:", 1)
+                manifest = manifest.replace(
+                    "          sys.path.insert(0, os.getcwd())",
+                    f"          {replacement}" if replacement else "",
+                    1,
+                )
+                release.write_text(
+                    before_manifest + "  manifest:" + manifest,
+                    encoding="utf-8",
+                )
+
+                self.assertIn(
+                    "Every release shell: python step importing socratic_learn "
+                    "must add the checkout to sys.path before import",
+                    validate(root),
+                )
+
+    def test_release_manifest_import_setup_requires_exact_dependency_names(
+        self,
+    ) -> None:
+        for original, replacement in (
+            ("          import os\n", "          import os as operating_system\n"),
+            ("          import sys\n", "          import sys as system\n"),
+        ):
+            with self.subTest(original=original):
+                temp, root = self.make_root()
+                self.addCleanup(temp.cleanup)
+                release = root / ".github/workflows/release.yml"
+                before_manifest, manifest = release.read_text(
+                    encoding="utf-8"
+                ).split("  manifest:", 1)
+                manifest = manifest.replace(original, replacement, 1)
+                release.write_text(
+                    before_manifest + "  manifest:" + manifest,
+                    encoding="utf-8",
+                )
+
+                self.assertIn(
+                    "Every release shell: python step importing socratic_learn "
+                    "must add the checkout to sys.path before import",
+                    validate(root),
+                )
+
+    def test_release_manifest_rejects_setup_in_separate_step(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        before_manifest, manifest = release.read_text(encoding="utf-8").split(
+            "  manifest:", 1
+        )
+        manifest = manifest.replace(
+            "          sys.path.insert(0, os.getcwd())\n",
+            "",
+            1,
+        ).replace(
+            "      - name: Compute and validate release metadata\n",
+            "      - name: Ineffective separate manifest path setup\n"
+            "        shell: python\n"
+            "        run: |\n"
+            "          import os\n"
+            "          import sys\n"
+            "          sys.path.insert(0, os.getcwd())\n"
+            "      - name: Compute and validate release metadata\n",
+            1,
+        )
+        release.write_text(
+            before_manifest + "  manifest:" + manifest,
+            encoding="utf-8",
+        )
+
+        self.assertIn(
+            "Every release shell: python step importing socratic_learn "
+            "must add the checkout to sys.path before import",
+            validate(root),
+        )
+
+    def test_release_local_import_validation_supports_literal_chomping(
+        self,
+    ) -> None:
+        for scalar in ("|-", "|+"):
+            with self.subTest(scalar=scalar):
+                temp, root = self.make_root()
+                self.addCleanup(temp.cleanup)
+                release = root / ".github/workflows/release.yml"
+                before_manifest, manifest = release.read_text(
+                    encoding="utf-8"
+                ).split("  manifest:", 1)
+                manifest = manifest.replace(
+                    "        run: |\n",
+                    f"        run: {scalar}\n",
+                    1,
+                ).replace(
+                    "          sys.path.insert(0, os.getcwd())\n",
+                    "",
+                    1,
+                )
+                release.write_text(
+                    before_manifest + "  manifest:" + manifest,
+                    encoding="utf-8",
+                )
+
+                self.assertIn(
+                    "Every release shell: python step importing socratic_learn "
+                    "must add the checkout to sys.path before import",
+                    validate(root),
+                )
+
+    def test_release_python_steps_reject_folded_run_blocks(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        before_manifest, manifest = release.read_text(encoding="utf-8").split(
+            "  manifest:", 1
+        )
+        manifest = manifest.replace(
+            "        run: |\n",
+            "        run: >-\n",
+            1,
+        )
+        release.write_text(
+            before_manifest + "  manifest:" + manifest,
+            encoding="utf-8",
+        )
+
+        self.assertIn(
+            "Release shell: python steps must use a literal run block",
+            validate(root),
+        )
+
+    def test_release_local_import_validation_normalizes_python_shell_scalar(
+        self,
+    ) -> None:
+        declarations = (
+            'shell: "python"',
+            "shell: 'python'",
+            "shell: python # Python temp script",
+            'shell: "python" # Python temp script',
+        )
+        for declaration in declarations:
+            with self.subTest(declaration=declaration):
+                temp, root = self.make_root()
+                self.addCleanup(temp.cleanup)
+                release = root / ".github/workflows/release.yml"
+                before_manifest, manifest = release.read_text(
+                    encoding="utf-8"
+                ).split("  manifest:", 1)
+                manifest = manifest.replace(
+                    "        shell: python\n",
+                    f"        {declaration}\n",
+                    1,
+                ).replace(
+                    "          sys.path.insert(0, os.getcwd())\n",
+                    "",
+                    1,
+                )
+                release.write_text(
+                    before_manifest + "  manifest:" + manifest,
+                    encoding="utf-8",
+                )
+
+                self.assertIn(
+                    "Every release shell: python step importing socratic_learn "
+                    "must add the checkout to sys.path before import",
+                    validate(root),
+                )
+
+    def test_release_local_import_validation_recognizes_python_placeholder(
+        self,
+    ) -> None:
+        declarations = (
+            "shell: python {0}",
+            'shell: "python {0}"',
+            "shell: 'python {0}' # Python temp script",
+        )
+        for declaration in declarations:
+            with self.subTest(declaration=declaration):
+                temp, root = self.make_root()
+                self.addCleanup(temp.cleanup)
+                release = root / ".github/workflows/release.yml"
+                before_manifest, manifest = release.read_text(
+                    encoding="utf-8"
+                ).split("  manifest:", 1)
+                manifest = manifest.replace(
+                    "        shell: python\n",
+                    f"        {declaration}\n",
+                    1,
+                ).replace(
+                    "          sys.path.insert(0, os.getcwd())\n",
+                    "",
+                    1,
+                )
+                release.write_text(
+                    before_manifest + "  manifest:" + manifest,
+                    encoding="utf-8",
+                )
+
+                self.assertIn(
+                    "Every release shell: python step importing socratic_learn "
+                    "must add the checkout to sys.path before import",
+                    validate(root),
+                )
+
+    def test_release_workflow_rejects_inherited_run_shell_defaults(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        before_manifest, manifest = release.read_text(encoding="utf-8").split(
+            "  manifest:", 1
+        )
+        manifest = manifest.replace(
+            "        shell: python\n",
+            "",
+            1,
+        ).replace(
+            "\n    needs: native\n",
+            "\n    defaults:\n"
+            "      run:\n"
+            "        shell: python\n"
+            "    needs: native\n",
+            1,
+        )
+        release.write_text(
+            before_manifest + "  manifest:" + manifest,
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Release workflow must not use defaults.run.shell; "
+            "Python steps must declare shell explicitly",
+            errors,
+        )
+        self.assertNotIn(
+            "Release shell: python steps must use a literal run block",
+            errors,
+        )
+
     def test_local_release_gates_isolate_package_output_from_canonical_dist(
         self,
     ) -> None:
