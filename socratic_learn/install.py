@@ -1532,6 +1532,27 @@ def _verify_legacy_tree_is_migratable(
                 path=relative,
                 remediation="preserve the path and migrate manually",
             )
+    legacy_native = _LEGACY_NATIVE_SKILL_PATHS.get(receipt.target)
+    if legacy_native is None:
+        return
+    if legacy_native not in owned:
+        raise IntegrityError(
+            "legacy receipt does not own the required native skill",
+            path=legacy_native,
+            remediation="preserve the installation and migrate manually",
+        )
+    legacy_directory = _project_path(
+        project,
+        str(PurePosixPath(legacy_native).parent),
+    )
+    if {
+        entry.name for entry in os.scandir(legacy_directory)
+    } != {"SKILL.md"}:
+        raise CollisionError(
+            "legacy native skill directory contains unowned paths",
+            path=legacy_directory,
+            remediation="preserve the directory and migrate manually",
+        )
 
 
 def _migration_update_plan(plan: InstallPlan) -> InstallPlan:

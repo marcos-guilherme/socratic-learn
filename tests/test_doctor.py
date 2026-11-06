@@ -92,6 +92,20 @@ class DoctorTests(unittest.TestCase):
         self.assertNotIn("legacy-installation", self._codes(diagnostics))
         self.assertEqual(before, snapshot_tree(project))
 
+    def test_doctor_rejects_unowned_legacy_native_skill_sibling(self) -> None:
+        project = self.root / "legacy-native-unowned"
+        project.mkdir()
+        create_valid_legacy_install(project, target="cursor")
+        unowned = project / ".cursor/skills/learning-tutor/user-owned.txt"
+        unowned.write_text("preserve\n", encoding="utf-8")
+        before = snapshot_tree(project)
+
+        diagnostics = diagnose(project)
+
+        self.assertIn("legacy-installation-unsafe", self._codes(diagnostics))
+        self.assertNotIn("legacy-installation", self._codes(diagnostics))
+        self.assertEqual(before, snapshot_tree(project))
+
     def test_missing_installation_uses_canonical_product_name(self) -> None:
         project = self.root / "empty"
         project.mkdir()

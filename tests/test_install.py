@@ -181,6 +181,26 @@ class InstallTests(unittest.TestCase):
         self.assertTrue(collision.is_dir())
         self.assertFalse((self.project / ".socratic-learn").exists())
 
+    def test_migration_refuses_unowned_legacy_native_skill_sibling_before_mutation(
+        self,
+    ) -> None:
+        create_valid_legacy_install(self.project, target="cursor")
+        unowned = (
+            self.project
+            / ".cursor/skills/learning-tutor/user-owned.txt"
+        )
+        unowned.write_text("preserve\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            CollisionError,
+            "native skill directory contains unowned paths",
+        ):
+            plan_install(self.source, self.project, "cursor", True)
+
+        self.assertEqual("preserve\n", unowned.read_text(encoding="utf-8"))
+        self.assertTrue((self.project / ".learning-tutor").is_dir())
+        self.assertFalse((self.project / ".socratic-learn").exists())
+
     def test_migration_refuses_unowned_legacy_path_before_mutation(self) -> None:
         create_valid_legacy_install(self.project, target="generic")
         unowned = self.project / ".learning-tutor/user-owned.txt"
