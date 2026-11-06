@@ -83,7 +83,7 @@ presenting it as current.
 
 
 def minimal_bundle() -> str:
-    sections = ["# Universal Learning Tutor"]
+    sections = ["# Socratic Learn"]
     for relative in CANONICAL_SOURCES:
         sections.extend(
             (
@@ -261,7 +261,7 @@ class ConformanceTests(unittest.TestCase):
             build_distribution(root)
 
         self.assertIn("observable-outcome", str(raised.exception))
-        self.assertEqual("dist/learning-tutor.prompt.md", str(raised.exception.path))
+        self.assertEqual("dist/socratic-learn.prompt.md", str(raised.exception.path))
         self.assertTrue(raised.exception.remediation)
 
     def test_manifest_records_contract_version_and_required_codes(self) -> None:

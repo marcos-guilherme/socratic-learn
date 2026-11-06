@@ -28,7 +28,7 @@ UNIVERSAL_REQUIRED_PATHS = (
     "socratic_learn/templates/cursor-skill.md",
     "socratic_learn/templates/claude-loader.md",
     "socratic_learn/templates/pi-skill.md",
-    "dist/learning-tutor.prompt.md",
+    "dist/socratic-learn.prompt.md",
     "dist/manifest.json",
     "docs/universal-installation.md",
     "docs/manifest-reference.md",
@@ -809,7 +809,7 @@ class RepositoryValidationTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.tracked_copy(root)
-            bundle = root / "dist/learning-tutor.prompt.md"
+            bundle = root / "dist/socratic-learn.prompt.md"
             bundle.write_bytes(bundle.read_bytes() + b"stale\n")
             before = {
                 path.name: (path.read_bytes(), path.stat().st_mtime_ns)
@@ -835,10 +835,10 @@ class RepositoryValidationTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.tracked_copy(root)
-            bundle = root / "dist/learning-tutor.prompt.md"
+            bundle = root / "dist/socratic-learn.prompt.md"
             bundle.write_bytes(
                 bundle.read_bytes().replace(
-                    b"# Universal Learning Tutor\n",
+                    b"# Socratic Learn\n",
                     b"# Wrong Header\n",
                     1,
                 )

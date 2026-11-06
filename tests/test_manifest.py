@@ -37,6 +37,7 @@ def valid_manifest() -> dict[str, object]:
     digest = "a" * 64
     return {
         "schema_version": MANIFEST_SCHEMA_VERSION,
+        "product": "socratic-learn",
         "protocol_version": PROTOCOL_VERSION,
         "language": "en",
         "targets": list(TARGETS),
@@ -45,7 +46,7 @@ def valid_manifest() -> dict[str, object]:
             {"path": "core/session-protocol.md", "sha256": "b" * 64},
         ],
         "bundle": {
-            "path": "learning-tutor.prompt.md",
+            "path": "socratic-learn.prompt.md",
             "sha256": "c" * 64,
         },
         "capability_fallbacks": dict(CAPABILITY_FALLBACKS),
@@ -79,6 +80,12 @@ class ManifestTests(unittest.TestCase):
     def test_valid_manifest_passes(self) -> None:
         validate_manifest(valid_manifest())
 
+    def test_rejects_wrong_product(self) -> None:
+        self.assert_invalid(
+            lambda value: value.__setitem__("product", "learning-tutor"),
+            "product",
+        )
+
     def assert_invalid(self, mutation, expected: str) -> None:
         manifest = copy.deepcopy(valid_manifest())
         mutation(manifest)
@@ -89,7 +96,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_rejects_unknown_schema_version(self) -> None:
         self.assert_invalid(
-            lambda value: value.__setitem__("schema_version", 2),
+            lambda value: value.__setitem__("schema_version", 3),
             "schema_version",
         )
 
@@ -155,7 +162,7 @@ class ManifestTests(unittest.TestCase):
             assert isinstance(bundle, dict)
             bundle["path"] = "other.md"
 
-        self.assert_invalid(mutate, "learning-tutor.prompt.md")
+        self.assert_invalid(mutate, "socratic-learn.prompt.md")
 
     def test_rejects_missing_or_empty_capability_fallback(self) -> None:
         def missing(value: dict[str, object]) -> None:

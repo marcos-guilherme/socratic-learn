@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from . import MANIFEST_SCHEMA_VERSION, PROTOCOL_VERSION, TARGETS
+from . import MANIFEST_SCHEMA_VERSION, PRODUCT_ID, PROTOCOL_VERSION, TARGETS
 from .conformance import (
     CONFORMANCE_CONTRACT_VERSION,
     REQUIRED_DIAGNOSTIC_CODES,
@@ -19,6 +19,7 @@ from .conformance import (
 )
 from .errors import FilesystemError, IntegrityError
 from .manifest import (
+    BUNDLE_NAME,
     CAPABILITY_FALLBACKS,
     SESSION_HEADINGS,
     serialize_json,
@@ -205,7 +206,7 @@ def _curriculum_index(relative: str, data: bytes) -> str:
 
 def _compose_bundle(sources: list[tuple[str, bytes]]) -> bytes:
     sections = [
-        "# Universal Learning Tutor",
+        "# Socratic Learn",
         f"Protocol: {PROTOCOL_VERSION}",
         "",
         "Canonical sources (relative to the distribution repository):",
@@ -249,11 +250,12 @@ def build_distribution(root: Path) -> BuildResult:
         )
         raise IntegrityError(
             f"bundle behavioral conformance failed: {details}",
-            path="dist/learning-tutor.prompt.md",
+            path=f"dist/{BUNDLE_NAME}",
             remediation=remediation,
         )
     manifest: dict[str, object] = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
+        "product": PRODUCT_ID,
         "protocol_version": PROTOCOL_VERSION,
         "language": "en",
         "targets": list(TARGETS),
@@ -262,7 +264,7 @@ def build_distribution(root: Path) -> BuildResult:
             for relative, data in sources
         ],
         "bundle": {
-            "path": "learning-tutor.prompt.md",
+            "path": BUNDLE_NAME,
             "sha256": sha256_bytes(bundle),
         },
         "capability_fallbacks": dict(CAPABILITY_FALLBACKS),
@@ -323,7 +325,7 @@ def _validate_staged_distribution(stage: Path, result: BuildResult) -> None:
     try:
         manifest_bytes = (stage / "manifest.json").read_bytes()
         manifest = json.loads(manifest_bytes.decode("utf-8"))
-        bundle_bytes = (stage / "learning-tutor.prompt.md").read_bytes()
+        bundle_bytes = (stage / BUNDLE_NAME).read_bytes()
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise IntegrityError(
             "staged distribution cannot be read and validated",
@@ -346,7 +348,7 @@ def _validate_staged_distribution(stage: Path, result: BuildResult) -> None:
     if bundle_bytes != result.bundle or sha256_bytes(bundle_bytes) != manifest["bundle"]["sha256"]:
         raise IntegrityError(
             "staged prompt bytes do not match the manifest",
-            path=stage / "learning-tutor.prompt.md",
+            path=stage / BUNDLE_NAME,
             remediation="retry the build",
         )
 
@@ -356,7 +358,7 @@ def _fully_owned_dist_tree(dist: Path) -> TrackedDirectory | None:
 
     try:
         names = {entry.name for entry in os.scandir(dist)}
-        if names != {"manifest.json", "learning-tutor.prompt.md"}:
+        if names != {"manifest.json", BUNDLE_NAME}:
             return None
         manifest_bytes = (dist / "manifest.json").read_bytes()
         manifest = json.loads(manifest_bytes.decode("utf-8"))
@@ -364,9 +366,9 @@ def _fully_owned_dist_tree(dist: Path) -> TrackedDirectory | None:
             return None
         validate_manifest(manifest)
         bundle = manifest["bundle"]
-        if not isinstance(bundle, dict) or bundle["path"] != "learning-tutor.prompt.md":
+        if not isinstance(bundle, dict) or bundle["path"] != BUNDLE_NAME:
             return None
-        bundle_bytes = (dist / "learning-tutor.prompt.md").read_bytes()
+        bundle_bytes = (dist / BUNDLE_NAME).read_bytes()
         if sha256_bytes(bundle_bytes) != bundle["sha256"]:
             return None
         return track_directory(dist)
@@ -389,7 +391,7 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
     try:
         stage = Path(tempfile.mkdtemp(prefix=".dist-stage-", dir=repository))
         stage_directory = track_directory(stage)
-        _atomic_write(stage / "learning-tutor.prompt.md", result.bundle)
+        _atomic_write(stage / BUNDLE_NAME, result.bundle)
         stage_directory = track_directory(stage)
         _atomic_write(stage / "manifest.json", result.manifest)
         stage_directory = track_directory(stage)
@@ -523,7 +525,7 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
                 ),
             )
 
-    bundle_path = dist / "learning-tutor.prompt.md"
+    bundle_path = dist / BUNDLE_NAME
     manifest_path = dist / "manifest.json"
     return bundle_path, manifest_path
 

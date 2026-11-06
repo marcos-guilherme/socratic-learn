@@ -1,7 +1,7 @@
 {
   "bundle": {
-    "path": "learning-tutor.prompt.md",
-    "sha256": "47f1deb384bcacbcea7ec31c500169111378a5ff04ec7e3efd65e28b33cb67e6"
+    "path": "socratic-learn.prompt.md",
+    "sha256": "719f12312c35751dce75338894ea3d03dc4c9788437696dbc1d314ce6d44ff56"
   },
   "capability_fallbacks": {
     "cross_session_memory": "Ask for a prior summary and state what is unknown.",
@@ -28,8 +28,9 @@
     "version": 1
   },
   "language": "en",
+  "product": "socratic-learn",
   "protocol_version": "1.0.0",
-  "schema_version": 1,
+  "schema_version": 2,
   "session_headings": [
     "## Outcome",
     "## Diagnostic evidence",

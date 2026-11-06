@@ -8,7 +8,7 @@ import re
 from collections.abc import Mapping
 from pathlib import PurePosixPath, PureWindowsPath
 
-from . import MANIFEST_SCHEMA_VERSION, PROTOCOL_VERSION, TARGETS
+from . import MANIFEST_SCHEMA_VERSION, PRODUCT_ID, PROTOCOL_VERSION, TARGETS
 from .conformance import CONFORMANCE_CONTRACT_VERSION, REQUIRED_DIAGNOSTIC_CODES
 from .errors import IntegrityError
 
@@ -39,6 +39,7 @@ _TOP_LEVEL_KEYS = {
     "capability_fallbacks",
     "conformance",
     "language",
+    "product",
     "protocol_version",
     "schema_version",
     "session_headings",
@@ -48,7 +49,8 @@ _TOP_LEVEL_KEYS = {
 _SOURCE_KEYS = {"path", "sha256"}
 _BUNDLE_KEYS = {"path", "sha256"}
 _CONFORMANCE_KEYS = {"required_diagnostic_codes", "version"}
-_REMEDIATION = "regenerate the manifest with 'learning-tutor build'"
+BUNDLE_NAME = "socratic-learn.prompt.md"
+_REMEDIATION = "regenerate the manifest with 'socratic-learn build'"
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -126,7 +128,13 @@ def validate_manifest(manifest: Mapping[str, object]) -> None:
 
     schema_version = manifest["schema_version"]
     if type(schema_version) is not int or schema_version != MANIFEST_SCHEMA_VERSION:
-        raise _invalid("schema_version", "must be integer 1")
+        raise _invalid(
+            "schema_version",
+            f"must be integer {MANIFEST_SCHEMA_VERSION}",
+        )
+    product = manifest["product"]
+    if type(product) is not str or product != PRODUCT_ID:
+        raise _invalid("product", f"must be '{PRODUCT_ID}'")
     protocol_version = manifest["protocol_version"]
     if type(protocol_version) is not str or protocol_version != PROTOCOL_VERSION:
         raise _invalid("protocol_version", f"must be '{PROTOCOL_VERSION}'")
@@ -164,8 +172,8 @@ def validate_manifest(manifest: Mapping[str, object]) -> None:
         raise _invalid("bundle", "must be a JSON object")
     _require_exact_keys(bundle, _BUNDLE_KEYS, "bundle")
     bundle_path = bundle["path"]
-    if type(bundle_path) is not str or bundle_path != "learning-tutor.prompt.md":
-        raise _invalid("bundle.path", "must be learning-tutor.prompt.md")
+    if type(bundle_path) is not str or bundle_path != BUNDLE_NAME:
+        raise _invalid("bundle.path", f"must be {BUNDLE_NAME}")
     _require_hash(bundle["sha256"], "bundle.sha256")
 
     fallbacks = manifest["capability_fallbacks"]

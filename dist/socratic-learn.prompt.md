@@ -1,4 +1,4 @@
-# Universal Learning Tutor
+# Socratic Learn
 Protocol: 1.0.0
 
 Canonical sources (relative to the distribution repository):

@@ -187,6 +187,7 @@ class BuildTests(unittest.TestCase):
 
         text = build_distribution(root).bundle.decode("utf-8")
 
+        self.assertTrue(text.startswith("# Socratic Learn\n"))
         self.assertIn(f"Protocol: {PROTOCOL_VERSION}", text)
         for relative in CANONICAL_SOURCES:
             self.assertIn(f"- {relative}", text)
@@ -308,7 +309,7 @@ class BuildTests(unittest.TestCase):
 
         bundle_path, manifest_path = write_distribution(root, result)
 
-        self.assertEqual(root / "dist/learning-tutor.prompt.md", bundle_path)
+        self.assertEqual(root / "dist/socratic-learn.prompt.md", bundle_path)
         self.assertEqual(root / "dist/manifest.json", manifest_path)
         self.assertEqual(result.bundle, bundle_path.read_bytes())
         self.assertEqual(result.manifest, manifest_path.read_bytes())
@@ -411,7 +412,7 @@ class BuildTests(unittest.TestCase):
             real_read = Path.read_bytes
 
             def fail_bundle(path: Path) -> bytes:
-                if path.name == "learning-tutor.prompt.md":
+                if path.name == "socratic-learn.prompt.md":
                     raise OSError("bundle read denied")
                 return real_read(path)
 
@@ -711,7 +712,7 @@ class BuildTests(unittest.TestCase):
         assert inserted is not None
         self.assertEqual(b"external", inserted.read_bytes())
         self.assertTrue((inserted.parent / "manifest.json").is_file())
-        self.assertTrue((inserted.parent / "learning-tutor.prompt.md").is_file())
+        self.assertTrue((inserted.parent / "socratic-learn.prompt.md").is_file())
 
     def test_export_prompt_writes_exact_validated_bundle(self) -> None:
         temporary, root = self.make_repository()

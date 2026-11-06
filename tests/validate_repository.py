@@ -56,7 +56,7 @@ REQUIRED_PATHS = (
     "socratic_learn/templates/cursor-skill.md",
     "socratic_learn/templates/claude-loader.md",
     "socratic_learn/templates/pi-skill.md",
-    "dist/learning-tutor.prompt.md",
+    "dist/socratic-learn.prompt.md",
     "dist/manifest.json",
     "docs/universal-installation.md",
     "docs/manifest-reference.md",
@@ -79,7 +79,7 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 FENCE_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})")
 UNIVERSAL_VALIDATION_INPUTS = (
     "socratic_learn/build.py",
-    "dist/learning-tutor.prompt.md",
+    "dist/socratic-learn.prompt.md",
     "dist/manifest.json",
     "core/pedagogy.md",
     "core/session-protocol.md",
@@ -194,7 +194,7 @@ def validate_distribution(root: Path) -> list[str]:
         return []
 
     errors: list[str] = []
-    bundle_path = root / "dist/learning-tutor.prompt.md"
+    bundle_path = root / "dist/socratic-learn.prompt.md"
     manifest_path = root / "dist/manifest.json"
     try:
         bundle = bundle_path.read_bytes()
@@ -202,10 +202,10 @@ def validate_distribution(root: Path) -> list[str]:
     except OSError as error:
         return [f"Generated distribution could not be read: {error}"]
 
-    if not bundle.startswith(b"# Universal Learning Tutor\n"):
+    if not bundle.startswith(b"# Socratic Learn\n"):
         errors.append(
             "Generated bundle does not have the expected header: "
-            "# Universal Learning Tutor"
+            "# Socratic Learn"
         )
 
     try:
