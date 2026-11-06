@@ -8,6 +8,7 @@ from dataclasses import replace
 from evaluation.parser import (
     TutorTurn,
     collect_tutor_turn,
+    is_completion,
     json_pointer_get,
     json_pointer_set,
     parse_ndjson,
@@ -185,7 +186,41 @@ class EvaluationParserTests(unittest.TestCase):
             collect_tutor_turn(events, contract),
         )
 
-    def test_collect_avoids_duplicate_cumulative_snapshots(self) -> None:
+    def test_collect_preserves_repeated_identical_deltas(self) -> None:
+        contract = replace(
+            self.contract,
+            output_text_pointers=("/text",),
+            completion_pointer="/done",
+            completion_value=True,
+        )
+        events = (
+            {"text": "ha"},
+            {"text": "ha"},
+            {"done": True},
+        )
+        self.assertEqual(
+            TutorTurn(text="haha", event_count=3, completed=True),
+            collect_tutor_turn(events, contract),
+        )
+
+    def test_collect_preserves_later_prefix_fragment(self) -> None:
+        contract = replace(
+            self.contract,
+            output_text_pointers=("/text",),
+            completion_pointer="/done",
+            completion_value=True,
+        )
+        events = (
+            {"text": "The cat sat. "},
+            {"text": "The"},
+            {"done": True},
+        )
+        self.assertEqual(
+            TutorTurn(text="The cat sat. The", event_count=3, completed=True),
+            collect_tutor_turn(events, contract),
+        )
+
+    def test_collect_replaces_strictly_extending_cumulative_snapshot(self) -> None:
         contract = replace(
             self.contract,
             output_text_pointers=("/text",),
@@ -195,13 +230,43 @@ class EvaluationParserTests(unittest.TestCase):
         events = (
             {"text": "Hel"},
             {"text": "Hello"},
-            {"text": "Hello"},
-            {"text": " world"},
-            {"text": "Hello world"},
             {"done": True},
         )
         self.assertEqual(
-            TutorTurn(text="Hello world", event_count=6, completed=True),
+            TutorTurn(text="Hello", event_count=3, completed=True),
+            collect_tutor_turn(events, contract),
+        )
+
+    def test_collect_preserves_ambiguous_equal_completion_fragment(self) -> None:
+        contract = replace(
+            self.contract,
+            output_text_pointers=("/text",),
+            completion_pointer="/done",
+            completion_value=True,
+        )
+        events = (
+            {"text": "answer"},
+            {"text": "answer", "done": True},
+        )
+        self.assertEqual(
+            TutorTurn(text="answeranswer", event_count=2, completed=True),
+            collect_tutor_turn(events, contract),
+        )
+
+    def test_collect_treats_output_pointer_path_shape_mismatch_as_absent(self) -> None:
+        contract = replace(
+            self.contract,
+            output_text_pointers=("/items/text",),
+            completion_pointer="/done",
+            completion_value=True,
+        )
+        events = (
+            {"items": []},
+            {"items": {"text": "kept"}},
+            {"done": True},
+        )
+        self.assertEqual(
+            TutorTurn(text="kept", event_count=3, completed=True),
             collect_tutor_turn(events, contract),
         )
 
@@ -220,6 +285,17 @@ class EvaluationParserTests(unittest.TestCase):
                 )
                 self.assertFalse(turn.completed)
                 self.assertEqual(2, turn.event_count)
+
+    def test_is_completion_uses_exact_match_and_absent_path_semantics(self) -> None:
+        contract = replace(
+            self.contract,
+            completion_pointer="/items/done",
+            completion_value=True,
+        )
+        self.assertTrue(is_completion({"items": {"done": True}}, contract))
+        self.assertFalse(is_completion({"items": {"done": 1}}, contract))
+        self.assertFalse(is_completion({"items": {}}, contract))
+        self.assertFalse(is_completion({"items": []}, contract))
 
     def test_collect_rejects_non_string_extracted_text(self) -> None:
         contract = replace(
