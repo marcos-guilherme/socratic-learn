@@ -1224,7 +1224,7 @@ class EvaluationCliTests(unittest.TestCase):
         self.assertEqual("Runtime isolation verified.\n", output.getvalue())
         self.assertNotIn(str(Path.cwd()), output.getvalue())
 
-    def test_private_command_surface_includes_future_commands(self) -> None:
+    def test_private_report_commands_refuse_missing_arguments_safely(self) -> None:
         from evaluation import cli
 
         for command in ("score", "report", "validate-report"):
@@ -1232,7 +1232,7 @@ class EvaluationCliTests(unittest.TestCase):
                 error = io.StringIO()
                 result = cli.main([command], output=io.StringIO(), error=error)
                 self.assertEqual(2, result)
-                self.assertIn("not available", error.getvalue().lower())
+                self.assertEqual(cli.PRECHECK_REFUSAL_MESSAGE, error.getvalue())
                 self.assertNotIn("Traceback", error.getvalue())
 
 

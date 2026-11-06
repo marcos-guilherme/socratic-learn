@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "run_id": "synthetic-conceptual-physics",
+  "suite_id": "synthetic-suite",
+  "scenario_id": "conceptual-physics",
+  "repository_commit": "0000000000000000000000000000000000000000",
+  "protocol_version": "1.0.0",
+  "protocol_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runtime": "antigravity",
+  "runtime_version": "synthetic",
+  "model_identifier": "synthetic-model",
+  "learner_response_count": 3,
+  "stop_reason": "observable_outcome",
+  "infrastructure_failure": null,
+  "turns": [
+    {
+      "number": 1,
+      "learner": "I think the heavier ball falls faster.",
+      "tutor": "What would we need to compare fairly?"
+    },
+    {
+      "number": 2,
+      "learner": "The same shape and no air resistance.",
+      "tutor": "Good. If force and mass both double, what happens to force divided by mass?"
+    },
+    {
+      "number": 3,
+      "learner": "The ratio stays the same, so acceleration stays the same.",
+      "tutor": "Apply that to a bowling ball and a metal sphere in a vacuum."
+    },
+    {
+      "number": 4,
+      "learner": "They have equal acceleration because each object's larger force is matched by its larger mass.",
+      "tutor": "That explanation and transfer meet the outcome."
+    }
+  ]
+}
