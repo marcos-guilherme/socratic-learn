@@ -34,6 +34,13 @@ class InstallTests(unittest.TestCase):
         self.project.mkdir()
         self._make_distribution(b"# Universal Learning Tutor\nProtocol: 1.0.0\n")
 
+    def assert_posix_same_principal_limit(self, error: BaseException) -> None:
+        message = str(error).lower()
+        self.assertNotIn("no external data was deleted", message)
+        self.assertIn("posix", message)
+        self.assertIn("same-principal", message)
+        self.assertIn("leaf-entry", message)
+
     def _make_distribution(self, prompt: bytes) -> None:
         dist = self.source / "dist"
         dist.mkdir(exist_ok=True)
@@ -420,7 +427,7 @@ class InstallTests(unittest.TestCase):
             )
         )
         self.assertIn("CLAUDE.md", str(raised.exception))
-        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assert_posix_same_principal_limit(raised.exception)
 
     def test_failure_after_publication_preserves_partial_paths_and_stage(self) -> None:
         plan = plan_install(self.source, self.project, "generic", False)
@@ -459,7 +466,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(1, len(stages))
         self.assertIn(str(manifest), str(raised.exception))
         self.assertIn(str(stages[0]), str(raised.exception))
-        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assert_posix_same_principal_limit(raised.exception)
 
     def test_update_failure_preserves_partial_paths_backups_and_stage(self) -> None:
         self._install()
@@ -514,7 +521,7 @@ class InstallTests(unittest.TestCase):
         self.assertIn(str(manifest), str(raised.exception))
         self.assertIn(str(backups[0]), str(raised.exception))
         self.assertIn(str(stages[0]), str(raised.exception))
-        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assert_posix_same_principal_limit(raised.exception)
 
     def test_successful_installs_leave_no_private_transaction_artifacts(self) -> None:
         for target in ("generic", "cursor", "claude-code", "pi"):
@@ -670,7 +677,7 @@ class InstallTests(unittest.TestCase):
 
         self.assertEqual(b"external before former cleanup", skill.read_bytes())
         self.assertIn(str(skill), str(raised.exception))
-        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assert_posix_same_principal_limit(raised.exception)
 
     def test_failure_never_deletes_replaced_published_directory(self) -> None:
         plan = plan_install(self.source, self.project, "cursor", False)
@@ -881,7 +888,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(original, preserved.read_bytes())
         self.assertFalse(source.exists())
         self.assertIn(str(backups[0]), str(raised.exception))
-        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assert_posix_same_principal_limit(raised.exception)
 
     def test_update_read_failure_after_backup_move_preserves_only_copy(self) -> None:
         self._install()
@@ -919,7 +926,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(original, preserved.read_bytes())
         self.assertFalse(source.exists())
         self.assertIn(str(backups[0]), str(raised.exception))
-        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assert_posix_same_principal_limit(raised.exception)
 
     def test_update_restore_preserves_external_destination_and_backup(self) -> None:
         self._install()
@@ -1017,7 +1024,7 @@ class InstallTests(unittest.TestCase):
         self.assertFalse((self.project / ".learning-tutor").exists())
         self.assertTrue((self.project / ".cursor/skills/learning-tutor").is_dir())
         self.assertIn(".cursor", str(raised.exception))
-        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assert_posix_same_principal_limit(raised.exception)
 
     def test_unchanged_update_replaces_managed_files_and_preserves_private_state(self) -> None:
         self._install()
@@ -1303,7 +1310,7 @@ class InstallTests(unittest.TestCase):
 
         self.assertEqual("keep", sentinel.read_text(encoding="utf-8"))
         self.assertTrue((self.project / ".learning-tutor").is_dir())
-        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assert_posix_same_principal_limit(raised.exception)
         self.assertTrue(
             any(
                 path.name.startswith(".learning-tutor-stage-")
@@ -1342,7 +1349,7 @@ class InstallTests(unittest.TestCase):
             apply_install(plan)
 
         self.assertIn("injected initial commit failure", str(raised.exception))
-        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assert_posix_same_principal_limit(raised.exception)
         self.assertTrue((self.project / ".learning-tutor").is_dir())
         self.assertTrue(
             any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir())
@@ -1487,7 +1494,7 @@ class InstallTests(unittest.TestCase):
                 apply_install(plan)
 
         self.assertNotEqual(before, self._snapshot())
-        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assert_posix_same_principal_limit(raised.exception)
         self.assertTrue(
             any(
                 path.name.startswith((".learning-tutor-stage-", ".learning-tutor-backup-"))
@@ -1545,7 +1552,7 @@ class InstallTests(unittest.TestCase):
 
         self.assertIn("injected symlink race", str(raised.exception))
         self.assertNotEqual(before, self._snapshot())
-        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assert_posix_same_principal_limit(raised.exception)
         self.assertTrue(
             any(
                 path.name.startswith((".learning-tutor-stage-", ".learning-tutor-backup-"))
@@ -1615,7 +1622,7 @@ class InstallTests(unittest.TestCase):
                 apply_install(plan)
 
         self.assertIn(".learning-tutor-backup-", str(raised.exception))
-        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assert_posix_same_principal_limit(raised.exception)
         self.assertTrue(any(path.name.startswith(".learning-tutor-backup-") for path in self.project.iterdir()))
 
     def test_cli_prints_loader_and_update_transition(self) -> None:

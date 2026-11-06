@@ -25,6 +25,7 @@ from .safe_fs import (
     IdentityMismatchError,
     ParentIdentity,
     PathIdentity,
+    POSIX_SAME_PRINCIPAL_LIMIT,
     TrackedDirectory,
     _lock_windows_chain,
     identity_bound_mkdir,
@@ -638,7 +639,10 @@ def _combined_cleanup_error(
     )
     recovery_paths = ", ".join(str(path) for path, _ in cleanup_failures)
     return FilesystemError(
-        f"{context}{original_detail}; cleanup failure: {cleanup_details}",
+        (
+            f"{context}{original_detail}; cleanup failure: {cleanup_details}; "
+            f"{POSIX_SAME_PRINCIPAL_LIMIT}"
+        ),
         path=cleanup_failures[0][0],
         remediation=(
             f"preserve and inspect the recovery path(s): {recovery_paths}; "
@@ -828,7 +832,8 @@ def _parent_chain_publication_error(
     return error_type(
         (
             "publication parent chain changed before commit completed; "
-            "published state was preserved and no external data was deleted; "
+            "the reported recovery locations retained the identities observed at "
+            f"the final checks; {POSIX_SAME_PRINCIPAL_LIMIT}; "
             f"original parent identity=({original_parent.identity.device}, "
             f"{original_parent.identity.inode}); observed parent identity="
             f"{observed(original_parent.path)}; source expected identity="
@@ -1044,8 +1049,9 @@ def _conservative_failure_error(
     listed = ", ".join(str(path) for path in recovery_paths)
     return FilesystemError(
         (
-            f"{context}; no external data was deleted; partial published paths "
-            f"and private recovery artifacts were preserved: {listed}; "
+            f"{context}; listed recovery paths were preserved where their "
+            f"identities remained verifiable: {listed}; "
+            f"{POSIX_SAME_PRINCIPAL_LIMIT}; "
             f"original failure: {type(original).__name__}: {original}"
         ),
         path=recovery_paths[0],
@@ -1382,8 +1388,10 @@ def _apply_update(
             raise
         raise FilesystemError(
             (
-                "update failed before publication; the previous installation was "
-                "restored and external state was preserved; "
+                "update failed before publication; the previous installation's "
+                "verified state was preserved by restoring its backups, and "
+                "temporary cleanup used the recorded topology and identities; "
+                f"{POSIX_SAME_PRINCIPAL_LIMIT}; "
                 f"original failure: {type(error).__name__}: {error}"
             ),
             path=plan.project / INSTALL_ROOT,

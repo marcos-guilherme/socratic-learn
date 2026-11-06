@@ -27,6 +27,7 @@ from .manifest import (
 )
 from .safe_fs import (
     ParentIdentity,
+    POSIX_SAME_PRINCIPAL_LIMIT,
     TrackedDirectory,
     identity_bound_replace,
     path_identity,
@@ -430,7 +431,9 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
         if old_moved:
             if dist.exists() or dist.is_symlink():
                 raise FilesystemError(
-                    "distribution swap failed with an ambiguous destination; recovery state was preserved",
+                    "distribution swap failed with an ambiguous destination; "
+                    "reported recovery paths retained their verified identities; "
+                    f"{POSIX_SAME_PRINCIPAL_LIMIT}",
                     path=dist,
                     remediation=(
                         f"preserve and inspect {dist} and {backup}; restore the old "
@@ -448,12 +451,14 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
                 old_moved = False
             except OSError as rollback_error:
                 raise FilesystemError(
-                    "distribution swap failed and the old directory could not be restored",
+                    "distribution swap failed and the old directory could not be "
+                    f"restored; {POSIX_SAME_PRINCIPAL_LIMIT}",
                     path=dist,
                     remediation=f"restore the old distribution from {backup.name}",
                 ) from rollback_error
         raise FilesystemError(
-            "distribution swap or staged artifact write failed; old distribution restored or recovery state preserved",
+            "distribution swap or staged artifact write failed; verified recovery "
+            f"state was retained where identifiable; {POSIX_SAME_PRINCIPAL_LIMIT}",
             path=dist,
             remediation=(
                 "check repository permissions and rebuild; preserve any reported "
@@ -473,7 +478,9 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
                 remove_tracked_tree(directory)
             except OSError as cleanup_error:
                 raise FilesystemError(
-                    "distribution state committed or preserved, but temporary cleanup was unsafe",
+                    "distribution state committed or reported recovery paths "
+                    "retained their verified identities, but temporary cleanup "
+                    f"was unsafe; {POSIX_SAME_PRINCIPAL_LIMIT}",
                     path=directory.path,
                     remediation=(
                         f"preserve and inspect {directory.path}; remove it only after "

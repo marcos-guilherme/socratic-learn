@@ -34,6 +34,18 @@ output is preserved and rejected. If publication fails after paths may have appe
 paths, private staging directories, and backups are preserved and reported for
 manual recovery rather than deleted.
 
+### Filesystem security model
+
+The filesystem controls protect against ordinary collisions, accidental
+concurrent changes, and cooperating Learning Tutor processes. They include
+atomic no-replace publication, parent-directory bindings, identity rechecks,
+exact-topology cleanup, recovery artifacts, and Windows handle-bound
+operations. On POSIX, malicious or noncooperating processes running as the
+same OS principal are out of scope: `rename`, `unlink`, and `rmdir` cannot bind
+the leaf-entry mutation to an already-open inode, leaving an irreducible
+leaf-entry TOCTOU window. Detected ambiguity is preserved for manual recovery;
+normal Linux and macOS build, install, update, and cleanup remain supported.
+
 Start with the [universal installation guide](docs/universal-installation.md).
 The [manifest reference](docs/manifest-reference.md) defines artifact and hash
 semantics, and [adding an adapter](docs/adding-an-adapter.md) defines extension

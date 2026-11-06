@@ -17,6 +17,16 @@ does not fall back to an overwrite-prone rename. It fails with recovery
 guidance, preserves managed content, and cleans pre-publication update staging
 when its identity remains provable.
 
+These controls protect against ordinary collisions, accidental concurrent
+changes, and cooperating Learning Tutor processes. Atomic no-replace moves,
+parent-directory file descriptors, identity rechecks, exact-topology cleanup,
+recovery artifacts, and Windows handle-bound operations remain mandatory. On
+POSIX, malicious or noncooperating processes running as the same OS principal
+are out of scope: `rename`, `unlink`, and `rmdir` cannot condition a leaf-entry
+mutation on an already-open inode, so an irreducible leaf-entry TOCTOU window
+remains. A detected ambiguity is preserved and reported; this limitation does
+not disable normal Linux or macOS build, install, update, or cleanup.
+
 Build the checked-in distribution before installing:
 
 ```powershell

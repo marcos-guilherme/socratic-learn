@@ -54,7 +54,10 @@ Tests for a new adapter must cover:
 When publication may have occurred, tests must require preservation of partial
 published paths, private staging directories, and backups. Recovery errors
 must list those paths for manual inspection; cleanup must never delete data
-whose identity or ownership is uncertain.
+whose identity or ownership is known to be uncertain. On POSIX this requirement
+does not claim resistance to a malicious or noncooperating process running as
+the same OS principal during the irreducible leaf-entry `rename`, `unlink`, or
+`rmdir` TOCTOU window documented in the installation guide.
 
 ## Repository checks
 

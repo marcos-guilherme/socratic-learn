@@ -434,14 +434,25 @@ workspace/*
 Stage all content under a unique directory adjacent to `.learning-tutor`.
 Validate staged hashes, create only previously absent parent directories, and
 publish files with atomic no-overwrite operations. Clean private staging after
-a pre-publication failure. Once any path is published, never remove, rename, or
-unlink published destinations during recovery; preserve partial paths and
-private recovery artifacts and report them in an actionable `FilesystemError`.
+a pre-publication failure using recorded topology and identity checks. Once any
+path is published, recovery must not intentionally remove, rename, or unlink
+published destinations; preserve identifiable partial paths and private
+recovery artifacts and report detected ambiguity in an actionable
+`FilesystemError`.
 
 For update, atomically move each owned file to a same-filesystem private backup
 and verify the backup hash. Restore only by atomic no-overwrite publication
 into an absent destination; preserve both paths on a collision. Publish the
 receipt last so interrupted installs remain diagnosably unhealthy.
+
+Acceptance uses the following threat model: the controls protect against
+ordinary collisions, accidental concurrent changes, and cooperating Learning
+Tutor processes. Updates must not knowingly overwrite modified or unowned
+files, and detected ambiguity must be preserved. Malicious or noncooperating
+processes running as the same OS principal are out of scope on POSIX because
+`rename`, `unlink`, and `rmdir` retain an irreducible leaf-entry TOCTOU syscall
+gap; no absolute guarantee extends across that gap. Normal Linux and macOS
+build, install, update, and cleanup remain enabled.
 
 - [ ] **Step 6: Connect generic CLI and test**
 

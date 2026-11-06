@@ -210,6 +210,17 @@ other than the receipt only when:
 A missing, modified, unowned, or colliding path aborts the entire update before
 mutation. There is no `--force` option in version 1.
 
+The filesystem threat model covers ordinary collisions, accidental concurrent
+changes, and cooperating Learning Tutor processes. No-replace publication,
+parent-directory bindings, identity rechecks, exact-topology cleanup, recovery
+artifacts, and Windows handle-bound operations remain required. On POSIX,
+malicious or noncooperating processes running as the same OS principal are out
+of scope because `rename`, `unlink`, and `rmdir` cannot condition a leaf-entry
+mutation on an already-open inode; the resulting leaf-entry TOCTOU window is
+irreducible with the available APIs. Detected ambiguity is preserved. No
+acceptance criterion claims resistance to hostile same-principal mutation
+inside that syscall gap, and POSIX operation is not disabled.
+
 ## CLI Contract
 
 ```text
@@ -251,14 +262,16 @@ Installation has two phases:
 2. stage artifacts in a private adjacent directory and atomically publish them
    without overwriting existing paths.
 
-No target file is changed until all preconditions pass. Before publication,
-failures clean private staging normally. After any path is published, a
-failure never unlinks, removes, or renames published destinations: it preserves
-partial paths and required staging or backups, reports them, and states that
-no external data was deleted. Update backups are restored only by atomic
-no-overwrite publication into absent destinations; a competing destination
-and its backup are both preserved. The receipt is published last, so partial
-installs remain visibly unhealthy for `doctor`.
+No target file is knowingly changed until all preconditions pass. Before
+publication, failures clean private staging using the recorded topology and
+identities. After any path is published, recovery does not intentionally
+unlink, remove, or rename published destinations: it preserves identifiable
+partial paths and required staging or backups and reports detected ambiguity.
+Update backups are restored only by atomic no-overwrite publication into
+absent destinations; a detected competing destination and its backup are both
+preserved. These statements are subject to the POSIX same-principal leaf-entry
+TOCTOU limit above. The receipt is published last, so partial installs remain
+visibly unhealthy for `doctor`.
 
 Stable exit codes:
 
@@ -379,7 +392,9 @@ All user-facing distribution documentation and CLI messages are English.
 2. The same repository installs collision-safe loaders for all four targets.
 3. Repeated builds are byte-identical.
 4. `doctor` detects tampering, missing files, invalid links, and privacy errors.
-5. Updates never overwrite user-modified or unowned files.
+5. Updates must not knowingly overwrite modified or unowned files; detected
+   ambiguity is preserved, subject to the documented POSIX hostile
+   same-principal syscall-gap limitation.
 6. A generic user can paste one loader and prompt bundle without understanding
    the repository layout.
 7. The generated artifacts encode every behavioral conformance requirement.

@@ -50,6 +50,13 @@ class AtomicNoReplaceUnsupportedError(IdentityMismatchError):
     """The platform cannot perform an atomic no-replace rename."""
 
 
+POSIX_SAME_PRINCIPAL_LIMIT = (
+    "on POSIX, malicious or noncooperating same-principal processes are outside "
+    "the guarantee because leaf-entry rename/unlink/rmdir operations have an "
+    "irreducible TOCTOU window"
+)
+
+
 def status_identity(status: os.stat_result) -> PathIdentity:
     return PathIdentity(status.st_dev, status.st_ino)
 

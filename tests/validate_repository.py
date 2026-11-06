@@ -59,6 +59,8 @@ REQUIRED_PATHS = (
     "docs/universal-installation.md",
     "docs/manifest-reference.md",
     "docs/adding-an-adapter.md",
+    "docs/superpowers/specs/2026-11-05-universal-distribution-design.md",
+    "docs/superpowers/plans/2026-11-05-universal-distribution.md",
     ".github/workflows/native-python.yml",
 )
 SKILL_PATHS = (
@@ -84,6 +86,20 @@ UNIVERSAL_VALIDATION_INPUTS = (
     "curricula/mathematics/map.md",
     "curricula/ai/map.md",
 )
+POSIX_THREAT_MODEL_PATHS = (
+    "README.md",
+    "docs/universal-installation.md",
+    "docs/superpowers/specs/2026-11-05-universal-distribution-design.md",
+    "docs/superpowers/plans/2026-11-05-universal-distribution.md",
+)
+POSIX_THREAT_MODEL_TERMS = (
+    "ordinary collisions",
+    "accidental concurrent changes",
+    "cooperating learning tutor processes",
+    "same os principal",
+    "leaf-entry toctou",
+)
+IMPOSSIBLE_SAFETY_CLAIM = "no external data was deleted"
 
 
 def markdown_files(root: Path) -> list[Path]:
@@ -226,6 +242,37 @@ def validate(root: Path) -> list[str]:
         else:
             errors.append(
                 f"Required path is not a file: {relative} (found non-file)"
+            )
+
+    for relative in POSIX_THREAT_MODEL_PATHS:
+        path = root / relative
+        if not path.is_file():
+            continue
+        text = normalize(path.read_text(encoding="utf-8")).lower()
+        missing = [
+            term for term in POSIX_THREAT_MODEL_TERMS if term not in text
+        ]
+        if missing:
+            errors.append(
+                f"Missing POSIX same-principal threat model in {relative}: "
+                + ", ".join(missing)
+            )
+
+    claim_paths = [
+        root / "README.md",
+        *(root / "docs").rglob("*.md"),
+        *(root / "learning_tutor").rglob("*.py"),
+    ]
+    for path in claim_paths:
+        if (
+            path.is_file()
+            and IMPOSSIBLE_SAFETY_CLAIM
+            in path.read_text(encoding="utf-8").lower()
+        ):
+            relative = path.relative_to(root)
+            errors.append(
+                f"Impossible absolute filesystem safety claim in {relative}: "
+                f"{IMPOSSIBLE_SAFETY_CLAIM}"
             )
 
     for path in markdown_files(root):

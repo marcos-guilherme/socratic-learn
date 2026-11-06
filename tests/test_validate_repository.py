@@ -31,6 +31,8 @@ UNIVERSAL_REQUIRED_PATHS = (
     "docs/universal-installation.md",
     "docs/manifest-reference.md",
     "docs/adding-an-adapter.md",
+    "docs/superpowers/specs/2026-11-05-universal-distribution-design.md",
+    "docs/superpowers/plans/2026-11-05-universal-distribution.md",
     ".github/workflows/native-python.yml",
 )
 
@@ -180,6 +182,7 @@ class RepositoryValidationTests(unittest.TestCase):
             path.write_text("# file\n", encoding="utf-8")
         source_root = Path(__file__).resolve().parents[1]
         for relative in (
+            "README.md",
             *UNIVERSAL_REQUIRED_PATHS,
             "core/pedagogy.md",
             "core/session-protocol.md",
@@ -215,6 +218,37 @@ class RepositoryValidationTests(unittest.TestCase):
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
         self.assertEqual([], validate(root))
+
+    def test_validator_rejects_missing_posix_threat_model(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        readme = root / "README.md"
+        readme.write_text("# Portable AI Learning Environment\n", encoding="utf-8")
+
+        errors = validate(root)
+
+        self.assertTrue(
+            any(
+                "POSIX same-principal threat model" in error
+                and "README.md" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_runtime_and_acceptance_language_stays_scoped(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        install = (root / "learning_tutor/install.py").read_text(encoding="utf-8")
+        design = (
+            root / "docs/superpowers/specs/2026-11-05-universal-distribution-design.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("no external data was deleted", install.lower())
+        self.assertIn(
+            "must not knowingly overwrite modified or unowned files",
+            design.lower(),
+        )
+        self.assertIn("hostile same-principal mutation", design.lower())
 
     def test_agents_entry_references_every_core_document(self) -> None:
         temp, root = self.make_root()
@@ -830,8 +864,10 @@ class RepositoryValidationTests(unittest.TestCase):
     def test_fenced_code_is_ignored_for_links_and_private_markers(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
-        (root / "README.md").write_text(
-            "```markdown\n[Missing](missing.md)\nPRIVATE_LEARNER_DATA\n```\n",
+        readme = root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8")
+            + "\n```markdown\n[Missing](missing.md)\nPRIVATE_LEARNER_DATA\n```\n",
             encoding="utf-8",
         )
         self.assertEqual([], validate(root))
@@ -840,8 +876,10 @@ class RepositoryValidationTests(unittest.TestCase):
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
         (root / "guide.md").write_text("# Guide\n", encoding="utf-8")
-        (root / "README.md").write_text(
-            '[Guide](guide.md "Guide")\n', encoding="utf-8"
+        readme = root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8") + '\n[Guide](guide.md "Guide")\n',
+            encoding="utf-8",
         )
         self.assertEqual([], validate(root))
 
@@ -888,8 +926,10 @@ class RepositoryValidationTests(unittest.TestCase):
     def test_private_marker_inline_mention_passes(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
-        (root / "README.md").write_text(
-            "The PRIVATE_LEARNER_DATA marker identifies private records.\n",
+        readme = root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8")
+            + "\nThe PRIVATE_LEARNER_DATA marker identifies private records.\n",
             encoding="utf-8",
         )
         self.assertEqual([], validate(root))
