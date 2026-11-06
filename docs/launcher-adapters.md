@@ -58,7 +58,10 @@ Tests must use a fake executable found through an isolated `PATH`; no provider
 account or network request belongs in the release gate. Required tests cover
 detection, exact arguments, protocol delivery, working directory, Unicode and
 spaces, saved-default reuse, explicit override, inherited exit status, and no
-mutation outside the isolated home and test directory.
+mutation outside the launcher's defined workspace boundaries in the controlled
+acceptance fixture. This verifies the isolated home, fake-host log, untouched
+sibling tree, and source repository; it does not claim observation of the
+whole operating system.
 
 For project-local discovery files instead, follow
 [Adding an Adapter](adding-an-adapter.md).

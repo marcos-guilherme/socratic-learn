@@ -77,6 +77,32 @@ class UniversalSmokeTests(unittest.TestCase):
             )
         )
 
+    @staticmethod
+    def _tree_snapshot(root: Path) -> dict[str, tuple[str, bytes | str]]:
+        snapshot: dict[str, tuple[str, bytes | str]] = {}
+        for directory, directory_names, file_names in os.walk(
+            root,
+            followlinks=False,
+        ):
+            current = Path(directory)
+            relative_directory = current.relative_to(root).as_posix()
+            if relative_directory != ".":
+                snapshot[relative_directory] = ("directory", "")
+            for name in tuple(directory_names):
+                path = current / name
+                if path.is_symlink():
+                    relative = path.relative_to(root).as_posix()
+                    snapshot[relative] = ("symlink", os.readlink(path))
+                    directory_names.remove(name)
+            for name in file_names:
+                path = current / name
+                relative = path.relative_to(root).as_posix()
+                if path.is_symlink():
+                    snapshot[relative] = ("symlink", os.readlink(path))
+                else:
+                    snapshot[relative] = ("file", path.read_bytes())
+        return snapshot
+
     def test_installed_wheel_launches_fake_pi_end_to_end(self) -> None:
         repository = Path(__file__).resolve().parents[1]
         before_repository = self._repository_state(repository)
@@ -173,12 +199,25 @@ class UniversalSmokeTests(unittest.TestCase):
 
             home = root / "home"
             home.mkdir()
+            sentinel = root / "untouched-sibling" / "nested" / "sentinel.bin"
+            sentinel.parent.mkdir(parents=True)
+            sentinel_bytes = b"\x00UNCHANGED\xff\n"
+            sentinel.write_bytes(sentinel_bytes)
+            before_controlled_root = self._tree_snapshot(root)
+            before_launch_repository = self._repository_state(repository)
+            self.assertEqual(
+                before_repository,
+                before_launch_repository,
+                "wheel and fake-host setup must not mutate the source repository",
+            )
+
             run_environment = os.environ.copy()
             run_environment.update(
                 {
                     "FAKE_PI_RECORD": str(record),
                     "HOME": str(home),
                     "PATH": str(scripts),
+                    "PYTHONDONTWRITEBYTECODE": "1",
                     "SOCRATIC_LEARN_HOME": str(home),
                     "USERPROFILE": str(home),
                 }
@@ -236,6 +275,30 @@ class UniversalSmokeTests(unittest.TestCase):
             self.assertTrue((private / "learning-goal.md").is_file())
             self.assertTrue((private / "progress.md").is_file())
             self.assertTrue((private / "sessions").is_dir())
+            self.assertEqual(sentinel_bytes, sentinel.read_bytes())
+            after_controlled_root = self._tree_snapshot(root)
+            changed_paths = {
+                path
+                for path in before_controlled_root.keys()
+                | after_controlled_root.keys()
+                if before_controlled_root.get(path)
+                != after_controlled_root.get(path)
+            }
+            self.assertTrue(changed_paths, "launch must create controlled state")
+            self.assertTrue(
+                all(
+                    path == "fake-pi-record.json"
+                    or path == "home"
+                    or path.startswith("home/")
+                    for path in changed_paths
+                ),
+                f"launch changed paths outside defined boundaries: {changed_paths}",
+            )
+            self.assertEqual(
+                before_launch_repository,
+                self._repository_state(repository),
+                "installed launch must not mutate the source repository",
+            )
 
         self.assertEqual(
             before_repository,

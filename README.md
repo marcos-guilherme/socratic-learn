@@ -40,19 +40,38 @@ prediction.
 ## Quick start
 
 Normal use requires no repository clone and no source build. The native
-installers target x86-64 Windows, Linux, and macOS. When release artifacts are
-published, install the latest native build with one command:
+installers target x86-64 Windows, Linux, and macOS. Native installation is
+available only after GitHub Release v0.1.0 is published. When that release
+exists, download its version-scoped installer asset to a temporary file and
+review it before execution.
 
 Windows PowerShell:
 
 ```powershell
-$script = irm https://raw.githubusercontent.com/marcos-guilherme/socratic-learn/main/scripts/install.ps1; & ([scriptblock]::Create($script))
+$installer = Join-Path $env:TEMP "socratic-install-v0.1.0.ps1"
+Invoke-WebRequest https://github.com/marcos-guilherme/socratic-learn/releases/download/v0.1.0/install.ps1 -OutFile $installer
+Get-Content $installer
+```
+
+After reviewing the downloaded file:
+
+```powershell
+& $installer
 ```
 
 Linux or macOS:
 
 ```sh
-sh -c 'tmp=$(mktemp) || exit; curl -fsSL https://raw.githubusercontent.com/marcos-guilherme/socratic-learn/main/scripts/install.sh -o "$tmp" && sh "$tmp"; status=$?; rm -f "$tmp"; exit $status'
+installer=$(mktemp)
+curl -fL https://github.com/marcos-guilherme/socratic-learn/releases/download/v0.1.0/install.sh -o "$installer"
+cat "$installer"
+```
+
+After reviewing the downloaded file:
+
+```sh
+sh "$installer"
+rm -f "$installer"
 ```
 
 The installers verify release hashes and require confirmation before
@@ -63,7 +82,8 @@ that a public release or tag already exists.
 
 The x86-64 native build is the preferred install-once channel. On another
 architecture, or if you prefer a Python-managed environment, use Python 3.11+
-and pipx:
+and pipx after package publication. The pipx command is available only after
+socratic-learn 0.1.0 is published on PyPI.
 
 ```text
 pipx install socratic-learn
@@ -89,9 +109,9 @@ socratic "I want to learn linear algebra"
 socratic --agent pi
 ```
 
-By default, private profiles, progress, and sessions live under
-`~/.socratic-learn/learning/`. To use the current directory as the learning
-project instead, run:
+By default, personal launcher profiles, progress, and sessions live under
+`~/.socratic-learn/learning/.socratic-learn/workspace/`. To use the current
+directory as the learning project instead, run:
 
 ```text
 socratic --here
@@ -165,9 +185,11 @@ option.
 
 ## Private learner state
 
-In this repository, real goals, profiles, progress, and session records belong
-under `workspace/`. In distributed installations they belong under
-`.socratic-learn/workspace/`. Both locations are ignored by version control
+Personal launcher state belongs under
+`~/.socratic-learn/learning/.socratic-learn/workspace/`. Project adapters store
+private state under `PROJECT/.socratic-learn/workspace/`. In this source
+repository, real goals, profiles, progress, and session records belong under
+`workspace/`. Project and repository locations are ignored by version control
 except for their tracked `.gitkeep` placeholders.
 
 Verify the repository workspace before publishing:

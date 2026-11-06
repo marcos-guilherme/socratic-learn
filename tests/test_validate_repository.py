@@ -125,6 +125,20 @@ README_LAUNCHER_COMMANDS = (
     "socratic uninstall",
     "pipx install socratic-learn",
 )
+NATIVE_RELEASE_CAVEAT = (
+    "Native installation is available only after GitHub Release v0.1.0 "
+    "is published."
+)
+PYPI_RELEASE_CAVEAT = (
+    "The pipx command is available only after socratic-learn 0.1.0 "
+    "is published on PyPI."
+)
+VERSIONED_INSTALLER_URLS = (
+    "https://github.com/marcos-guilherme/socratic-learn/releases/download/"
+    "v0.1.0/install.ps1",
+    "https://github.com/marcos-guilherme/socratic-learn/releases/download/"
+    "v0.1.0/install.sh",
+)
 
 
 def parse_curriculum_nodes(text: str) -> list[tuple[str, dict[str, str]]]:
@@ -354,6 +368,44 @@ class RepositoryValidationTests(unittest.TestCase):
             with self.subTest(clause=clause):
                 self.assertIn(clause, normalized)
 
+    def test_readme_orders_onboarding_and_scopes_channel_availability(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "README.md").read_text(encoding="utf-8")
+        quick_start = text.split("## Quick start", 1)[1].split(
+            "## How a learning session works",
+            1,
+        )[0]
+        normalized_quick_start = " ".join(quick_start.split())
+
+        ordered_markers = (
+            VERSIONED_INSTALLER_URLS[0],
+            VERSIONED_INSTALLER_URLS[1],
+            "pipx install socratic-learn",
+            "\nsocratic\n",
+            'socratic "I want to learn linear algebra"',
+            "socratic --agent pi",
+            "socratic --here",
+        )
+        previous = -1
+        for marker in ordered_markers:
+            position = quick_start.find(marker)
+            with self.subTest(marker=marker):
+                self.assertGreater(position, previous)
+            previous = position
+        self.assertIn(NATIVE_RELEASE_CAVEAT, normalized_quick_start)
+        self.assertIn(PYPI_RELEASE_CAVEAT, normalized_quick_start)
+        self.assertLess(
+            normalized_quick_start.index(NATIVE_RELEASE_CAVEAT),
+            normalized_quick_start.index(VERSIONED_INSTALLER_URLS[0]),
+        )
+        self.assertLess(
+            normalized_quick_start.index(PYPI_RELEASE_CAVEAT),
+            normalized_quick_start.index("pipx install socratic-learn"),
+        )
+        self.assertNotIn("raw.githubusercontent.com", quick_start)
+        self.assertNotRegex(quick_start, r"(?is)\birm\b[^\n|]*\|\s*iex\b")
+        self.assertNotRegex(quick_start, r"(?is)\bcurl\b[^\n|]*\|\s*(?:ba)?sh\b")
+
     def test_launcher_and_distribution_docs_define_public_contracts(self) -> None:
         root = Path(__file__).resolve().parents[1]
         launcher_path = root / "docs/launcher-adapters.md"
@@ -388,6 +440,14 @@ class RepositoryValidationTests(unittest.TestCase):
         ):
             with self.subTest(document="installation", clause=clause):
                 self.assertIn(clause, installation_normalized)
+        self.assertIn(NATIVE_RELEASE_CAVEAT.lower(), installation_normalized)
+        self.assertIn(PYPI_RELEASE_CAVEAT.lower(), installation_normalized)
+        self.assertNotIn("raw.githubusercontent.com", installation)
+        self.assertNotRegex(installation, r"(?is)\birm\b[^\n|]*\|\s*iex\b")
+        self.assertNotRegex(
+            installation,
+            r"(?is)\bcurl\b[^\n|]*\|\s*(?:ba)?sh\b",
+        )
 
     def test_validator_rejects_narrow_readme_positioning(self) -> None:
         temp, root = self.make_root()
@@ -432,6 +492,61 @@ class RepositoryValidationTests(unittest.TestCase):
             "docs/launcher-adapters.md is missing launcher adapter contracts",
             validate(root),
         )
+
+    def test_validator_rejects_missing_channel_availability_caveats(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        for relative in ("README.md", "docs/universal-installation.md"):
+            with self.subTest(relative=relative):
+                path = root / relative
+                original = path.read_text(encoding="utf-8")
+                unsafe = re.sub(
+                    r"Native installation is\s+available only after GitHub "
+                    r"Release\s+v0[.]1[.]0 is published[.]",
+                    "Install the native release.",
+                    original,
+                )
+                unsafe = re.sub(
+                    r"The pipx command is available only after\s+"
+                    r"socratic-learn 0[.]1[.]0 is published on\s+PyPI[.]",
+                    "Install with pipx.",
+                    unsafe,
+                )
+                path.write_text(unsafe, encoding="utf-8")
+                self.assertIn(
+                    f"{relative} must condition native and PyPI instructions "
+                    "on publication",
+                    validate(root),
+                )
+                path.write_text(original, encoding="utf-8")
+
+    def test_validator_rejects_mutable_or_piped_installer_commands(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        unsafe_examples = (
+            (
+                VERSIONED_INSTALLER_URLS[0],
+                "https://raw.githubusercontent.com/marcos-guilherme/"
+                "socratic-learn/main/scripts/install.ps1",
+            ),
+            ("& $installer", "irm $url | iex"),
+            ("sh \"$installer\"", "curl -fsSL $url | sh"),
+        )
+        for relative in ("README.md", "docs/universal-installation.md"):
+            path = root / relative
+            original = path.read_text(encoding="utf-8")
+            for expected, unsafe in unsafe_examples:
+                with self.subTest(relative=relative, unsafe=unsafe):
+                    path.write_text(
+                        original.replace(expected, unsafe, 1),
+                        encoding="utf-8",
+                    )
+                    self.assertIn(
+                        f"{relative} contains unsafe or mutable "
+                        "installer instructions",
+                        validate(root),
+                    )
+            path.write_text(original, encoding="utf-8")
 
     def test_repository_uses_mit_license(self) -> None:
         root = Path(__file__).resolve().parents[1]

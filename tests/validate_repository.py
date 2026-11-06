@@ -108,6 +108,33 @@ README_LAUNCHER_REQUIREMENTS = (
     "pi, claude code, and antigravity",
     "cursor remains a project integration",
 )
+NATIVE_RELEASE_CAVEAT = (
+    "native installation is available only after github release v0.1.0 "
+    "is published."
+)
+PYPI_RELEASE_CAVEAT = (
+    "the pipx command is available only after socratic-learn 0.1.0 "
+    "is published on pypi."
+)
+VERSIONED_INSTALLER_URLS = (
+    "https://github.com/marcos-guilherme/socratic-learn/releases/download/"
+    "v0.1.0/install.ps1",
+    "https://github.com/marcos-guilherme/socratic-learn/releases/download/"
+    "v0.1.0/install.sh",
+)
+README_ONBOARDING_ORDER = (
+    *VERSIONED_INSTALLER_URLS,
+    "pipx install socratic-learn",
+    "\nsocratic\n",
+    'socratic "i want to learn linear algebra"',
+    "socratic --agent pi",
+    "socratic --here",
+)
+UNSAFE_INSTALLER_PATTERNS = (
+    re.compile(r"raw[.]githubusercontent[.]com/.*/main/", re.IGNORECASE),
+    re.compile(r"\birm\b[^\n|]*\|\s*iex\b", re.IGNORECASE),
+    re.compile(r"\bcurl\b[^\n|]*\|\s*(?:ba)?sh\b", re.IGNORECASE),
+)
 LAUNCHER_ADAPTER_REQUIREMENTS = (
     "executable detection",
     "exact command construction",
@@ -455,6 +482,52 @@ def validate(root: Path) -> list[str]:
             for requirement in README_LAUNCHER_REQUIREMENTS
         ):
             errors.append("README.md is missing public launcher onboarding")
+        quick_start = readme_text.split("## Quick start", 1)
+        quick_start_text = (
+            quick_start[1].split("## How a learning session works", 1)[0]
+            if len(quick_start) == 2
+            else ""
+        )
+        order_positions = [
+            quick_start_text.lower().find(marker)
+            for marker in README_ONBOARDING_ORDER
+        ]
+        if (
+            any(position < 0 for position in order_positions)
+            or order_positions != sorted(order_positions)
+        ):
+            errors.append("README.md public onboarding is out of order")
+
+    installer_docs = (
+        root / "README.md",
+        root / "docs/universal-installation.md",
+    )
+    for path in installer_docs:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        normalized_text = normalize(text).lower()
+        caveats_are_contextual = (
+            NATIVE_RELEASE_CAVEAT in normalized_text
+            and PYPI_RELEASE_CAVEAT in normalized_text
+            and VERSIONED_INSTALLER_URLS[0] in normalized_text
+            and "pipx install socratic-learn" in normalized_text
+            and normalized_text.index(NATIVE_RELEASE_CAVEAT)
+            < normalized_text.index(VERSIONED_INSTALLER_URLS[0])
+            and normalized_text.index(PYPI_RELEASE_CAVEAT)
+            < normalized_text.index("pipx install socratic-learn")
+        )
+        if not caveats_are_contextual:
+            relative = path.relative_to(root).as_posix()
+            errors.append(
+                f"{relative} must condition native and PyPI instructions "
+                "on publication"
+            )
+        if any(pattern.search(text) for pattern in UNSAFE_INSTALLER_PATTERNS):
+            relative = path.relative_to(root).as_posix()
+            errors.append(
+                f"{relative} contains unsafe or mutable installer instructions"
+            )
 
     launcher_adapters = root / "docs/launcher-adapters.md"
     if launcher_adapters.is_file():
