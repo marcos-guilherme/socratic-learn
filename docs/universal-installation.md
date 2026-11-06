@@ -8,6 +8,15 @@ exactly four project-local targets: `generic`, `cursor`, `claude-code`, and
 distributed through these adapters. It does not certify every model, agent
 version, or host capability.
 
+Transactional build and update moves require an atomic native no-replace
+rename: `renameat2(RENAME_NOREPLACE)` on Linux, `renameatx_np(RENAME_EXCL)` on
+macOS 10.12 or newer, or the existing handle-bound operation on Windows. The
+Linux C library must expose `renameat2`, and the active filesystem must support
+the flag. If the API, kernel, or filesystem support is unavailable, the command
+does not fall back to an overwrite-prone rename. It fails with recovery
+guidance, preserves managed content, and cleans pre-publication update staging
+when its identity remains provable.
+
 Build the checked-in distribution before installing:
 
 ```powershell

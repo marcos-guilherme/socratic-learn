@@ -21,6 +21,7 @@ from .errors import (
 )
 from .manifest import serialize_json, sha256_bytes, validate_manifest
 from .safe_fs import (
+    AtomicNoReplaceUnsupportedError,
     ParentIdentity,
     PathIdentity,
     TrackedDirectory,
@@ -1228,6 +1229,10 @@ def _apply_update(
             )
             linked_files.append(_link_staged_file(source, destination))
     except (LearningTutorError, OSError) as error:
+        if isinstance(error, AtomicNoReplaceUnsupportedError):
+            backup_may_contain_unrecorded_data = False
+            uncertain_source = None
+            uncertain_backup = None
         if backup is None:
             cleanup_failures = _cleanup_created_trees([stage_directory])
             if cleanup_failures:

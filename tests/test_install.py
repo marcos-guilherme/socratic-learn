@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
 
+import learning_tutor.safe_fs as safe_fs
 from learning_tutor import PROTOCOL_VERSION
 from learning_tutor.errors import CollisionError, FilesystemError, IntegrityError, UsageError
 from learning_tutor.install import (
@@ -1032,6 +1033,32 @@ class InstallTests(unittest.TestCase):
             (self.project / ".learning-tutor/learning-tutor.prompt.md").read_bytes(),
         )
         self.assertEqual("private", private.read_text(encoding="utf-8"))
+
+    def test_update_unsupported_atomic_move_cleans_prepublication_state(self) -> None:
+        self._install()
+        before = self._snapshot()
+        plan = plan_install(self.source, self.project, "generic", True)
+
+        with (
+            mock.patch(
+                "learning_tutor.install.identity_bound_replace",
+                side_effect=safe_fs.AtomicNoReplaceUnsupportedError(
+                    "renameat2 with RENAME_NOREPLACE is unavailable"
+                ),
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        self.assertEqual(before, self._snapshot())
+        self.assertIn("RENAME_NOREPLACE", str(raised.exception))
+        self.assertFalse(
+            any(
+                path.name.startswith(".learning-tutor-stage-")
+                or path.name.startswith(".learning-tutor-backup-")
+                for path in self.project.iterdir()
+            )
+        )
 
     def test_update_refuses_modified_or_missing_owned_file_before_mutation(self) -> None:
         for state in ("modified", "missing"):

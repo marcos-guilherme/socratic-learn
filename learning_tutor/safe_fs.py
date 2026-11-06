@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import os
 import stat
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -28,6 +32,10 @@ class TrackedDirectory:
 
 class IdentityMismatchError(OSError):
     """A pathname no longer identifies the object authorized for mutation."""
+
+
+class AtomicNoReplaceUnsupportedError(IdentityMismatchError):
+    """The platform cannot perform an atomic no-replace rename."""
 
 
 def status_identity(status: os.stat_result) -> PathIdentity:
@@ -186,6 +194,171 @@ def _before_bound_replace(source: Path, destination: Path) -> None:
     """Narrow race-test hook after parent capture and before mutation."""
 
 
+def _load_posix_symbol(name: str) -> Any | None:
+    """Load one errno-reporting function from the process C library."""
+
+    try:
+        function = getattr(ctypes.CDLL(None, use_errno=True), name)
+    except (AttributeError, OSError):
+        return None
+    function.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    function.restype = ctypes.c_int
+    return function
+
+
+def _unsupported_posix_rename(
+    api: str,
+    flag: str,
+) -> AtomicNoReplaceUnsupportedError:
+    return AtomicNoReplaceUnsupportedError(
+        f"{api} with {flag} is unavailable on this kernel or filesystem; "
+        "source and destination were preserved; retry on a supported local "
+        "filesystem or recover manually from the reported paths"
+    )
+
+
+def _native_posix_rename_no_replace(
+    source_parent_fd: int,
+    source_name: str,
+    destination_parent_fd: int,
+    destination_name: str,
+) -> None:
+    """Invoke the platform's atomic descriptor-relative no-replace rename."""
+
+    if sys.platform.startswith("linux"):
+        api = "renameat2"
+        flag_name = "RENAME_NOREPLACE"
+        flag = 1 << 0
+        unsupported_errors = {errno.EINVAL, errno.ENOSYS}
+    elif sys.platform == "darwin":
+        api = "renameatx_np"
+        flag_name = "RENAME_EXCL"
+        flag = 0x00000004
+        unsupported_errors = {errno.ENOSYS, errno.ENOTSUP}
+    else:
+        raise _unsupported_posix_rename(
+            "descriptor-relative rename",
+            "atomic no-replace",
+        )
+
+    function = _load_posix_symbol(api)
+    if function is None:
+        raise _unsupported_posix_rename(api, flag_name)
+    result = function(
+        source_parent_fd,
+        os.fsencode(source_name),
+        destination_parent_fd,
+        os.fsencode(destination_name),
+        flag,
+    )
+    if result == 0:
+        return
+    error = ctypes.get_errno()
+    if error == errno.EEXIST:
+        raise FileExistsError(
+            error,
+            os.strerror(error),
+            destination_name,
+        )
+    if error in unsupported_errors:
+        raise _unsupported_posix_rename(api, flag_name)
+    raise OSError(error, os.strerror(error), destination_name)
+
+
+def _posix_entry_identity(parent_fd: int, name: str) -> PathIdentity:
+    return status_identity(
+        os.stat(
+            name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    )
+
+
+def _open_posix_source(
+    parent_fd: int,
+    name: str,
+    expected: PathIdentity,
+) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(name, flags, dir_fd=parent_fd)
+    if status_identity(os.fstat(descriptor)) != expected:
+        os.close(descriptor)
+        raise IdentityMismatchError(
+            f"source changed while opening descriptor-bound entry: {name}"
+        )
+    return descriptor
+
+
+def _posix_identity_bound_replace(
+    source: Path,
+    destination: Path,
+    source_parent_fd: int,
+    destination_parent_fd: int,
+    identity: PathIdentity,
+) -> None:
+    """Move through bound parents and reconcile any final source-entry race."""
+
+    if _posix_entry_identity(source_parent_fd, source.name) != identity:
+        raise IdentityMismatchError(
+            f"source identity changed before rename: {source}"
+        )
+    source_fd = _open_posix_source(
+        source_parent_fd,
+        source.name,
+        identity,
+    )
+    try:
+        if _posix_entry_identity(source_parent_fd, source.name) != identity:
+            raise IdentityMismatchError(
+                f"source identity changed at rename boundary: {source}"
+            )
+        _native_posix_rename_no_replace(
+            source_parent_fd,
+            source.name,
+            destination_parent_fd,
+            destination.name,
+        )
+        try:
+            moved_identity = _posix_entry_identity(
+                destination_parent_fd,
+                destination.name,
+            )
+        except OSError as error:
+            raise IdentityMismatchError(
+                f"destination cannot be verified after rename: {destination}"
+            ) from error
+        if moved_identity == identity and status_identity(os.fstat(source_fd)) == identity:
+            return
+
+        recovery_error: OSError | None = None
+        try:
+            _native_posix_rename_no_replace(
+                destination_parent_fd,
+                destination.name,
+                source_parent_fd,
+                source.name,
+            )
+        except OSError as error:
+            recovery_error = error
+        detail = (
+            "unexpected source was restored"
+            if recovery_error is None
+            else f"automatic restoration failed: {recovery_error}"
+        )
+        raise IdentityMismatchError(
+            f"source identity changed during atomic rename; {detail}: {source}"
+        )
+    finally:
+        os.close(source_fd)
+
+
 def _windows_handle_rename_no_replace(
     source_fd: int,
     destination: Path,
@@ -248,9 +421,9 @@ def identity_bound_replace(
 ) -> PathIdentity:
     """Move a verified source without replacing any destination.
 
-    Windows supplies a source-handle-bound rename.  POSIX rename APIs bind
-    parent traversal but cannot bind the final source entry to an already
-    verified inode, so this operation conservatively refuses there.
+    Windows uses a source-handle-bound rename. Linux and macOS use their
+    descriptor-relative native no-replace rename and verify the open source
+    descriptor and destination identity across the mutation boundary.
     """
 
     identity = path_identity(source) if expected_source is None else expected_source
@@ -261,10 +434,28 @@ def identity_bound_replace(
     windows_locks: list[int] = []
     try:
         if os.name != "nt":
-            raise IdentityMismatchError(
-                "POSIX cannot prove a source-identity-bound no-replace rename; "
-                "source and destination were preserved"
+            source_fd = _open_verified_parent(source_chain[-1])
+            destination_fd = _open_verified_parent(destination_chain[-1])
+            _before_bound_replace(source, destination)
+            verify_parent_chain(root, source, source_chain)
+            verify_parent_chain(root, destination, destination_chain)
+            if path_identity(source) != identity:
+                raise IdentityMismatchError(
+                    f"source identity changed before rename: {source}"
+                )
+            _posix_identity_bound_replace(
+                source,
+                destination,
+                source_fd,
+                destination_fd,
+                identity,
             )
+            verify_parent_chain(root, destination, destination_chain)
+            if path_identity(destination) != identity:
+                raise IdentityMismatchError(
+                    f"destination identity changed after rename: {destination}"
+                )
+            return identity
         windows_locks.extend(_lock_windows_chain(source_chain))
         windows_locks.extend(_lock_windows_chain(destination_chain))
         _before_bound_replace(source, destination)
