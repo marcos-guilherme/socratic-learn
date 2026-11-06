@@ -25,7 +25,10 @@ from evaluation.isolation import (
     remove_runtime_root,
     snapshot_learner_records,
 )
+from evaluation.antigravity import initial_bootstrap
 from socratic_learn import PROTOCOL_VERSION
+from socratic_learn.build import build_distribution
+from socratic_learn.hosts import ADAPTERS, command_for
 
 
 class EvaluationIsolationTests(unittest.TestCase):
@@ -703,6 +706,53 @@ class ProtocolIdentityTests(unittest.TestCase):
         self.assertRegex(identity.repository_commit, r"^[0-9a-f]{40,64}$")
         self.assertEqual(PROTOCOL_VERSION, identity.protocol_version)
         self.assertEqual(hashlib.sha256(bundle).hexdigest(), identity.bundle_sha256)
+
+    def test_checked_in_protocol_matches_in_memory_distribution(self) -> None:
+        self.assertEqual(
+            (self.repository / "dist/socratic-learn.prompt.md").read_bytes(),
+            build_distribution(self.repository).bundle,
+        )
+
+    def test_external_layout_bootstrap_and_protocol_match_public_launcher(self) -> None:
+        root = self.repository
+        with (
+            tempfile.TemporaryDirectory() as repository_base,
+            tempfile.TemporaryDirectory() as runtime_base,
+        ):
+            repository = Path(repository_base) / "repo"
+            repository.mkdir()
+            (repository / ".gitignore").write_text(
+                "/.semantic-runs/\n",
+                encoding="utf-8",
+            )
+            layout = create_run_layout(
+                repository,
+                "suite",
+                "conceptual-physics",
+                raw_root=repository / ".semantic-runs",
+                runtime_base=Path(runtime_base),
+                user_home=Path(runtime_base),
+            )
+            try:
+                self.assertFalse(layout.cwd.resolve().is_relative_to(root))
+                self.assertFalse(layout.cwd.resolve().is_relative_to(repository))
+                self.assertEqual(
+                    build_distribution(root).bundle,
+                    layout.protocol.read_bytes(),
+                )
+                goal = "learn cafés"
+                public = command_for(
+                    ADAPTERS["antigravity"],
+                    "agy",
+                    layout.protocol,
+                    goal,
+                )
+                self.assertEqual(
+                    public[2],
+                    initial_bootstrap(layout.protocol, goal),
+                )
+            finally:
+                remove_runtime_root(layout, repository)
 
     def test_protocol_identity_detects_each_mismatch(self) -> None:
         identity = capture_protocol_identity(self.repository)

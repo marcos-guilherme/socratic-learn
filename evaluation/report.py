@@ -70,6 +70,13 @@ _APPROVED_RESEARCH_PATHS = {
     "/papers/details/0cb2208439095e43acfd7e71c4619110/",
     "/papers/details/892841916b2f5030b1f42ccda3ff0adc/",
 }
+_BASELINE_SCENARIO_IDS = frozenset(
+    {
+        "conceptual-physics",
+        "practical-programming",
+        "communication-writing",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -257,6 +264,17 @@ def render_baseline_report(
     rules: Sequence[RedactionRule],
 ) -> str:
     """Render a deterministic tracked report containing only minimum evidence."""
+    scenario_ids = [record.scenario_id for record in records]
+    if (
+        len(scenario_ids) != len(_BASELINE_SCENARIO_IDS)
+        or set(scenario_ids) != _BASELINE_SCENARIO_IDS
+    ):
+        raise ValueError("run records must contain the exact baseline scenario triplet")
+    if len({record.model_identifier for record in records}) != 1:
+        raise ValueError("run records must use one model identifier")
+    if len({record.protocol_sha256 for record in records}) != 1:
+        raise ValueError("run records must use one protocol hash")
+
     record_by_scenario: dict[str, RunRecord] = {}
     for record in records:
         if record.scenario_id in record_by_scenario:

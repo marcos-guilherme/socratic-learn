@@ -329,6 +329,17 @@ class EvaluationAntigravityTests(unittest.TestCase):
         )
         self.assertEqual(public[2], initial_bootstrap(self.layout.protocol, goal))
 
+    def test_evaluation_initial_message_matches_public_antigravity_bootstrap(self) -> None:
+        protocol = Path("C:/isolated/.socratic-learn/socratic-learn.prompt.md")
+        goal = "learn cafés"
+        public = command_for(
+            ADAPTERS["antigravity"],
+            "agy",
+            protocol,
+            goal,
+        )
+        self.assertEqual(public[2], initial_bootstrap(protocol, goal))
+
     def test_adapter_has_no_learner_model_parameter(self) -> None:
         from inspect import signature
 
