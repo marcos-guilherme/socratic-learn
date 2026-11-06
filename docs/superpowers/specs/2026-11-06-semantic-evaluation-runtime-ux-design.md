@@ -168,11 +168,24 @@ driver rejects any repository or local rule marker (`AGENTS.md`, `GEMINI.md`,
 `CLAUDE.md`, `.agents/`, `.agent/`) found in the working directory or any of
 its ancestors below the user-home boundary.
 
+When the working directory is not below the user home, the check covers every
+ancestor up to the filesystem root.
+
 User-level runtime rules at or above the user-home boundary remain inherited
 together with authentication; the driver does not replace `HOME` or
-`USERPROFILE` and never reads rule contents or credentials. It records only
-the names of user-level rule markers that are present, and the report lists
-them as an evaluation limitation.
+`USERPROFILE` and never reads rule contents or credentials. Using existence
+checks only (`lexists`, without opening, listing, or resolving links), it
+records two separate name-only disclosures:
+
+- user-home-relative rule paths that are present: `AGENTS.md`, `GEMINI.md`,
+  `CLAUDE.md`, `.agents/`, `.agent/`, and `.gemini/GEMINI.md`;
+- ancestor markers above the user home, up to the filesystem root, recorded
+  as the marker name and its number of levels above the home, never as a
+  path.
+
+The run's private runtime context also records that the local rule check
+passed and which boundary it used. The report lists both disclosures per
+scenario as an evaluation limitation.
 
 Raw streams, runtime logs, provider metadata, and evaluator notes remain under
 the repository's ignored `.semantic-runs/`. The external home and working
