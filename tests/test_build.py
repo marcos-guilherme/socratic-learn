@@ -9,16 +9,16 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
 
-from learning_tutor import PROTOCOL_VERSION
-from learning_tutor.build import (
+from socratic_learn import PROTOCOL_VERSION
+from socratic_learn.build import (
     CANONICAL_SOURCES,
     build_distribution,
     write_distribution,
 )
-from learning_tutor.__main__ import main
-from learning_tutor.errors import CollisionError, FilesystemError, IntegrityError
-from learning_tutor.export import export_prompt
-from learning_tutor.manifest import sha256_bytes
+from socratic_learn.__main__ import main
+from socratic_learn.errors import CollisionError, FilesystemError, IntegrityError
+from socratic_learn.export import export_prompt
+from socratic_learn.manifest import sha256_bytes
 
 
 class BuildTests(unittest.TestCase):
@@ -155,7 +155,7 @@ class BuildTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         absolute = str((root / CANONICAL_SOURCES[0]).resolve())
 
-        with mock.patch("learning_tutor.build.CANONICAL_SOURCES", (absolute,)):
+        with mock.patch("socratic_learn.build.CANONICAL_SOURCES", (absolute,)):
             with self.assertRaisesRegex(IntegrityError, "relative"):
                 build_distribution(root)
 
@@ -344,7 +344,7 @@ class BuildTests(unittest.TestCase):
         )
         new_result = build_distribution(root)
         real_write = __import__(
-            "learning_tutor.build", fromlist=["_atomic_write"]
+            "socratic_learn.build", fromlist=["_atomic_write"]
         )._atomic_write
         calls = 0
 
@@ -359,7 +359,7 @@ class BuildTests(unittest.TestCase):
                 )
             real_write(path, data)
 
-        with mock.patch("learning_tutor.build._atomic_write", side_effect=fail_second):
+        with mock.patch("socratic_learn.build._atomic_write", side_effect=fail_second):
             with self.assertRaises(FilesystemError) as raised:
                 write_distribution(root, new_result)
 
@@ -381,7 +381,7 @@ class BuildTests(unittest.TestCase):
         def stage_write_case(root: Path):
             result = build_distribution(root)
             patcher = mock.patch(
-                "learning_tutor.build.tempfile.NamedTemporaryFile",
+                "socratic_learn.build.tempfile.NamedTemporaryFile",
                 side_effect=OSError("stage write denied"),
             )
             return patcher, lambda: write_distribution(root, result), "prompt.md"
@@ -389,7 +389,7 @@ class BuildTests(unittest.TestCase):
         def distribution_operation_case(root: Path):
             result = build_distribution(root)
             patcher = mock.patch(
-                "learning_tutor.build.tempfile.mkdtemp",
+                "socratic_learn.build.tempfile.mkdtemp",
                 side_effect=OSError("stage directory denied"),
             )
             return patcher, lambda: write_distribution(root, result), "dist"
@@ -440,7 +440,7 @@ class BuildTests(unittest.TestCase):
             write_distribution(root, result)
             output = root / "prompt-copy.md"
             patcher = mock.patch(
-                "learning_tutor.build.tempfile.NamedTemporaryFile",
+                "socratic_learn.build.tempfile.NamedTemporaryFile",
                 side_effect=OSError("output write denied"),
             )
             return patcher, lambda: export_prompt(output, root=root), "prompt-copy.md"
@@ -481,7 +481,7 @@ class BuildTests(unittest.TestCase):
         )
         new_result = build_distribution(root)
         safe_fs = __import__(
-            "learning_tutor.safe_fs",
+            "socratic_learn.safe_fs",
             fromlist=["_windows_handle_rename_no_replace"],
         )
         real_replace = safe_fs._windows_handle_rename_no_replace
@@ -495,7 +495,7 @@ class BuildTests(unittest.TestCase):
             real_replace(source_descriptor, destination)
 
         with mock.patch(
-            "learning_tutor.safe_fs._windows_handle_rename_no_replace",
+            "socratic_learn.safe_fs._windows_handle_rename_no_replace",
             side_effect=fail_new_directory,
         ):
             with self.assertRaisesRegex(FilesystemError, "swap") as raised:
@@ -529,7 +529,7 @@ class BuildTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._before_bound_replace",
+                "socratic_learn.safe_fs._before_bound_replace",
                 side_effect=replace_dist_before_backup,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -559,7 +559,7 @@ class BuildTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._before_identity_cleanup",
+                "socratic_learn.safe_fs._before_identity_cleanup",
                 side_effect=replace_backup_before_cleanup,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -634,7 +634,7 @@ class BuildTests(unittest.TestCase):
                     write_distribution(root, result)
                     dist = root / "dist"
                     real_track = __import__(
-                        "learning_tutor.build",
+                        "socratic_learn.build",
                         fromlist=["track_directory"],
                     ).track_directory
 
@@ -644,7 +644,7 @@ class BuildTests(unittest.TestCase):
                         return real_track(path)
 
                     with mock.patch(
-                        "learning_tutor.build.track_directory",
+                        "socratic_learn.build.track_directory",
                         side_effect=reject_untrackable,
                     ):
                         with self.assertRaises(FilesystemError) as raised:
@@ -701,7 +701,7 @@ class BuildTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._before_identity_cleanup",
+                "socratic_learn.safe_fs._before_identity_cleanup",
                 side_effect=insert_unknown,
             ),
             self.assertRaisesRegex(FilesystemError, "cleanup"),
@@ -750,7 +750,7 @@ class BuildTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._before_bound_replace",
+                "socratic_learn.safe_fs._before_bound_replace",
                 side_effect=race_output,
             ),
             self.assertRaises(CollisionError),
@@ -768,7 +768,7 @@ class BuildTests(unittest.TestCase):
         output_parent.mkdir()
         output = output_parent / "prompt.md"
         detached = root / "detached-out"
-        build_module = __import__("learning_tutor.build", fromlist=["_atomic_write"])
+        build_module = __import__("socratic_learn.build", fromlist=["_atomic_write"])
         real_write = build_module._atomic_write
 
         def replace_parent(path: Path, data: bytes, **kwargs: object) -> None:
@@ -779,7 +779,7 @@ class BuildTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.export._atomic_write",
+                "socratic_learn.export._atomic_write",
                 side_effect=replace_parent,
             ),
             self.assertRaises(FilesystemError),
@@ -817,7 +817,7 @@ class BuildTests(unittest.TestCase):
 
         stdout = mock.Mock()
         stdout.buffer = BytesIO()
-        with mock.patch("learning_tutor.export.sys.stdout", stdout):
+        with mock.patch("socratic_learn.export.sys.stdout", stdout):
             export_prompt(root=root)
 
         self.assertEqual(result.bundle, stdout.buffer.getvalue())
@@ -881,7 +881,7 @@ class BuildTests(unittest.TestCase):
                         else BinaryStdout(operation)
                     )
                     cwd_patch = mock.patch(
-                        f"learning_tutor.{command}.Path.cwd",
+                        f"socratic_learn.{command}.Path.cwd",
                         return_value=root,
                     )
                     stdout_patch = mock.patch("sys.stdout", stdout)
@@ -937,7 +937,7 @@ class BuildTests(unittest.TestCase):
                         write_distribution(root, build_distribution(root))
                     with (
                         mock.patch(
-                            f"learning_tutor.{command}.Path.cwd",
+                            f"socratic_learn.{command}.Path.cwd",
                             return_value=root,
                         ),
                         mock.patch("sys.stdout", failing_stdout),

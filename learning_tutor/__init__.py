@@ -1,5 +1,11 @@
-"""Universal learning tutor distribution tools."""
+"""Deprecated compatibility imports for Socratic Learn."""
 
-PROTOCOL_VERSION = "1.0.0"
-MANIFEST_SCHEMA_VERSION = 1
-TARGETS = ("generic", "cursor", "claude-code", "pi")
+from socratic_learn import MANIFEST_SCHEMA_VERSION, PROTOCOL_VERSION, TARGETS
+from socratic_learn.errors import LearningTutorError
+
+__all__ = [
+    "LearningTutorError",
+    "MANIFEST_SCHEMA_VERSION",
+    "PROTOCOL_VERSION",
+    "TARGETS",
+]

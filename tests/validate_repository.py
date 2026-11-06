@@ -10,9 +10,9 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from learning_tutor.build import build_distribution
-from learning_tutor.errors import LearningTutorError
-from learning_tutor.manifest import validate_manifest
+from socratic_learn.build import build_distribution
+from socratic_learn.errors import LearningTutorError
+from socratic_learn.manifest import validate_manifest
 
 REQUIRED_PATHS = (
     "README.md",
@@ -43,17 +43,19 @@ REQUIRED_PATHS = (
     "workspace/.gitkeep",
     "learning_tutor/__init__.py",
     "learning_tutor/__main__.py",
-    "learning_tutor/build.py",
-    "learning_tutor/conformance.py",
-    "learning_tutor/doctor.py",
-    "learning_tutor/errors.py",
-    "learning_tutor/export.py",
-    "learning_tutor/install.py",
-    "learning_tutor/manifest.py",
-    "learning_tutor/templates/generic-loader.md",
-    "learning_tutor/templates/cursor-skill.md",
-    "learning_tutor/templates/claude-loader.md",
-    "learning_tutor/templates/pi-skill.md",
+    "socratic_learn/__init__.py",
+    "socratic_learn/__main__.py",
+    "socratic_learn/build.py",
+    "socratic_learn/conformance.py",
+    "socratic_learn/doctor.py",
+    "socratic_learn/errors.py",
+    "socratic_learn/export.py",
+    "socratic_learn/install.py",
+    "socratic_learn/manifest.py",
+    "socratic_learn/templates/generic-loader.md",
+    "socratic_learn/templates/cursor-skill.md",
+    "socratic_learn/templates/claude-loader.md",
+    "socratic_learn/templates/pi-skill.md",
     "dist/learning-tutor.prompt.md",
     "dist/manifest.json",
     "docs/universal-installation.md",
@@ -76,7 +78,7 @@ CANONICAL_RE = re.compile(
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 FENCE_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})")
 UNIVERSAL_VALIDATION_INPUTS = (
-    "learning_tutor/build.py",
+    "socratic_learn/build.py",
     "dist/learning-tutor.prompt.md",
     "dist/manifest.json",
     "core/pedagogy.md",

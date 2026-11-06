@@ -10,8 +10,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
 
-import learning_tutor.safe_fs as safe_fs
-from learning_tutor.safe_fs import (
+import socratic_learn.safe_fs as safe_fs
+from socratic_learn.safe_fs import (
     IdentityMismatchError,
     identity_bound_replace,
     path_identity,
@@ -37,7 +37,7 @@ class SafeFilesystemTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._before_bound_replace",
+                "socratic_learn.safe_fs._before_bound_replace",
                 side_effect=create_destination,
             ),
             self.assertRaises(FileExistsError),
@@ -61,7 +61,7 @@ class SafeFilesystemTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._before_bound_replace",
+                "socratic_learn.safe_fs._before_bound_replace",
                 side_effect=replace_source,
             ),
             self.assertRaises(IdentityMismatchError),
@@ -95,7 +95,7 @@ class SafeFilesystemTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._before_windows_handle_delete",
+                "socratic_learn.safe_fs._before_windows_handle_delete",
                 side_effect=replace_root,
             ),
             self.assertRaises(OSError),
@@ -227,18 +227,18 @@ class SafeFilesystemTests(unittest.TestCase):
 
         native = mock.Mock()
         with (
-            mock.patch("learning_tutor.safe_fs.os.name", "posix"),
+            mock.patch("socratic_learn.safe_fs.os.name", "posix"),
             mock.patch(
-                "learning_tutor.safe_fs._open_verified_parent",
+                "socratic_learn.safe_fs._open_verified_parent",
                 side_effect=[10, 11],
             ),
-            mock.patch("learning_tutor.safe_fs.os.close"),
+            mock.patch("socratic_learn.safe_fs.os.close"),
             mock.patch(
-                "learning_tutor.safe_fs._before_bound_replace",
+                "socratic_learn.safe_fs._before_bound_replace",
                 side_effect=replace_source,
             ),
             mock.patch(
-                "learning_tutor.safe_fs._native_posix_rename_no_replace",
+                "socratic_learn.safe_fs._native_posix_rename_no_replace",
                 native,
             ),
             self.assertRaises(IdentityMismatchError),
@@ -270,18 +270,18 @@ class SafeFilesystemTests(unittest.TestCase):
 
         native = mock.Mock()
         with (
-            mock.patch("learning_tutor.safe_fs.os.name", "posix"),
+            mock.patch("socratic_learn.safe_fs.os.name", "posix"),
             mock.patch(
-                "learning_tutor.safe_fs._open_verified_parent",
+                "socratic_learn.safe_fs._open_verified_parent",
                 side_effect=[10, 11],
             ),
-            mock.patch("learning_tutor.safe_fs.os.close"),
+            mock.patch("socratic_learn.safe_fs.os.close"),
             mock.patch(
-                "learning_tutor.safe_fs._before_bound_replace",
+                "socratic_learn.safe_fs._before_bound_replace",
                 side_effect=replace_parent,
             ),
             mock.patch(
-                "learning_tutor.safe_fs._native_posix_rename_no_replace",
+                "socratic_learn.safe_fs._native_posix_rename_no_replace",
                 native,
             ),
             self.assertRaises(IdentityMismatchError),
@@ -307,14 +307,14 @@ class SafeFilesystemTests(unittest.TestCase):
             source.rename(destination)
 
         with (
-            mock.patch("learning_tutor.safe_fs.os.name", "posix"),
+            mock.patch("socratic_learn.safe_fs.os.name", "posix"),
             mock.patch(
-                "learning_tutor.safe_fs._open_verified_parent",
+                "socratic_learn.safe_fs._open_verified_parent",
                 side_effect=[10, 11],
             ),
-            mock.patch("learning_tutor.safe_fs.os.close"),
+            mock.patch("socratic_learn.safe_fs.os.close"),
             mock.patch(
-                "learning_tutor.safe_fs._posix_identity_bound_replace",
+                "socratic_learn.safe_fs._posix_identity_bound_replace",
                 side_effect=rename,
             ),
         ):
@@ -340,14 +340,14 @@ class SafeFilesystemTests(unittest.TestCase):
             raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST))
 
         with (
-            mock.patch("learning_tutor.safe_fs.os.name", "posix"),
+            mock.patch("socratic_learn.safe_fs.os.name", "posix"),
             mock.patch(
-                "learning_tutor.safe_fs._open_verified_parent",
+                "socratic_learn.safe_fs._open_verified_parent",
                 side_effect=[10, 11],
             ),
-            mock.patch("learning_tutor.safe_fs.os.close"),
+            mock.patch("socratic_learn.safe_fs.os.close"),
             mock.patch(
-                "learning_tutor.safe_fs._posix_identity_bound_replace",
+                "socratic_learn.safe_fs._posix_identity_bound_replace",
                 side_effect=lose_race,
             ),
             self.assertRaises(FileExistsError),
@@ -366,15 +366,15 @@ class SafeFilesystemTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._posix_entry_identity",
+                "socratic_learn.safe_fs._posix_entry_identity",
                 side_effect=[expected, expected, replacement, replacement],
             ),
             mock.patch(
-                "learning_tutor.safe_fs._open_posix_source",
+                "socratic_learn.safe_fs._open_posix_source",
                 return_value=12,
             ),
             mock.patch(
-                "learning_tutor.safe_fs.os.fstat",
+                "socratic_learn.safe_fs.os.fstat",
                 side_effect=[
                     mock.Mock(st_dev=1, st_ino=10),
                     mock.Mock(st_dev=2, st_ino=20),
@@ -382,10 +382,10 @@ class SafeFilesystemTests(unittest.TestCase):
                 ],
             ),
             mock.patch(
-                "learning_tutor.safe_fs._native_posix_rename_no_replace",
+                "socratic_learn.safe_fs._native_posix_rename_no_replace",
                 native,
             ),
-            mock.patch("learning_tutor.safe_fs.os.close"),
+            mock.patch("socratic_learn.safe_fs.os.close"),
             self.assertRaisesRegex(
                 safe_fs.PostMutationIdentityError,
                 "post-mutation recovery",
@@ -421,7 +421,7 @@ class SafeFilesystemTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._before_identity_cleanup",
+                "socratic_learn.safe_fs._before_identity_cleanup",
                 side_effect=insert_unknown,
             ),
             self.assertRaisesRegex(IdentityMismatchError, "topology"),
@@ -446,7 +446,7 @@ class SafeFilesystemTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._before_identity_cleanup",
+                "socratic_learn.safe_fs._before_identity_cleanup",
                 side_effect=replace_child,
             ),
             self.assertRaisesRegex(IdentityMismatchError, "identity"),
@@ -492,7 +492,7 @@ class SafeFilesystemTests(unittest.TestCase):
         script = """
 from pathlib import Path
 import sys
-from learning_tutor.safe_fs import identity_bound_replace
+from socratic_learn.safe_fs import identity_bound_replace
 root = Path(sys.argv[1])
 source = root / "source"
 destination = root / "destination"

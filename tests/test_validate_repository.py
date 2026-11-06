@@ -15,17 +15,19 @@ from tests.validate_repository import main, validate, without_fenced_code
 UNIVERSAL_REQUIRED_PATHS = (
     "learning_tutor/__init__.py",
     "learning_tutor/__main__.py",
-    "learning_tutor/build.py",
-    "learning_tutor/conformance.py",
-    "learning_tutor/doctor.py",
-    "learning_tutor/errors.py",
-    "learning_tutor/export.py",
-    "learning_tutor/install.py",
-    "learning_tutor/manifest.py",
-    "learning_tutor/templates/generic-loader.md",
-    "learning_tutor/templates/cursor-skill.md",
-    "learning_tutor/templates/claude-loader.md",
-    "learning_tutor/templates/pi-skill.md",
+    "socratic_learn/__init__.py",
+    "socratic_learn/__main__.py",
+    "socratic_learn/build.py",
+    "socratic_learn/conformance.py",
+    "socratic_learn/doctor.py",
+    "socratic_learn/errors.py",
+    "socratic_learn/export.py",
+    "socratic_learn/install.py",
+    "socratic_learn/manifest.py",
+    "socratic_learn/templates/generic-loader.md",
+    "socratic_learn/templates/cursor-skill.md",
+    "socratic_learn/templates/claude-loader.md",
+    "socratic_learn/templates/pi-skill.md",
     "dist/learning-tutor.prompt.md",
     "dist/manifest.json",
     "docs/universal-installation.md",
@@ -238,7 +240,7 @@ class RepositoryValidationTests(unittest.TestCase):
 
     def test_runtime_and_acceptance_language_stays_scoped(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        install = (root / "learning_tutor/install.py").read_text(encoding="utf-8")
+        install = (root / "socratic_learn/install.py").read_text(encoding="utf-8")
         design = (
             root / "docs/superpowers/specs/2026-11-05-universal-distribution-design.md"
         ).read_text(encoding="utf-8")

@@ -4,13 +4,13 @@ import copy
 import re
 import unittest
 
-from learning_tutor import MANIFEST_SCHEMA_VERSION, PROTOCOL_VERSION, TARGETS
-from learning_tutor.conformance import (
+from socratic_learn import MANIFEST_SCHEMA_VERSION, PROTOCOL_VERSION, TARGETS
+from socratic_learn.conformance import (
     CONFORMANCE_CONTRACT_VERSION,
     REQUIRED_DIAGNOSTIC_CODES,
 )
-from learning_tutor.errors import IntegrityError
-from learning_tutor.manifest import serialize_json, sha256_bytes, validate_manifest
+from socratic_learn.errors import IntegrityError
+from socratic_learn.manifest import serialize_json, sha256_bytes, validate_manifest
 
 
 SESSION_HEADINGS = (

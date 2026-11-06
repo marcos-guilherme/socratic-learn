@@ -5,13 +5,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from learning_tutor.build import CANONICAL_SOURCES, build_distribution
-from learning_tutor.conformance import (
+from socratic_learn.build import CANONICAL_SOURCES, build_distribution
+from socratic_learn.conformance import (
     CONFORMANCE_CONTRACT_VERSION,
     REQUIRED_DIAGNOSTIC_CODES,
     check_conformance,
 )
-from learning_tutor.errors import IntegrityError
+from socratic_learn.errors import IntegrityError
 
 
 SOURCE_CONTENTS = {

@@ -10,17 +10,17 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
 
-import learning_tutor.safe_fs as safe_fs
-from learning_tutor import PROTOCOL_VERSION
-from learning_tutor.errors import CollisionError, FilesystemError, IntegrityError, UsageError
-from learning_tutor.install import (
+import socratic_learn.safe_fs as safe_fs
+from socratic_learn import PROTOCOL_VERSION
+from socratic_learn.errors import CollisionError, FilesystemError, IntegrityError, UsageError
+from socratic_learn.install import (
     OWNED_PATHS,
     apply_install,
     load_receipt,
     plan_install,
 )
-from learning_tutor.manifest import sha256_bytes
-from learning_tutor.__main__ import main
+from socratic_learn.manifest import sha256_bytes
+from socratic_learn.__main__ import main
 
 
 class InstallTests(unittest.TestCase):
@@ -367,7 +367,7 @@ class InstallTests(unittest.TestCase):
             ("pi", ".pi/skills/learning-tutor/SKILL.md"),
             ("claude-code", "CLAUDE.md"),
         )
-        install_module = __import__("learning_tutor.install", fromlist=["_stage"])
+        install_module = __import__("socratic_learn.install", fromlist=["_stage"])
         real_stage = install_module._stage
         for target, relative in cases:
             with self.subTest(target=target):
@@ -383,7 +383,7 @@ class InstallTests(unittest.TestCase):
                     return staged
 
                 with mock.patch(
-                    "learning_tutor.install._stage",
+                    "socratic_learn.install._stage",
                     side_effect=stage_then_race,
                 ):
                     with self.assertRaises(CollisionError):
@@ -412,7 +412,7 @@ class InstallTests(unittest.TestCase):
                 claude.write_bytes(b"external replacement")
 
         with mock.patch(
-            "learning_tutor.install.os.link",
+            "socratic_learn.install.os.link",
             side_effect=replace_after_link,
         ):
             with self.assertRaises(FilesystemError) as raised:
@@ -432,7 +432,7 @@ class InstallTests(unittest.TestCase):
     def test_failure_after_publication_preserves_partial_paths_and_stage(self) -> None:
         plan = plan_install(self.source, self.project, "generic", False)
         install_module = __import__(
-            "learning_tutor.install",
+            "socratic_learn.install",
             fromlist=["_link_staged_file"],
         )
         real_link = install_module._link_staged_file
@@ -447,7 +447,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._link_staged_file",
+                "socratic_learn.install._link_staged_file",
                 side_effect=fail_second_publication,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -475,7 +475,7 @@ class InstallTests(unittest.TestCase):
         )
         plan = plan_install(self.source, self.project, "generic", True)
         install_module = __import__(
-            "learning_tutor.install",
+            "socratic_learn.install",
             fromlist=["_link_staged_file"],
         )
         real_link = install_module._link_staged_file
@@ -490,7 +490,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._link_staged_file",
+                "socratic_learn.install._link_staged_file",
                 side_effect=fail_second_publication,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -558,7 +558,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._before_link_publication",
+                "socratic_learn.install._before_link_publication",
                 side_effect=replace_parent,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -594,7 +594,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._after_link_publication",
+                "socratic_learn.install._after_link_publication",
                 side_effect=replace_parent,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -636,7 +636,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._before_link_publication",
+                "socratic_learn.install._before_link_publication",
                 side_effect=replace_parent_with_symlink,
             ),
             self.assertRaises(FilesystemError),
@@ -650,7 +650,7 @@ class InstallTests(unittest.TestCase):
         plan = plan_install(self.source, self.project, "cursor", False)
         skill = self.project / ".cursor/skills/learning-tutor/SKILL.md"
         install_module = __import__(
-            "learning_tutor.install",
+            "socratic_learn.install",
             fromlist=["_link_staged_file"],
         )
         real_link_staged = install_module._link_staged_file
@@ -668,7 +668,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._link_staged_file",
+                "socratic_learn.install._link_staged_file",
                 side_effect=fail_after_external_link,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -684,7 +684,7 @@ class InstallTests(unittest.TestCase):
         native_directory = self.project / ".cursor/skills/learning-tutor"
         external = native_directory / "external.txt"
         install_module = __import__(
-            "learning_tutor.install",
+            "socratic_learn.install",
             fromlist=["_link_staged_file"],
         )
         real_link_staged = install_module._link_staged_file
@@ -704,7 +704,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._link_staged_file",
+                "socratic_learn.install._link_staged_file",
                 side_effect=fail_after_native_link,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -715,7 +715,7 @@ class InstallTests(unittest.TestCase):
         self.assertIn(str(native_directory), str(raised.exception))
 
     def test_commit_time_empty_native_directory_races_abort(self) -> None:
-        install_module = __import__("learning_tutor.install", fromlist=["_stage"])
+        install_module = __import__("socratic_learn.install", fromlist=["_stage"])
         real_stage = install_module._stage
         for target, relative in (
             ("cursor", ".cursor/skills/learning-tutor"),
@@ -733,7 +733,7 @@ class InstallTests(unittest.TestCase):
                     return staged
 
                 with mock.patch(
-                    "learning_tutor.install._stage",
+                    "socratic_learn.install._stage",
                     side_effect=stage_then_race,
                 ):
                     with self.assertRaises(CollisionError):
@@ -744,7 +744,7 @@ class InstallTests(unittest.TestCase):
 
     def test_generic_package_race_during_staging_preserves_external_tree(self) -> None:
         plan = plan_install(self.source, self.project, "generic", False)
-        install_module = __import__("learning_tutor.install", fromlist=["_stage"])
+        install_module = __import__("socratic_learn.install", fromlist=["_stage"])
         real_stage = install_module._stage
         external_root = self.project / ".learning-tutor"
         sentinel = external_root / "external.txt"
@@ -755,7 +755,7 @@ class InstallTests(unittest.TestCase):
             sentinel.write_bytes(b"external race winner")
             return staged
 
-        with mock.patch("learning_tutor.install._stage", side_effect=stage_then_race):
+        with mock.patch("socratic_learn.install._stage", side_effect=stage_then_race):
             with self.assertRaises(CollisionError):
                 apply_install(plan)
 
@@ -773,7 +773,7 @@ class InstallTests(unittest.TestCase):
     def test_update_hashes_post_staging_backup_bytes(self) -> None:
         self._install()
         plan = plan_install(self.source, self.project, "generic", True)
-        install_module = __import__("learning_tutor.install", fromlist=["_stage"])
+        install_module = __import__("socratic_learn.install", fromlist=["_stage"])
         real_stage = install_module._stage
         manifest = self.project / ".learning-tutor/manifest.json"
 
@@ -783,7 +783,7 @@ class InstallTests(unittest.TestCase):
             return staged
 
         with mock.patch(
-            "learning_tutor.install._stage",
+            "socratic_learn.install._stage",
             side_effect=stage_then_modify,
         ):
             with self.assertRaises(FilesystemError) as raised:
@@ -826,7 +826,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._before_bound_replace",
+                "socratic_learn.safe_fs._before_bound_replace",
                 side_effect=replace_source,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -856,7 +856,7 @@ class InstallTests(unittest.TestCase):
         source = self.project.joinpath(*relative.split("/"))
         original = source.read_bytes()
         install_module = __import__(
-            "learning_tutor.install",
+            "socratic_learn.install",
             fromlist=["_path_identity"],
         )
         real_identity = install_module._path_identity
@@ -871,7 +871,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._path_identity",
+                "socratic_learn.install._path_identity",
                 side_effect=fail_backup_identity,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -897,7 +897,7 @@ class InstallTests(unittest.TestCase):
         source = self.project.joinpath(*relative.split("/"))
         original = source.read_bytes()
         install_module = __import__(
-            "learning_tutor.install",
+            "socratic_learn.install",
             fromlist=["_read_bytes"],
         )
         real_read = install_module._read_bytes
@@ -909,7 +909,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._read_bytes",
+                "socratic_learn.install._read_bytes",
                 side_effect=fail_backup_read,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -954,7 +954,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install.os.link",
+                "socratic_learn.install.os.link",
                 side_effect=fail_publication_and_collide_during_restore,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -1015,7 +1015,7 @@ class InstallTests(unittest.TestCase):
             raise AssertionError("native destination must be linked first")
 
         with mock.patch(
-            "learning_tutor.install._link_staged_file",
+            "socratic_learn.install._link_staged_file",
             side_effect=fail_native_move,
         ):
             with self.assertRaises(FilesystemError) as raised:
@@ -1048,7 +1048,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install.identity_bound_replace",
+                "socratic_learn.install.identity_bound_replace",
                 side_effect=safe_fs.AtomicNoReplaceUnsupportedError(
                     "renameat2 with RENAME_NOREPLACE is unavailable"
                 ),
@@ -1135,7 +1135,7 @@ class InstallTests(unittest.TestCase):
         plan = plan_install(self.source, self.project, "generic", False)
 
         with mock.patch(
-            "learning_tutor.install._write_staged_file",
+            "socratic_learn.install._write_staged_file",
             side_effect=OSError("injected staging failure"),
         ):
             with self.assertRaises(FilesystemError):
@@ -1160,11 +1160,11 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._write_staged_file",
+                "socratic_learn.install._write_staged_file",
                 side_effect=OSError("injected staging failure"),
             ),
             mock.patch(
-                "learning_tutor.safe_fs._before_identity_cleanup",
+                "socratic_learn.safe_fs._before_identity_cleanup",
                 side_effect=replace_stage_before_cleanup,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -1182,7 +1182,7 @@ class InstallTests(unittest.TestCase):
     def test_staging_cleanup_unknown_child_preserves_complete_tree(self) -> None:
         plan = plan_install(self.source, self.project, "generic", False)
         install_module = __import__(
-            "learning_tutor.install",
+            "socratic_learn.install",
             fromlist=["_write_staged_file"],
         )
         real_write = install_module._write_staged_file
@@ -1203,11 +1203,11 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._write_staged_file",
+                "socratic_learn.install._write_staged_file",
                 side_effect=fail_second,
             ),
             mock.patch(
-                "learning_tutor.safe_fs._before_identity_cleanup",
+                "socratic_learn.safe_fs._before_identity_cleanup",
                 side_effect=insert_unknown,
             ),
             self.assertRaises(FilesystemError),
@@ -1220,7 +1220,7 @@ class InstallTests(unittest.TestCase):
 
     def test_parent_rename_diagnostic_reports_observed_identities_and_location(self) -> None:
         install_module = __import__(
-            "learning_tutor.install",
+            "socratic_learn.install",
             fromlist=["_parent_chain_publication_error"],
         )
         parent = self.project / "parent"
@@ -1273,11 +1273,11 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._write_staged_file",
+                "socratic_learn.install._write_staged_file",
                 side_effect=OSError("injected staging write failure"),
             ),
             mock.patch(
-                "learning_tutor.install._remove_created_tree",
+                "socratic_learn.install._remove_created_tree",
                 side_effect=PermissionError("injected locked stage"),
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -1302,7 +1302,7 @@ class InstallTests(unittest.TestCase):
         plan = plan_install(self.source, self.project, "generic", False)
 
         with mock.patch(
-            "learning_tutor.install._link_staged_file",
+            "socratic_learn.install._link_staged_file",
             side_effect=OSError("injected commit failure"),
         ):
             with self.assertRaises(FilesystemError) as raised:
@@ -1321,7 +1321,7 @@ class InstallTests(unittest.TestCase):
     def test_initial_failure_after_publication_never_attempts_cleanup(self) -> None:
         plan = plan_install(self.source, self.project, "generic", False)
         install_module = __import__(
-            "learning_tutor.install",
+            "socratic_learn.install",
             fromlist=["_link_staged_file"],
         )
         real_link = install_module._link_staged_file
@@ -1336,7 +1336,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._link_staged_file",
+                "socratic_learn.install._link_staged_file",
                 side_effect=fail_second_link,
             ),
             mock.patch(
@@ -1362,7 +1362,7 @@ class InstallTests(unittest.TestCase):
         first_source = self.project.joinpath(*first_relative.split("/"))
         first_bytes = first_source.read_bytes()
         safe_fs = __import__(
-            "learning_tutor.safe_fs",
+            "socratic_learn.safe_fs",
             fromlist=["_windows_handle_rename_no_replace"],
         )
         real_replace = safe_fs._windows_handle_rename_no_replace
@@ -1377,7 +1377,7 @@ class InstallTests(unittest.TestCase):
             real_replace(source_descriptor, destination)
 
         with mock.patch(
-            "learning_tutor.safe_fs._windows_handle_rename_no_replace",
+            "socratic_learn.safe_fs._windows_handle_rename_no_replace",
             side_effect=fail_backup,
         ):
             with self.assertRaises(FilesystemError) as raised:
@@ -1417,7 +1417,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._before_bound_replace",
+                "socratic_learn.safe_fs._before_bound_replace",
                 side_effect=replace_parent_before_backup,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -1448,7 +1448,7 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.safe_fs._before_bound_mkdir",
+                "socratic_learn.safe_fs._before_bound_mkdir",
                 side_effect=replace_ancestor_before_mkdir,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -1473,7 +1473,7 @@ class InstallTests(unittest.TestCase):
         self._make_distribution(b"# Universal Learning Tutor\nProtocol: 1.0.0\nNew.\n")
         plan = plan_install(self.source, self.project, "generic", True)
         install_module = __import__(
-            "learning_tutor.install",
+            "socratic_learn.install",
             fromlist=["_link_staged_file"],
         )
         real_link = install_module._link_staged_file
@@ -1487,7 +1487,7 @@ class InstallTests(unittest.TestCase):
             return real_link(source, destination)
 
         with mock.patch(
-            "learning_tutor.install._link_staged_file",
+            "socratic_learn.install._link_staged_file",
             side_effect=fail_commit,
         ):
             with self.assertRaises(FilesystemError) as raised:
@@ -1507,7 +1507,7 @@ class InstallTests(unittest.TestCase):
         before = self._snapshot()
         self._make_distribution(b"# Universal Learning Tutor\nProtocol: 1.0.0\nNew.\n")
         plan = plan_install(self.source, self.project, "generic", True)
-        install_module = __import__("learning_tutor.install", fromlist=["_project_path"])
+        install_module = __import__("socratic_learn.install", fromlist=["_project_path"])
         real_project_path = install_module._project_path
         real_link = install_module._link_staged_file
         first_commit_completed = False
@@ -1539,11 +1539,11 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install._link_staged_file",
+                "socratic_learn.install._link_staged_file",
                 side_effect=track_commit,
             ),
             mock.patch(
-                "learning_tutor.install._project_path",
+                "socratic_learn.install._project_path",
                 side_effect=race_on_second_commit,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -1575,7 +1575,7 @@ class InstallTests(unittest.TestCase):
         )
         plan = plan_install(self.source, self.project, "generic", True)
         install_module = __import__(
-            "learning_tutor.install",
+            "socratic_learn.install",
             fromlist=["_link_staged_file"],
         )
         real_link_staged = install_module._link_staged_file
@@ -1586,7 +1586,7 @@ class InstallTests(unittest.TestCase):
             return real_link_staged(source, destination)
 
         with mock.patch(
-            "learning_tutor.install._link_staged_file",
+            "socratic_learn.install._link_staged_file",
             side_effect=fail_after_parent_creation,
         ):
             with self.assertRaises(FilesystemError) as raised:
@@ -1615,7 +1615,7 @@ class InstallTests(unittest.TestCase):
             real_link(source, destination, *args, **kwargs)
 
         with mock.patch(
-            "learning_tutor.install.os.link",
+            "socratic_learn.install.os.link",
             side_effect=fail_commit_and_restore,
         ):
             with self.assertRaises(FilesystemError) as raised:
@@ -1628,7 +1628,7 @@ class InstallTests(unittest.TestCase):
     def test_cli_prints_loader_and_update_transition(self) -> None:
         stdout = io.StringIO()
         with (
-            mock.patch("learning_tutor.install.Path.cwd", return_value=self.source),
+            mock.patch("socratic_learn.install.Path.cwd", return_value=self.source),
             contextlib.redirect_stdout(stdout),
         ):
             self.assertEqual(0, main(["install", "generic", str(self.project)]))
@@ -1636,7 +1636,7 @@ class InstallTests(unittest.TestCase):
 
         stdout = io.StringIO()
         with (
-            mock.patch("learning_tutor.install.Path.cwd", return_value=self.source),
+            mock.patch("socratic_learn.install.Path.cwd", return_value=self.source),
             contextlib.redirect_stdout(stdout),
         ):
             self.assertEqual(0, main(["install", "generic", str(self.project), "--update"]))

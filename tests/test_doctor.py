@@ -12,19 +12,19 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from learning_tutor import PROTOCOL_VERSION
-from learning_tutor.__main__ import main
-from learning_tutor.conformance import Diagnostic
-from learning_tutor.doctor import diagnose, format_diagnostics
-from learning_tutor.errors import FilesystemError
-from learning_tutor.install import (
+from socratic_learn import PROTOCOL_VERSION
+from socratic_learn.__main__ import main
+from socratic_learn.conformance import Diagnostic
+from socratic_learn.doctor import diagnose, format_diagnostics
+from socratic_learn.errors import FilesystemError
+from socratic_learn.install import (
     RECEIPT_PATH,
     _claude_snippet,
     apply_install,
     load_receipt,
     plan_install,
 )
-from learning_tutor.manifest import serialize_json
+from socratic_learn.manifest import serialize_json
 
 
 class DoctorTests(unittest.TestCase):
@@ -315,7 +315,7 @@ class DoctorTests(unittest.TestCase):
         candidate_status = candidate.stat()
         candidate_identity = (candidate_status.st_dev, candidate_status.st_ino)
         doctor_module = __import__(
-            "learning_tutor.doctor",
+            "socratic_learn.doctor",
             fromlist=["_read_descriptor"],
         )
         real_read_descriptor = doctor_module._read_descriptor
@@ -327,7 +327,7 @@ class DoctorTests(unittest.TestCase):
             return real_read_descriptor(descriptor)
 
         with mock.patch(
-            "learning_tutor.doctor._read_descriptor",
+            "socratic_learn.doctor._read_descriptor",
             side_effect=deny_candidate,
         ):
             diagnostics = diagnose(project)
@@ -416,7 +416,7 @@ class DoctorTests(unittest.TestCase):
                 self.skipTest(f"file symlinks unavailable: {error}")
 
         doctor_module = __import__(
-            "learning_tutor.doctor",
+            "socratic_learn.doctor",
             fromlist=["_read_descriptor"],
         )
         real_read_descriptor = doctor_module._read_descriptor
@@ -431,11 +431,11 @@ class DoctorTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.doctor._before_managed_open",
+                "socratic_learn.doctor._before_managed_open",
                 side_effect=swap_file,
             ),
             mock.patch(
-                "learning_tutor.doctor._read_descriptor",
+                "socratic_learn.doctor._read_descriptor",
                 side_effect=track_descriptor,
             ),
         ):
@@ -460,7 +460,7 @@ class DoctorTests(unittest.TestCase):
             replacement_receipt.write_bytes(b"replacement bytes must not be consumed")
 
         doctor_module = __import__(
-            "learning_tutor.doctor",
+            "socratic_learn.doctor",
             fromlist=["_read_descriptor"],
         )
         real_read_descriptor = doctor_module._read_descriptor
@@ -479,11 +479,11 @@ class DoctorTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.doctor._before_managed_open",
+                "socratic_learn.doctor._before_managed_open",
                 side_effect=swap_parent,
             ),
             mock.patch(
-                "learning_tutor.doctor._read_descriptor",
+                "socratic_learn.doctor._read_descriptor",
                 side_effect=track_descriptor,
             ),
         ):
@@ -539,7 +539,7 @@ class DoctorTests(unittest.TestCase):
             stderr="fatal: injected failure\n",
         )
 
-        with mock.patch("learning_tutor.doctor.subprocess.run", return_value=failure):
+        with mock.patch("socratic_learn.doctor.subprocess.run", return_value=failure):
             diagnostics = diagnose(project)
 
         item = next(item for item in diagnostics if item.code == "git-check-failed")

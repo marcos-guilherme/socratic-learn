@@ -2,15 +2,47 @@ from __future__ import annotations
 
 import contextlib
 import io
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from learning_tutor.__main__ import main
-from learning_tutor.errors import CollisionError, FilesystemError, IntegrityError
+from socratic_learn.__main__ import main
+from socratic_learn.errors import CollisionError, FilesystemError, IntegrityError
 
 
 class CliContractTests(unittest.TestCase):
+    def test_canonical_module_help_uses_socratic_learn_name(self) -> None:
+        repository = Path(__file__).resolve().parents[1]
+
+        completed = subprocess.run(
+            [sys.executable, "-m", "socratic_learn", "--help"],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertIn("usage: socratic-learn", completed.stdout)
+
+    def test_legacy_module_warns_once_and_forwards(self) -> None:
+        repository = Path(__file__).resolve().parents[1]
+
+        completed = subprocess.run(
+            [sys.executable, "-m", "learning_tutor", "--help"],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertIn("deprecated", completed.stderr.lower())
+        self.assertEqual(1, len(completed.stderr.splitlines()))
+        self.assertIn("usage: socratic-learn", completed.stdout)
+
     def assert_usage_error(self, argv: list[str], command: str) -> None:
         stderr = io.StringIO()
 
@@ -38,7 +70,7 @@ class CliContractTests(unittest.TestCase):
             "--force",
         )
 
-    @mock.patch("learning_tutor.__main__._dispatch_install", return_value=0)
+    @mock.patch("socratic_learn.__main__._dispatch_install", return_value=0)
     def test_install_rejects_abbreviated_update(
         self,
         dispatch: mock.Mock,
@@ -49,7 +81,7 @@ class CliContractTests(unittest.TestCase):
         )
         dispatch.assert_not_called()
 
-    @mock.patch("learning_tutor.__main__._dispatch_export_prompt", return_value=0)
+    @mock.patch("socratic_learn.__main__._dispatch_export_prompt", return_value=0)
     def test_export_rejects_abbreviated_output(
         self,
         dispatch: mock.Mock,
@@ -77,12 +109,12 @@ class CliContractTests(unittest.TestCase):
             str(error),
         )
 
-    @mock.patch("learning_tutor.__main__._dispatch_build", return_value=0)
+    @mock.patch("socratic_learn.__main__._dispatch_build", return_value=0)
     def test_build_dispatches(self, dispatch: mock.Mock) -> None:
         self.assertEqual(0, main(["build"]))
         dispatch.assert_called_once_with()
 
-    @mock.patch("learning_tutor.__main__._dispatch_export_prompt", return_value=0)
+    @mock.patch("socratic_learn.__main__._dispatch_export_prompt", return_value=0)
     def test_export_prompt_dispatches_with_output(
         self,
         dispatch: mock.Mock,
@@ -93,7 +125,7 @@ class CliContractTests(unittest.TestCase):
         )
         dispatch.assert_called_once_with(Path("prompt.md"))
 
-    @mock.patch("learning_tutor.__main__._dispatch_install", return_value=0)
+    @mock.patch("socratic_learn.__main__._dispatch_install", return_value=0)
     def test_install_dispatches_with_options(self, dispatch: mock.Mock) -> None:
         self.assertEqual(
             0,
@@ -101,13 +133,13 @@ class CliContractTests(unittest.TestCase):
         )
         dispatch.assert_called_once_with("cursor", Path("project"), update=True)
 
-    @mock.patch("learning_tutor.__main__._dispatch_doctor", return_value=0)
+    @mock.patch("socratic_learn.__main__._dispatch_doctor", return_value=0)
     def test_doctor_dispatches(self, dispatch: mock.Mock) -> None:
         self.assertEqual(0, main(["doctor", "project"]))
         dispatch.assert_called_once_with(Path("project"))
 
     @mock.patch(
-        "learning_tutor.__main__._dispatch_build",
+        "socratic_learn.__main__._dispatch_build",
         side_effect=IntegrityError(
             "implementation unavailable",
             remediation="install a complete package",
@@ -129,7 +161,7 @@ class CliContractTests(unittest.TestCase):
         self.assertNotIn("Traceback", message)
 
     @mock.patch(
-        "learning_tutor.__main__._dispatch_build",
+        "socratic_learn.__main__._dispatch_build",
         side_effect=RuntimeError("unexpected"),
     )
     def test_unexpected_errors_are_not_swallowed(
