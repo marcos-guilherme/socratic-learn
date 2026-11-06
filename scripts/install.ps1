@@ -288,7 +288,6 @@ try {
     $manifestResponse = Invoke-TrustedGet $client $manifestUri $trustMode
     try {
         $manifestBytes = $manifestResponse.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
-        $manifestBaseUri = $manifestResponse.RequestMessage.RequestUri
     } finally {
         $manifestResponse.Dispose()
     }
@@ -349,7 +348,7 @@ try {
         throw "release manifest must contain exactly one windows/x86_64 artifact"
     }
     $selected = $selectedArtifacts[0]
-    $artifactUri = New-Object Uri($manifestBaseUri, $selected.filename)
+    $artifactUri = New-Object Uri($manifestUri, $selected.filename)
     Assert-TrustedRequestUri $artifactUri $trustMode
     $artifactResponse = Invoke-TrustedGet $client $artifactUri $trustMode
     try {

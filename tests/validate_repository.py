@@ -340,21 +340,31 @@ def validate_release_automation(root: Path) -> list[str]:
                 "Release manifest must hash downloaded native artifacts and use two spaces"
             )
 
+        publish_gate = (
+            "if: github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/v')"
+        )
         github_publish = workflow_job(release, "publish-github")
         if (
-            "if: startsWith(github.ref, 'refs/tags/v')" not in github_publish
+            publish_gate not in github_publish
             or "contents: write" not in github_publish
         ):
-            errors.append("GitHub publishing must be tag-only with contents: write")
+            errors.append(
+                "Release publishing must require a push event and version tag"
+            )
 
         pypi_publish = workflow_job(release, "publish-pypi")
         if (
-            "if: startsWith(github.ref, 'refs/tags/v')" not in pypi_publish
+            publish_gate not in pypi_publish
             or "id-token: write" not in pypi_publish
             or "environment: pypi" not in pypi_publish
             or "pypa/gh-action-pypi-publish@release/v1" not in pypi_publish
         ):
             errors.append("PyPI publishing must use tag-only trusted publishing")
+        if "needs: [python-package, native, manifest]" not in pypi_publish:
+            errors.append(
+                "PyPI publishing must wait for package, native, and manifest jobs"
+            )
 
         version_job = workflow_job(release, "verify-version")
         if (

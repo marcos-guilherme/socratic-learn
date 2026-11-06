@@ -897,10 +897,13 @@ class RepositoryValidationTests(unittest.TestCase):
             release.index("python -m unittest discover"),
             release.index("python -m PyInstaller socratic-learn.spec"),
         )
-        self.assertIn(
-            "if: startsWith(github.ref, 'refs/tags/v')",
-            release,
+        publish_gate = (
+            "if: github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/v')"
         )
+        self.assertEqual(2, release.count(publish_gate))
+        pypi = release.split("  publish-pypi:", 1)[1]
+        self.assertIn("needs: [python-package, native, manifest]", pypi)
         self.assertIn("permissions:\n  contents: read", release)
         self.assertEqual(1, release.count("contents: write"))
         self.assertIn("github.ref_name", release)
@@ -956,6 +959,39 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn("Release workflow must default to contents: read", errors)
         self.assertIn(
             "Native safety matrix must install .[build] before tests",
+            errors,
+        )
+
+    def test_validator_rejects_unsafe_publish_gates_and_dependencies(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        strong_gate = (
+            "if: github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/v')"
+        )
+        text = release.read_text(encoding="utf-8")
+        text = text.replace(
+            strong_gate,
+            "if: startsWith(github.ref, 'refs/tags/v')",
+        )
+        before_pypi, pypi = text.split("  publish-pypi:", 1)
+        pypi = pypi.replace(
+            "needs: [python-package, native, manifest]",
+            "needs: python-package",
+            1,
+        )
+        text = before_pypi + "  publish-pypi:" + pypi
+        release.write_text(text, encoding="utf-8")
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Release publishing must require a push event and version tag",
+            errors,
+        )
+        self.assertIn(
+            "PyPI publishing must wait for package, native, and manifest jobs",
             errors,
         )
 

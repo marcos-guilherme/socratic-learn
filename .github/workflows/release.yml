@@ -207,7 +207,7 @@ jobs:
           path: release-metadata/*
 
   publish-github:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [python-package, native, manifest]
     runs-on: ubuntu-latest
     permissions:
@@ -245,8 +245,8 @@ jobs:
           --generate-notes
 
   publish-pypi:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: python-package
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [python-package, native, manifest]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

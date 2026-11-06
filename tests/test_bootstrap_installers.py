@@ -263,6 +263,50 @@ class BootstrapInstallerTests(unittest.TestCase):
             )
 
     @unittest.skipUnless(os.name == "nt", "Windows installer executes only on Windows")
+    def test_windows_artifact_url_uses_original_manifest_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = root / "home"
+            home.mkdir()
+            install_dir = root / "install"
+            self._write_windows_release(
+                root,
+                hashlib.sha256(self.payload).hexdigest(),
+            )
+            redirected = root / "redirected"
+            redirected.mkdir()
+            shutil.copy2(
+                root / "release-manifest.json",
+                redirected / "manifest-asset",
+            )
+            requests: list[str] = []
+            redirects = {
+                "/release-manifest.json": "/redirected/manifest-asset",
+            }
+            with fixture_server(
+                root,
+                redirects=redirects,
+                requests=requests,
+            ) as base_url:
+                result = self._run_powershell(
+                    root,
+                    f"{base_url}/release-manifest.json",
+                    install_dir,
+                    home,
+                )
+
+            self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+            self.assertEqual(self.payload, (install_dir / "socratic.exe").read_bytes())
+            self.assertEqual(
+                [
+                    "/release-manifest.json",
+                    "/redirected/manifest-asset",
+                    "/socratic-windows-x86_64.exe",
+                ],
+                requests,
+            )
+
+    @unittest.skipUnless(os.name == "nt", "Windows installer executes only on Windows")
     def test_windows_requires_consent_before_network(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
