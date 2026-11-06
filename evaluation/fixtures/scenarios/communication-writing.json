@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "identifier": "communication-writing",
+  "title": "Concise deadline clarification",
+  "domain": "communication",
+  "initial_goal": "Help me revise this message while keeping it respectful and safe:\n\nHi Priya, I wanted to follow up because I know everyone has been extremely busy and I do not want this to sound like I am blaming anyone, but the data export that I expected on Tuesday has not arrived yet, and because I need it before I can finish the forecast I am now concerned that the Friday deadline may no longer be realistic, although I am still willing to do everything possible on my side, so could you please let me know what you think we should do and whether the deadline is still the same?",
+  "persona": {
+    "knowledge": [
+      "Writes grammatical and complete workplace messages.",
+      "Understands the intended audience and project context.",
+      "Can compare two candidate phrasings."
+    ],
+    "misconception": "Removing detail will make the message rude or leave the writer unsafe.",
+    "communication_style": [
+      "Initially writes long and defensive messages.",
+      "Overexplains once after receiving feedback.",
+      "Can discuss audience and purpose in plain language."
+    ],
+    "allowed_progress": [
+      "May remove defensive framing after seeing why it obscures the request.",
+      "May choose between two concise phrasings.",
+      "May explain how audience and purpose shaped the final revision."
+    ],
+    "forbidden_behavior": [
+      "Must not produce an expert edit before the tutor elicits a revision.",
+      "Must not remove necessary dependency and deadline context.",
+      "Must not call a shorter message better without explaining why."
+    ]
+  },
+  "observable_outcome": [
+    "Produces a message with a clear purpose and only necessary context.",
+    "Includes a concrete request for deadline clarification.",
+    "Uses a neutral, respectful tone and appropriate brevity.",
+    "Explains how audience and purpose shaped the revision."
+  ],
+  "response_policy": [
+    "Defend the need for detail once when the tutor first recommends shortening.",
+    "Make one revision that remains too long if feedback is only generic.",
+    "Use specific feedback to remove defensive framing while retaining dependency context.",
+    "Compare candidate phrasings when the tutor offers or requests alternatives.",
+    "Explain the final choices rather than relying on self-reported confidence."
+  ],
+  "max_learner_responses": 15
+}
