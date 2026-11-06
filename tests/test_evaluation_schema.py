@@ -14,6 +14,7 @@ from evaluation.schema import (
     load_run_record,
     load_scenario,
     load_stream_contract,
+    validate_run_record,
 )
 
 SHA256 = "a" * 64
@@ -89,7 +90,7 @@ def _run_document() -> dict[str, object]:
         "runtime": "antigravity",
         "runtime_version": "1.0.0",
         "model_identifier": "model-a",
-        "learner_response_count": 1,
+        "learner_response_count": 0,
         "stop_reason": "observable_outcome",
         "infrastructure_failure": None,
         "turns": [{"number": 1, "learner": "Hello", "tutor": "Hi"}],
@@ -217,3 +218,68 @@ class EvaluationSchemaStrictnessTests(unittest.TestCase):
                     document[key] = value
                     with self.assertRaisesRegex(ValueError, pattern):
                         load_run_record(_write(temporary, "bad.json", document))
+
+    def test_run_record_rejects_response_count_and_turn_sequence_mutations(self) -> None:
+        cases = {
+            "response count above cap": {
+                "learner_response_count": 16,
+                "turns": [
+                    {"number": number, "learner": "a", "tutor": "b"}
+                    for number in range(1, 18)
+                ],
+            },
+            "response count does not match bootstrap turns": {
+                "learner_response_count": 1,
+            },
+            "duplicate turn number": {
+                "turns": [
+                    {"number": 1, "learner": "a", "tutor": "b"},
+                    {"number": 1, "learner": "c", "tutor": "d"},
+                ],
+                "learner_response_count": 1,
+            },
+            "nonsequential turn number": {
+                "turns": [
+                    {"number": 1, "learner": "a", "tutor": "b"},
+                    {"number": 3, "learner": "c", "tutor": "d"},
+                ],
+                "learner_response_count": 1,
+            },
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            for label, changes in cases.items():
+                with self.subTest(label):
+                    document = {**_run_document(), **changes}
+                    with self.assertRaises(ValueError):
+                        load_run_record(_write(temporary, f"{label}.json", document))
+
+    def test_run_record_requires_infrastructure_failure_iff_stop_reason(self) -> None:
+        cases = (
+            {
+                "stop_reason": "infrastructure_failure",
+                "infrastructure_failure": None,
+            },
+            {
+                "stop_reason": "observable_outcome",
+                "infrastructure_failure": "runtime",
+            },
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            for index, changes in enumerate(cases):
+                with self.subTest(changes=changes):
+                    document = {**_run_document(), **changes}
+                    with self.assertRaisesRegex(ValueError, "infrastructure"):
+                        load_run_record(_write(temporary, f"failure-{index}.json", document))
+
+    def test_run_record_infrastructure_class_is_checked_with_rubric(self) -> None:
+        rubric = load_rubric(fixture_root() / "rubric.json")
+        document = {
+            **_run_document(),
+            "stop_reason": "infrastructure_failure",
+            "infrastructure_failure": "unknown-class",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            path = _write(temporary, "record.json", document)
+            record = load_run_record(path)
+            with self.assertRaisesRegex(ValueError, "infrastructure"):
+                validate_run_record(record, rubric)

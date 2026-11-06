@@ -183,9 +183,34 @@ class EvaluationReportTests(unittest.TestCase):
                 replace(records[1], model_identifier="different-model"),
                 records[2],
             ],
+            "differing suite ID": [
+                records[0],
+                replace(records[1], suite_id="different-suite"),
+                records[2],
+            ],
+            "differing repository commit": [
+                records[0],
+                replace(records[1], repository_commit="f" * 40),
+                records[2],
+            ],
+            "differing protocol version": [
+                records[0],
+                replace(records[1], protocol_version="different-version"),
+                records[2],
+            ],
             "differing protocol hash": [
                 records[0],
                 replace(records[1], protocol_sha256="0" * 64),
+                records[2],
+            ],
+            "differing runtime": [
+                records[0],
+                replace(records[1], runtime="other"),  # type: ignore[arg-type]
+                records[2],
+            ],
+            "differing runtime version": [
+                records[0],
+                replace(records[1], runtime_version="different-runtime"),
                 records[2],
             ],
         }

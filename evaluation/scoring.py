@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from evaluation.schema import CategoryScore, Rubric, RunRecord, Scorecard
+from evaluation.schema import (
+    CategoryScore,
+    Rubric,
+    RunRecord,
+    Scorecard,
+    validate_run_record,
+)
 
 
 _SCORECARD_KEYS = {
@@ -47,6 +53,7 @@ def _array(value: object, label: str) -> list[object]:
 
 def validate_scorecard(scorecard: Scorecard, rubric: Rubric, record: RunRecord) -> None:
     """Validate one complete pedagogy scorecard against its rubric and run."""
+    validate_run_record(record, rubric)
     if record.stop_reason == "infrastructure_failure" or record.infrastructure_failure is not None:
         raise ValueError("infrastructure records must not have a scorecard")
     if (

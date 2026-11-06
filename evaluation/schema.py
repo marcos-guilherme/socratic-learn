@@ -317,8 +317,11 @@ def load_run_record(path: Path) -> RunRecord:
     if not _SHA256.fullmatch(protocol_sha256):
         _fail(f"{label}.protocol_sha256 must be 64 lowercase hexadecimal characters")
     count = _integer(document["learner_response_count"], f"{label}.learner_response_count")
-    if count < 0:
-        _fail(f"{label}.learner_response_count must not be negative")
+    if not 0 <= count <= MAX_LEARNER_RESPONSES:
+        _fail(
+            f"{label}.learner_response_count must be between 0 and "
+            f"{MAX_LEARNER_RESPONSES}"
+        )
     stop_reason = _string(document["stop_reason"], f"{label}.stop_reason")
     if stop_reason not in _STOP_REASONS:
         _fail(f"{label}.stop_reason must be one of {sorted(_STOP_REASONS)}, got {stop_reason!r}")
@@ -326,7 +329,7 @@ def load_run_record(path: Path) -> RunRecord:
     if failure is not None:
         failure = _string(failure, f"{label}.infrastructure_failure")
     turns = _array(document["turns"], f"{label}.turns")
-    return RunRecord(
+    record = RunRecord(
         schema_version=SCHEMA_VERSION,
         run_id=_string(document["run_id"], f"{label}.run_id"),
         suite_id=_string(document["suite_id"], f"{label}.suite_id"),
@@ -342,6 +345,39 @@ def load_run_record(path: Path) -> RunRecord:
         infrastructure_failure=failure,
         turns=tuple(_turn(item, f"{label}.turns[{index}]") for index, item in enumerate(turns)),
     )
+    validate_run_record(record)
+    return record
+
+
+def validate_run_record(record: RunRecord, rubric: Rubric | None = None) -> None:
+    """Validate cross-field run invariants, plus rubric classes when available."""
+    if not 0 <= record.learner_response_count <= MAX_LEARNER_RESPONSES:
+        _fail(
+            "run record learner_response_count must be between 0 and "
+            f"{MAX_LEARNER_RESPONSES}"
+        )
+    is_infrastructure = record.stop_reason == "infrastructure_failure"
+    if is_infrastructure != (record.infrastructure_failure is not None):
+        _fail(
+            "run record infrastructure_failure must be present iff "
+            "stop_reason is infrastructure_failure"
+        )
+    if (
+        rubric is not None
+        and record.infrastructure_failure is not None
+        and record.infrastructure_failure not in rubric.infrastructure_failures
+    ):
+        _fail("run record contains an unknown infrastructure failure")
+
+    numbers = [turn.number for turn in record.turns]
+    if numbers != list(range(1, len(numbers) + 1)):
+        _fail("run record turn numbers must be unique and sequential")
+    expected_responses = max(0, len(record.turns) - 1)
+    if record.learner_response_count != expected_responses:
+        _fail(
+            "run record learner_response_count must match recorded turns "
+            "after the bootstrap turn"
+        )
 
 
 def _fail(message: str) -> NoReturn:

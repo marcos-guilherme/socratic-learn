@@ -10,7 +10,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 from evaluation.isolation import (
     RunLayout,
@@ -68,6 +68,16 @@ class InfrastructureFailure(RuntimeError):
         self.kind = kind
         self.detail = normalized[:200]
         super().__init__(self.detail)
+
+
+class ProcessCleanupError(InfrastructureFailure):
+    """The child still appears alive after bounded termination attempts."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "runtime",
+            "Antigravity process cleanup could not be confirmed.",
+        )
 
 
 def initial_bootstrap(protocol: Path, goal: str) -> str:
@@ -315,19 +325,25 @@ class AntigravitySession:
                 "runtime", "Antigravity could not be started."
             ) from None
 
+        self._process = process
         if process.stdin is None or process.stdout is None or process.stderr is None:
             try:
                 process.kill()
-            finally:
-                try:
-                    process.wait(timeout=KILL_WAIT_SECONDS)
-                except (subprocess.TimeoutExpired, OSError):
-                    pass
+            except Exception:
+                pass
+            try:
+                process.wait(timeout=KILL_WAIT_SECONDS)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+            confirmed = process.poll()
+            if confirmed is None:
+                raise ProcessCleanupError()
+            self._returncode = confirmed
+            self._closed = True
             raise InfrastructureFailure(
                 "runtime", "Antigravity did not provide binary pipes."
             )
 
-        self._process = process
         self._stdout_thread = threading.Thread(
             target=self._stdout_reader,
             name="antigravity-stdout",
@@ -530,7 +546,10 @@ class AntigravitySession:
             except InfrastructureFailure as failure:
                 self._failed = True
                 if failure.kind == "timeout":
-                    self.close()
+                    try:
+                        self.close()
+                    except ProcessCleanupError as cleanup_error:
+                        failure.add_note(type(cleanup_error).__name__)
                 raise
 
     @staticmethod
@@ -567,9 +586,9 @@ class AntigravitySession:
         if self._closed:
             self._finish_reader_cleanup()
             return 0 if self._returncode is None else self._returncode
-        self._closed = True
         process = self._process
         if process is None:
+            self._closed = True
             self._returncode = 0
             return 0
 
@@ -596,9 +615,9 @@ class AntigravitySession:
         self._finish_reader_cleanup()
 
         confirmed = process.poll()
-        self._returncode = (
-            confirmed
-            if confirmed is not None
-            else (-9 if returncode is None else cast(int, returncode))
-        )
+        if confirmed is None:
+            self._returncode = None
+            raise ProcessCleanupError()
+        self._closed = True
+        self._returncode = confirmed
         return self._returncode

@@ -9,7 +9,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest import mock
 
-from evaluation.antigravity import InfrastructureFailure
+from evaluation.antigravity import InfrastructureFailure, ProcessCleanupError
 from evaluation.isolation import (
     ProtocolIdentity,
     create_run_layout,
@@ -616,6 +616,18 @@ class IsolatedRunTests(unittest.TestCase):
         self.assertEqual(("close",), raised.exception.failed_steps)
         self.assertTrue((layout.run_dir / "learner-records").is_dir())
         self.assertFalse(layout.runtime_root.exists())
+
+    def test_unconfirmed_process_cleanup_preserves_runtime_for_retry(self) -> None:
+        layout = self.layout()
+        tutor = FakeTutor(close_failure=ProcessCleanupError())
+
+        with self.assertRaises(RuntimeCleanupError) as raised:
+            self.execute(layout, tutor)
+
+        self.assertEqual(("close",), raised.exception.failed_steps)
+        self.assertTrue(raised.exception.preserve_runtime)
+        self.assertTrue(layout.runtime_root.exists())
+        self.assertFalse((layout.run_dir / "learner-records").exists())
 
     def test_close_failure_after_session_error_adds_fixed_note(self) -> None:
         layout = self.layout()

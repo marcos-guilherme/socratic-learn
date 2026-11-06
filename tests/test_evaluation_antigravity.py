@@ -20,6 +20,7 @@ from unittest.mock import patch
 from evaluation.antigravity import (
     AntigravitySession,
     InfrastructureFailure,
+    ProcessCleanupError,
     antigravity_argv,
     initial_bootstrap,
 )
@@ -163,6 +164,23 @@ class MissingPipeProcess(FakeProcess):
     def kill(self) -> None:
         self.kill_count += 1
         self.returncode = -9
+
+
+class UnkillableProcess(FakeProcess):
+    def __init__(self, *, missing_stdout: bool = False) -> None:
+        super().__init__(RecordingStdout(b"", []), returncode=None)
+        if missing_stdout:
+            self.stdout = None  # type: ignore[assignment]
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_timeouts.append(timeout)
+        raise subprocess.TimeoutExpired("agy", timeout)
+
+    def terminate(self) -> None:
+        self.terminate_count += 1
+
+    def kill(self) -> None:
+        self.kill_count += 1
 
 
 def result_line(text: str) -> bytes:
@@ -922,6 +940,40 @@ class EvaluationAntigravityTests(unittest.TestCase):
 
         self.assertEqual(1, process.kill_count)
         self.assertEqual([1.0], process.wait_timeouts)
+
+    def test_missing_pipe_retains_unconfirmed_process_for_cleanup_retry(self) -> None:
+        process = UnkillableProcess(missing_stdout=True)
+        session = self.session(process)
+
+        with self.assertRaises(ProcessCleanupError):
+            session.start()
+
+        self.assertIs(process, session._process)
+        self.assertIsNone(process.poll())
+        self.assertFalse(session._closed)
+        with self.assertRaises(ProcessCleanupError):
+            session.close()
+        self.assertIs(process, session._process)
+        self.assertGreaterEqual(process.kill_count, 2)
+
+    def test_close_refuses_to_synthesize_status_for_unconfirmed_process(self) -> None:
+        process = UnkillableProcess()
+        session = self.session(process)
+        session.start()
+
+        with patch.multiple(
+            "evaluation.antigravity",
+            CLOSE_WAIT_SECONDS=0.01,
+            TERMINATE_WAIT_SECONDS=0.01,
+            KILL_WAIT_SECONDS=0.01,
+        ):
+            with self.assertRaises(ProcessCleanupError):
+                session.close()
+
+        self.assertIsNone(session._returncode)
+        self.assertIsNone(process.poll())
+        self.assertFalse(session._closed)
+        self.assertIs(process, session._process)
 
     def test_runtime_log_is_precreated_privately_before_popen(self) -> None:
         observed = False

@@ -12,6 +12,7 @@ from typing import Literal, Protocol, TextIO
 from evaluation.antigravity import (
     FailureKind,
     InfrastructureFailure,
+    ProcessCleanupError,
     initial_bootstrap,
 )
 from evaluation.isolation import (
@@ -134,8 +135,14 @@ class ConsoleEvaluator:
 class RuntimeCleanupError(RuntimeError):
     """Raised after a completed session when one or more cleanup steps failed."""
 
-    def __init__(self, failed_steps: list[str] | tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        failed_steps: list[str] | tuple[str, ...],
+        *,
+        preserve_runtime: bool = False,
+    ) -> None:
         self.failed_steps = tuple(failed_steps)
+        self.preserve_runtime = preserve_runtime
         super().__init__(
             "Runtime cleanup failed: " + ", ".join(self.failed_steps)
         )
@@ -453,6 +460,7 @@ def execute_isolated_run(
         failed_steps: list[str] = []
         cleanup_primary: BaseException | None = None
         cleanup_failures: list[tuple[str, str]] = []
+        preserve_runtime = False
         steps: tuple[tuple[str, Callable[[], object]], ...] = (
             (
                 "close",
@@ -470,6 +478,16 @@ def execute_isolated_run(
             except BaseException as cleanup_error:
                 failed_steps.append(name)
                 cleanup_failures.append((name, type(cleanup_error).__name__))
+                if name == "close" and isinstance(
+                    cleanup_error,
+                    ProcessCleanupError,
+                ):
+                    preserve_runtime = True
+                    if primary is not None:
+                        try:
+                            setattr(primary, "_preserve_semantic_runtime", True)
+                        except Exception:
+                            pass
                 if primary is not None:
                     primary.add_note(
                         f"cleanup step {name} failed: "
@@ -486,10 +504,15 @@ def execute_isolated_run(
                         cleanup_primary.add_note(
                             f"cleanup step {failed_name} failed: {failure_type}"
                         )
+            if preserve_runtime:
+                break
         if cleanup_primary is not None:
             raise cleanup_primary
         if failed_steps and primary is None:
-            raise RuntimeCleanupError(failed_steps) from None
+            raise RuntimeCleanupError(
+                failed_steps,
+                preserve_runtime=preserve_runtime,
+            ) from None
 
 
 def _contains(parent: Path, candidate: Path) -> bool:

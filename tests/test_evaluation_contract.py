@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
+from unittest.mock import patch
 
 from evaluation.contract_capture import (
     ContractCaptureError,
@@ -19,6 +20,7 @@ from evaluation.contract_capture import (
 )
 from evaluation.schema import canonical_json, load_stream_contract
 from evaluation.sanitize import RedactionRule
+from evaluation.isolation import LocalRuleContamination
 
 
 class EvaluationContractTests(unittest.TestCase):
@@ -111,6 +113,152 @@ class EvaluationContractTests(unittest.TestCase):
         self.assertEqual(
             {"observed_request": {"text": "STREAM_CONTRACT_OK"}}, captured["request_template"]
         )
+
+    def test_capture_uses_external_cwd_and_removes_it_after_success(self) -> None:
+        request = b'{"observed_request":{"text":"STREAM_CONTRACT_OK"}}\n'
+        output = b'{"observed_event":"complete","payload":"STREAM_CONTRACT_OK"}\n'
+        seen_cwd: Path | None = None
+
+        def fake_run(argv: list[str], **kwargs: object) -> CompletedProcess[bytes]:
+            nonlocal seen_cwd
+            seen_cwd = Path(str(kwargs["cwd"])).resolve()
+            self.assertTrue(seen_cwd.is_dir())
+            return CompletedProcess(argv, 0, output, b"")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(__file__).resolve().parents[1]
+            raw = Path(temporary) / "raw"
+            capture_contract(
+                "agy",
+                "captured-model-id",
+                request,
+                raw,
+                completion_pointer="/observed_event",
+                completion_value="complete",
+                run=fake_run,
+            )
+            self.assertIsNotNone(seen_cwd)
+            self.assertFalse(seen_cwd.is_relative_to(repository))
+            self.assertFalse(seen_cwd.is_relative_to(raw.resolve()))
+            self.assertFalse(raw.resolve().is_relative_to(seen_cwd))
+            self.assertFalse(seen_cwd.parent.exists())
+
+    def test_capture_removes_external_root_after_probe_failure(self) -> None:
+        request = b'{"observed_request":{"text":"STREAM_CONTRACT_OK"}}\n'
+        seen_cwd: Path | None = None
+
+        def fail_run(argv: list[str], **kwargs: object) -> CompletedProcess[bytes]:
+            nonlocal seen_cwd
+            seen_cwd = Path(str(kwargs["cwd"]))
+            raise OSError("probe failed")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaises(ContractCaptureError):
+                capture_contract(
+                    "agy",
+                    "captured-model-id",
+                    request,
+                    Path(temporary) / "raw",
+                    completion_pointer="/observed_event",
+                    completion_value="complete",
+                    run=fail_run,
+                )
+            self.assertIsNotNone(seen_cwd)
+            self.assertFalse(seen_cwd.parent.exists())
+
+    def test_capture_removes_external_root_when_evidence_preparation_fails(self) -> None:
+        request = b'{"observed_request":{"text":"STREAM_CONTRACT_OK"}}\n'
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            owned_root = root / "external-owned"
+
+            def controlled_mkdtemp(*args: object, **kwargs: object) -> str:
+                owned_root.mkdir(mode=0o700)
+                return str(owned_root)
+
+            with (
+                patch(
+                    "evaluation.contract_capture.tempfile.mkdtemp",
+                    controlled_mkdtemp,
+                ),
+                patch(
+                    "evaluation.contract_capture.write_private",
+                    side_effect=OSError("evidence write failed"),
+                ),
+            ):
+                with self.assertRaises(OSError):
+                    capture_contract(
+                        "agy",
+                        "captured-model-id",
+                        request,
+                        root / "raw",
+                        completion_pointer="/observed_event",
+                        completion_value="complete",
+                    )
+            self.assertFalse(owned_root.exists())
+
+    def test_capture_rejects_local_rule_marker_and_removes_external_root(self) -> None:
+        request = b'{"observed_request":{"text":"STREAM_CONTRACT_OK"}}\n'
+        run_called = False
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            external_parent = root / "external"
+            external_parent.mkdir()
+            (external_parent / "AGENTS.md").write_text(
+                "must not be read",
+                encoding="utf-8",
+            )
+            owned_root = external_parent / "owned"
+
+            def controlled_mkdtemp(*args: object, **kwargs: object) -> str:
+                owned_root.mkdir(mode=0o700)
+                return str(owned_root)
+
+            def forbidden_run(*args: object, **kwargs: object) -> CompletedProcess[bytes]:
+                nonlocal run_called
+                run_called = True
+                raise AssertionError("probe must not launch")
+
+            with patch(
+                "evaluation.contract_capture.tempfile.mkdtemp",
+                controlled_mkdtemp,
+            ):
+                with self.assertRaises(LocalRuleContamination):
+                    capture_contract(
+                        "agy",
+                        "captured-model-id",
+                        request,
+                        root / "raw",
+                        completion_pointer="/observed_event",
+                        completion_value="complete",
+                        run=forbidden_run,
+                    )
+            self.assertFalse(run_called)
+            self.assertFalse(owned_root.exists())
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits are not authoritative on Windows")
+    def test_capture_raw_evidence_is_owner_only(self) -> None:
+        request = b'{"observed_request":{"text":"STREAM_CONTRACT_OK"}}\n'
+        output = b'{"observed_event":"complete","payload":"STREAM_CONTRACT_OK"}\n'
+
+        def fake_run(argv: list[str], **kwargs: object) -> CompletedProcess[bytes]:
+            Path(argv[argv.index("--log-file") + 1]).write_bytes(b"log")
+            return CompletedProcess(argv, 0, output, b"diagnostic")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            raw = Path(temporary) / "raw"
+            capture_contract(
+                "agy",
+                "captured-model-id",
+                request,
+                raw,
+                completion_pointer="/observed_event",
+                completion_value="complete",
+                run=fake_run,
+            )
+            self.assertEqual(0, raw.stat().st_mode & 0o077)
+            for path in raw.iterdir():
+                self.assertEqual(0, path.stat().st_mode & 0o077, path.name)
 
     def test_capture_uses_operator_output_pointers_verified_against_data(self) -> None:
         request = b'{"observed_request":{"text":"STREAM_CONTRACT_OK"}}\n'

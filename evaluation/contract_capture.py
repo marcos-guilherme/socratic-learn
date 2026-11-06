@@ -8,13 +8,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from subprocess import CompletedProcess
 
+from evaluation.isolation import assert_no_local_rule_ancestors, disclose_rule_markers
 from evaluation.sanitize import RedactionRule, assert_tracked_safe, sanitize_json, write_private
 from evaluation.schema import JsonValue, canonical_json, load_stream_contract
 
@@ -32,6 +36,38 @@ _ABSOLUTE_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/(?:Users|home|tmp|var|pri
 
 class ContractCaptureError(ValueError):
     """The probe or fixture cannot establish an observed contract."""
+
+
+def _overlaps(left: Path, right: Path) -> bool:
+    try:
+        common = Path(os.path.commonpath((left, right)))
+    except ValueError:
+        return False
+    return common == left or common == right
+
+
+def _create_probe_workspace(raw_root: Path) -> tuple[Path, Path]:
+    runtime_root = Path(tempfile.mkdtemp(prefix="socratic-contract-")).absolute()
+    try:
+        os.chmod(runtime_root, 0o700)
+        resolved_runtime = runtime_root.resolve(strict=True)
+        repository = Path(__file__).resolve().parents[1]
+        if _overlaps(resolved_runtime, repository) or _overlaps(
+            resolved_runtime,
+            raw_root.resolve(strict=True),
+        ):
+            raise ContractCaptureError(
+                "probe runtime root must be outside repository and raw evidence"
+            )
+        workspace = resolved_runtime / "workspace"
+        workspace.mkdir(mode=0o700)
+        user_home = Path.home().absolute().resolve(strict=True)
+        boundary = assert_no_local_rule_ancestors(workspace, user_home)
+        disclose_rule_markers(user_home, boundary)
+        return resolved_runtime, workspace
+    except BaseException:
+        shutil.rmtree(runtime_root, ignore_errors=True)
+        raise
 
 
 def capture_contract(
@@ -52,8 +88,8 @@ def capture_contract(
 
     raw_root = Path(raw_root).absolute()
     raw_root.mkdir(parents=True, exist_ok=True)
-    workspace = raw_root / "workspace"
-    workspace.mkdir(exist_ok=True)
+    os.chmod(raw_root, 0o700)
+    runtime_root, workspace = _create_probe_workspace(raw_root)
     argv = [
         executable,
         "--input-format",
@@ -69,50 +105,69 @@ def capture_contract(
         "--log-file",
         str(raw_root / "antigravity.log"),
     ]
-    write_private(raw_root / "request.ndjson", request_line, private_root=raw_root)
-    write_private(raw_root / "argv.json", canonical_json(argv), private_root=raw_root)
+    try:
+        write_private(raw_root / "request.ndjson", request_line, private_root=raw_root)
+        write_private(raw_root / "argv.json", canonical_json(argv), private_root=raw_root)
+        write_private(raw_root / "antigravity.log", b"", private_root=raw_root)
+    except BaseException:
+        shutil.rmtree(runtime_root, ignore_errors=True)
+        raise
 
     try:
-        completed = run(
-            argv,
-            input=request_line,
-            capture_output=True,
-            cwd=str(workspace),
-            timeout=PROBE_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ContractCaptureError(f"probe did not complete: {type(error).__name__}") from error
+        try:
+            completed = run(
+                argv,
+                input=request_line,
+                capture_output=True,
+                cwd=str(workspace),
+                timeout=PROBE_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ContractCaptureError(
+                f"probe did not complete: {type(error).__name__}"
+            ) from error
 
-    stdout = completed.stdout or b""
-    write_private(raw_root / "stdout.ndjson", stdout, private_root=raw_root)
-    write_private(raw_root / "stderr.txt", completed.stderr or b"", private_root=raw_root)
-    if completed.returncode != 0:
-        raise ContractCaptureError(f"probe exited with code {completed.returncode}")
+        stdout = completed.stdout or b""
+        write_private(raw_root / "stdout.ndjson", stdout, private_root=raw_root)
+        write_private(raw_root / "stderr.txt", completed.stderr or b"", private_root=raw_root)
+        try:
+            os.chmod(raw_root / "antigravity.log", 0o600)
+        except OSError as error:
+            raise ContractCaptureError("probe log could not be secured") from error
+        if completed.returncode != 0:
+            raise ContractCaptureError(f"probe exited with code {completed.returncode}")
 
-    events = _parse_output(stdout)
-    if not any(_matches(event, completion_pointer, completion_value) for event in events):
-        raise ContractCaptureError("no output event carries the completion pointer/value")
-    observed_pointers = _marker_pointers(events)
-    if not observed_pointers:
-        raise ContractCaptureError(f"no output event text contains {MARKER}")
-    if output_text_pointers is None:
-        output_pointers = observed_pointers
-    else:
-        output_pointers = list(output_text_pointers)
-        if not output_pointers or not set(output_pointers) <= set(observed_pointers):
-            raise ContractCaptureError(f"output text pointers do not yield {MARKER} in the stream")
+        events = _parse_output(stdout)
+        if not any(_matches(event, completion_pointer, completion_value) for event in events):
+            raise ContractCaptureError("no output event carries the completion pointer/value")
+        observed_pointers = _marker_pointers(events)
+        if not observed_pointers:
+            raise ContractCaptureError(f"no output event text contains {MARKER}")
+        if output_text_pointers is None:
+            output_pointers = observed_pointers
+        else:
+            output_pointers = list(output_text_pointers)
+            if not output_pointers or not set(output_pointers) <= set(observed_pointers):
+                raise ContractCaptureError(
+                    f"output text pointers do not yield {MARKER} in the stream"
+                )
 
-    return {
-        "antigravity_version": _recorded_version(raw_root),
-        "model_identifier": model,
-        "request_text_pointer": request_pointer,
-        "output_text_pointers": output_pointers,
-        "completion_pointer": completion_pointer,
-        "completion_value": completion_value,
-        "request_template": request,
-        "sample_output_events": events,
-    }
+        return {
+            "antigravity_version": _recorded_version(raw_root),
+            "model_identifier": model,
+            "request_text_pointer": request_pointer,
+            "output_text_pointers": output_pointers,
+            "completion_pointer": completion_pointer,
+            "completion_value": completion_value,
+            "request_template": request,
+            "sample_output_events": events,
+        }
+    finally:
+        try:
+            shutil.rmtree(runtime_root)
+        except OSError as error:
+            raise ContractCaptureError("probe runtime root could not be removed") from error
 
 
 def publish_contract_fixture(

@@ -40,6 +40,7 @@ from evaluation.report import (
 from evaluation.sanitize import write_private
 from evaluation.schema import (
     Finding,
+    Rubric,
     RunRecord,
     Scenario,
     Scorecard,
@@ -50,6 +51,7 @@ from evaluation.schema import (
     load_rubric,
     load_run_record,
     load_stream_contract,
+    validate_run_record,
 )
 from evaluation.scoring import interactive_score, scorecard_from_mapping
 from evaluation.session import (
@@ -341,13 +343,18 @@ def _run_command(
             runtime_version=checked.runtime_version,
         )
     except BaseException as primary:
-        try:
-            remove_runtime_root(layout, repository)
-        except BaseException as cleanup_error:
-            primary.add_note(
-                "post-handoff runtime removal failed: "
-                f"{type(cleanup_error).__name__}"
-            )
+        preserve_runtime = (
+            isinstance(primary, RuntimeCleanupError)
+            and primary.preserve_runtime
+        ) or getattr(primary, "_preserve_semantic_runtime", False) is True
+        if not preserve_runtime:
+            try:
+                remove_runtime_root(layout, repository)
+            except BaseException as cleanup_error:
+                primary.add_note(
+                    "post-handoff runtime removal failed: "
+                    f"{type(cleanup_error).__name__}"
+                )
         if isinstance(primary, Exception):
             raise _RunPhaseFailure from None
         raise
@@ -367,12 +374,18 @@ def _suite_directory(repository: Path, suite_id: str) -> Path:
     return suite
 
 
-def _suite_records(suite: Path) -> list[tuple[Path, RunRecord]]:
+def _suite_records(
+    suite: Path,
+    rubric: Rubric | None = None,
+) -> list[tuple[Path, RunRecord]]:
     records: list[tuple[Path, RunRecord]] = []
     for run_dir in sorted(suite.iterdir(), key=lambda path: path.name):
         record_path = run_dir / "run-record.json"
         if run_dir.is_dir() and record_path.is_file():
-            records.append((run_dir, load_run_record(record_path)))
+            record = load_run_record(record_path)
+            if rubric is not None:
+                validate_run_record(record, rubric)
+            records.append((run_dir, record))
     if not records:
         raise CliRefusal("Evaluation suite has no run records.")
     if len({record.scenario_id for _, record in records}) != len(records):
@@ -432,7 +445,7 @@ def _interactive_findings(records: Mapping[str, RunRecord]) -> tuple[Finding, ..
 def _score_command(args: argparse.Namespace, *, repository: Path, output: TextIO) -> int:
     suite = _suite_directory(repository, args.suite_id)
     rubric = load_rubric(repository / "evaluation" / "fixtures" / "rubric.json")
-    run_records = _suite_records(suite)
+    run_records = _suite_records(suite, rubric)
     records = {record.scenario_id: record for _, record in run_records}
     scorecards: list[tuple[Path, Scorecard]] = []
     for run_dir, record in run_records:
@@ -479,7 +492,7 @@ def _tracked_report_path(repository: Path, supplied: str) -> Path:
 def _report_command(args: argparse.Namespace, *, repository: Path, output: TextIO) -> int:
     suite = _suite_directory(repository, args.suite_id)
     rubric = load_rubric(repository / "evaluation" / "fixtures" / "rubric.json")
-    run_records = _suite_records(suite)
+    run_records = _suite_records(suite, rubric)
     records = [record for _, record in run_records]
     records_by_scenario = {record.scenario_id: record for record in records}
     scorecards: list[Scorecard] = []
