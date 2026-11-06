@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+from dataclasses import replace
 import io
 import json
 import os
@@ -247,6 +248,50 @@ class InstallTests(unittest.TestCase):
         self.assertFalse((self.project / ".learning-tutor").exists())
         self.assertFalse(any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir()))
 
+    def test_staged_hash_mismatch_cleans_actual_stage_tree(self) -> None:
+        plan = plan_install(self.source, self.project, "generic", False)
+        bad_file = replace(plan.files[0], sha256="0" * 64)
+        bad_plan = replace(plan, files=(bad_file, *plan.files[1:]))
+
+        with self.assertRaisesRegex(IntegrityError, "staged file hash"):
+            apply_install(bad_plan)
+
+        self.assertFalse((self.project / ".learning-tutor").exists())
+        self.assertFalse(
+            any(
+                path.name.startswith(".learning-tutor-stage-")
+                for path in self.project.iterdir()
+            )
+        )
+
+    def test_staging_and_cleanup_failure_reports_original_and_recovery_path(self) -> None:
+        plan = plan_install(self.source, self.project, "generic", False)
+
+        with (
+            mock.patch(
+                "learning_tutor.install._write_staged_file",
+                side_effect=OSError("injected staging write failure"),
+            ),
+            mock.patch(
+                "learning_tutor.install._remove_created_tree",
+                side_effect=PermissionError("injected locked stage"),
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        message = str(raised.exception)
+        self.assertIn("injected staging write failure", message)
+        self.assertIn("injected locked stage", message)
+        self.assertIn(".learning-tutor-stage-", message)
+        stages = [
+            path
+            for path in self.project.iterdir()
+            if path.name.startswith(".learning-tutor-stage-")
+        ]
+        self.assertEqual(1, len(stages))
+        self.assertEqual(stages[0], Path(raised.exception.path))
+
     def test_initial_commit_failure_preserves_preexisting_paths(self) -> None:
         sentinel = self.project / "sentinel"
         sentinel.write_text("keep", encoding="utf-8")
@@ -264,6 +309,52 @@ class InstallTests(unittest.TestCase):
 
         self.assertEqual("keep", sentinel.read_text(encoding="utf-8"))
         self.assertFalse((self.project / ".learning-tutor").exists())
+
+    def test_initial_cleanup_failure_reports_locked_partial_tree(self) -> None:
+        plan = plan_install(self.source, self.project, "generic", False)
+        real_replace = os.replace
+        real_remove = __import__(
+            "learning_tutor.install",
+            fromlist=["_remove_created_tree"],
+        )._remove_created_tree
+        moves = 0
+
+        def fail_second_move(
+            source: str | os.PathLike[str],
+            destination: str | os.PathLike[str],
+        ) -> None:
+            nonlocal moves
+            if ".learning-tutor-stage-" in str(source):
+                moves += 1
+                if moves == 2:
+                    raise OSError("injected initial commit failure")
+            real_replace(source, destination)
+
+        def lock_install_root(path: Path) -> None:
+            if path == self.project / ".learning-tutor":
+                raise PermissionError("injected locked install path")
+            real_remove(path)
+
+        with (
+            mock.patch("learning_tutor.install.os.replace", side_effect=fail_second_move),
+            mock.patch(
+                "learning_tutor.install._remove_created_tree",
+                side_effect=lock_install_root,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        self.assertIn("injected initial commit failure", str(raised.exception))
+        self.assertIn("injected locked install path", str(raised.exception))
+        self.assertEqual(self.project / ".learning-tutor", Path(raised.exception.path))
+        self.assertTrue((self.project / ".learning-tutor").is_dir())
+        self.assertFalse(
+            any(
+                path.name.startswith(".learning-tutor-stage-")
+                for path in self.project.iterdir()
+            )
+        )
 
     def test_backup_failure_restores_every_old_file(self) -> None:
         self._install()
@@ -307,6 +398,97 @@ class InstallTests(unittest.TestCase):
                 apply_install(plan)
 
         self.assertEqual(before, self._snapshot())
+
+    def test_integrity_error_after_first_update_move_rolls_back(self) -> None:
+        self._install()
+        before = self._snapshot()
+        self._make_distribution(b"# Universal Learning Tutor\nProtocol: 1.0.0\nNew.\n")
+        plan = plan_install(self.source, self.project, "generic", True)
+        install_module = __import__("learning_tutor.install", fromlist=["_project_path"])
+        real_project_path = install_module._project_path
+        real_replace = os.replace
+        first_commit_completed = False
+        injected = False
+
+        def track_commit(
+            source: str | os.PathLike[str],
+            destination: str | os.PathLike[str],
+        ) -> None:
+            nonlocal first_commit_completed
+            real_replace(source, destination)
+            if ".learning-tutor-stage-" in str(source):
+                first_commit_completed = True
+
+        def race_on_second_commit(project: Path, relative: str) -> Path:
+            nonlocal injected
+            if (
+                first_commit_completed
+                and not injected
+                and relative == plan.files[1].path
+            ):
+                injected = True
+                raise IntegrityError(
+                    "injected symlink race",
+                    path=relative,
+                    remediation="retry",
+                )
+            return real_project_path(project, relative)
+
+        with (
+            mock.patch("learning_tutor.install.os.replace", side_effect=track_commit),
+            mock.patch(
+                "learning_tutor.install._project_path",
+                side_effect=race_on_second_commit,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        self.assertIn("injected symlink race", str(raised.exception))
+        self.assertEqual(before, self._snapshot())
+        self.assertFalse(
+            any(
+                path.name.startswith((".learning-tutor-stage-", ".learning-tutor-backup-"))
+                for path in self.project.iterdir()
+            )
+        )
+
+    def test_update_rollback_removes_only_operation_created_parent(self) -> None:
+        self._install()
+        workspace = self.project / ".learning-tutor/workspace"
+        (workspace / ".gitkeep").unlink()
+        workspace.rmdir()
+        receipt_path = self.project / ".learning-tutor/install.json"
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["owned_paths"].remove(".learning-tutor/workspace/.gitkeep")
+        receipt["hashes"].pop(".learning-tutor/workspace/.gitkeep")
+        receipt_path.write_text(
+            json.dumps(receipt, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        plan = plan_install(self.source, self.project, "generic", True)
+        real_replace = os.replace
+
+        def fail_after_parent_creation(
+            source: str | os.PathLike[str],
+            destination: str | os.PathLike[str],
+        ) -> None:
+            if (
+                ".learning-tutor-stage-" in str(source)
+                and Path(destination).name == ".gitkeep"
+            ):
+                raise OSError("injected commit failure after parent creation")
+            real_replace(source, destination)
+
+        with mock.patch(
+            "learning_tutor.install.os.replace",
+            side_effect=fail_after_parent_creation,
+        ):
+            with self.assertRaises(FilesystemError):
+                apply_install(plan)
+
+        self.assertFalse(workspace.exists())
+        self.assertTrue((self.project / ".learning-tutor/loader.md").is_file())
 
     def test_rollback_failure_keeps_backup_and_reports_recovery_path(self) -> None:
         self._install()

@@ -12,7 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from . import MANIFEST_SCHEMA_VERSION, PROTOCOL_VERSION
-from .errors import CollisionError, FilesystemError, IntegrityError, UsageError
+from .errors import (
+    CollisionError,
+    FilesystemError,
+    IntegrityError,
+    LearningTutorError,
+    UsageError,
+)
 from .manifest import serialize_json, sha256_bytes, validate_manifest
 
 
@@ -441,6 +447,86 @@ def _write_staged_file(path: Path, content: bytes) -> None:
         os.fsync(stream.fileno())
 
 
+def _remove_created_tree(path: Path) -> None:
+    """Remove one operation-created tree, surfacing Windows lock failures."""
+
+    shutil.rmtree(path)
+
+
+def _cleanup_created_trees(paths: list[Path]) -> list[tuple[Path, OSError]]:
+    failures: list[tuple[Path, OSError]] = []
+    for path in paths:
+        try:
+            if path.exists() or path.is_symlink():
+                _remove_created_tree(path)
+        except OSError as error:
+            failures.append((path, error))
+    return failures
+
+
+def _combined_cleanup_error(
+    context: str,
+    cleanup_failures: list[tuple[Path, OSError]],
+    *,
+    original: BaseException | None = None,
+) -> FilesystemError:
+    cleanup_details = "; ".join(
+        f"{path}: {type(error).__name__}: {error}"
+        for path, error in cleanup_failures
+    )
+    original_detail = (
+        ""
+        if original is None
+        else f"; original failure: {type(original).__name__}: {original}"
+    )
+    recovery_paths = ", ".join(str(path) for path, _ in cleanup_failures)
+    return FilesystemError(
+        f"{context}{original_detail}; cleanup failure: {cleanup_details}",
+        path=cleanup_failures[0][0],
+        remediation=(
+            f"preserve and inspect the recovery path(s): {recovery_paths}; "
+            "remove only those operation-created paths after releasing locks"
+        ),
+    )
+
+
+def _ensure_parent_directories(
+    path: Path,
+    *,
+    stop: Path,
+    created: list[Path],
+) -> None:
+    missing: list[Path] = []
+    parent = path.parent
+    while parent != stop and not parent.exists():
+        if not parent.is_relative_to(stop):
+            raise IntegrityError(
+                "managed parent path escapes the installation root",
+                path=parent,
+                remediation="create a new update plan",
+            )
+        missing.append(parent)
+        parent = parent.parent
+    if parent.is_symlink() or not parent.is_dir():
+        raise IntegrityError(
+            "managed parent path changed during commit",
+            path=parent,
+            remediation="remove the conflicting path and retry",
+        )
+    for directory in reversed(missing):
+        try:
+            directory.mkdir()
+        except FileExistsError as error:
+            if directory.is_symlink() or not directory.is_dir():
+                raise IntegrityError(
+                    "managed parent path changed during commit",
+                    path=directory,
+                    remediation="remove the conflicting path and retry",
+                ) from error
+        else:
+            created.append(directory)
+
+
 def _verify_plan_still_safe(plan: InstallPlan) -> None:
     if not plan.update:
         target = plan.project / INSTALL_ROOT
@@ -473,6 +559,7 @@ def _verify_plan_still_safe(plan: InstallPlan) -> None:
 
 
 def _stage(plan: InstallPlan) -> tuple[Path, Path]:
+    stage: Path | None = None
     try:
         stage = Path(
             tempfile.mkdtemp(prefix=".learning-tutor-stage-", dir=plan.project)
@@ -492,10 +579,17 @@ def _stage(plan: InstallPlan) -> tuple[Path, Path]:
                     remediation="check the filesystem and retry",
                 )
         return stage, staged_install
-    except (OSError, FilesystemError) as error:
-        if "stage" in locals():
-            shutil.rmtree(stage, ignore_errors=True)
-        if isinstance(error, FilesystemError):
+    except (LearningTutorError, OSError) as error:
+        cleanup_failures = (
+            _cleanup_created_trees([stage]) if stage is not None else []
+        )
+        if cleanup_failures:
+            raise _combined_cleanup_error(
+                "installation staging and cleanup failed",
+                cleanup_failures,
+                original=error,
+            ) from error
+        if isinstance(error, LearningTutorError):
             raise
         raise FilesystemError(
             "installation staging failed",
@@ -516,16 +610,26 @@ def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None
             destination = _project_path(plan.project, planned.path)
             destination.parent.mkdir(parents=True, exist_ok=True)
             os.replace(source, destination)
-    except OSError as error:
-        if created_root:
-            shutil.rmtree(target, ignore_errors=True)
+    except (LearningTutorError, OSError) as error:
+        cleanup_paths = ([target] if created_root else []) + [stage]
+        cleanup_failures = _cleanup_created_trees(cleanup_paths)
+        if cleanup_failures:
+            raise _combined_cleanup_error(
+                "initial installation commit and cleanup failed",
+                cleanup_failures,
+                original=error,
+            ) from error
         raise FilesystemError(
             "installation commit failed",
             path=target,
             remediation="check for a new path or permission problem and retry",
         ) from error
-    finally:
-        shutil.rmtree(stage, ignore_errors=True)
+    cleanup_failures = _cleanup_created_trees([stage])
+    if cleanup_failures:
+        raise _combined_cleanup_error(
+            "installation committed but staging cleanup failed",
+            cleanup_failures,
+        )
 
 
 def _rollback_update(
@@ -533,7 +637,8 @@ def _rollback_update(
     backup: Path,
     installed: list[str],
     backed_up: list[str],
-) -> OSError | None:
+    created_parents: list[Path],
+) -> LearningTutorError | OSError | None:
     try:
         for relative in reversed(installed):
             target = _project_path(plan.project, relative)
@@ -542,7 +647,13 @@ def _rollback_update(
             source = backup.joinpath(*PurePosixPath(relative).parts)
             target = _project_path(plan.project, relative)
             os.replace(source, target)
-    except OSError as error:
+        for parent in sorted(
+            created_parents,
+            key=lambda item: len(item.parts),
+            reverse=True,
+        ):
+            parent.rmdir()
+    except (LearningTutorError, OSError) as error:
         return error
     return None
 
@@ -551,6 +662,7 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
     backup: Path | None = None
     backed_up: list[str] = []
     installed: list[str] = []
+    created_parents: list[Path] = []
     try:
         backup = Path(
             tempfile.mkdtemp(prefix=".learning-tutor-backup-", dir=plan.project)
@@ -569,33 +681,79 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
             relative_inside = PurePosixPath(planned.path).relative_to(INSTALL_ROOT)
             source = staged_install.joinpath(*relative_inside.parts)
             destination = _project_path(plan.project, planned.path)
-            destination.parent.mkdir(parents=True, exist_ok=True)
+            _ensure_parent_directories(
+                destination,
+                stop=plan.project / INSTALL_ROOT,
+                created=created_parents,
+            )
             os.replace(source, destination)
             installed.append(planned.path)
-    except OSError as error:
+    except (LearningTutorError, OSError) as error:
         if backup is None:
+            cleanup_failures = _cleanup_created_trees([stage])
+            if cleanup_failures:
+                raise _combined_cleanup_error(
+                    "update backup creation and staging cleanup failed",
+                    cleanup_failures,
+                    original=error,
+                ) from error
             raise FilesystemError(
                 "update backup could not be created",
                 path=plan.project,
                 remediation="check project permissions and retry",
             ) from error
-        rollback_error = _rollback_update(plan, backup, installed, backed_up)
+        rollback_error = (
+            _rollback_update(
+                plan,
+                backup,
+                installed,
+                backed_up,
+                created_parents,
+            )
+            if backed_up or installed or created_parents
+            else None
+        )
         if rollback_error is not None:
+            cleanup_failures = _cleanup_created_trees([stage])
+            cleanup_detail = ""
+            if cleanup_failures:
+                cleanup_detail = "; " + str(
+                    _combined_cleanup_error(
+                        "staging cleanup also failed",
+                        cleanup_failures,
+                    )
+                )
             raise FilesystemError(
-                "update failed and rollback could not restore every owned file",
-                path=plan.project / INSTALL_ROOT,
-                remediation=f"restore managed files from {backup.name}",
+                (
+                    "update failed and rollback could not restore every owned file; "
+                    f"original failure: {type(error).__name__}: {error}; "
+                    f"rollback failure: {type(rollback_error).__name__}: "
+                    f"{rollback_error}{cleanup_detail}"
+                ),
+                path=backup,
+                remediation=f"restore managed files from {backup}",
             ) from rollback_error
-        shutil.rmtree(backup, ignore_errors=True)
+        cleanup_failures = _cleanup_created_trees([backup, stage])
+        if cleanup_failures:
+            raise _combined_cleanup_error(
+                "update failed, rollback completed, and cleanup failed",
+                cleanup_failures,
+                original=error,
+            ) from error
         raise FilesystemError(
-            "update failed; the previous installation was restored",
+            (
+                "update failed; the previous installation was restored; "
+                f"original failure: {type(error).__name__}: {error}"
+            ),
             path=plan.project / INSTALL_ROOT,
             remediation="check project permissions and retry",
         ) from error
-    else:
-        shutil.rmtree(backup, ignore_errors=True)
-    finally:
-        shutil.rmtree(stage, ignore_errors=True)
+    cleanup_failures = _cleanup_created_trees([backup, stage])
+    if cleanup_failures:
+        raise _combined_cleanup_error(
+            "update committed but temporary cleanup failed",
+            cleanup_failures,
+        )
 
 
 def apply_install(plan: InstallPlan) -> None:
