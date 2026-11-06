@@ -22,13 +22,23 @@ class EvaluationPrivacyTests(unittest.TestCase):
 
     def test_tracked_evaluation_assets_are_sanitized(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        for path in sorted((root / "evaluation").rglob("*")):
-            if path.is_file() and path.suffix in {".json", ".md", ".py"}:
-                with self.subTest(path=path):
-                    text = path.read_text(encoding="utf-8")
-                    assert_tracked_safe(text, forbidden_literals=())
-                    if path.parent == root / "evaluation/reports":
-                        validate_baseline_report(text)
+        tracked = subprocess.run(
+            ["git", "ls-files", "evaluation"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        for relative in sorted(tracked):
+            path = root / relative
+            if path.suffix not in {".json", ".md", ".py"}:
+                continue
+            with self.subTest(path=relative):
+                self.assertFalse(path.is_symlink())
+                text = path.read_text(encoding="utf-8")
+                assert_tracked_safe(text, forbidden_literals=())
+                if relative.startswith("evaluation/reports/"):
+                    validate_baseline_report(text)
 
     def test_canonical_protocol_is_not_an_evaluation_source(self) -> None:
         root = Path(__file__).resolve().parents[1]

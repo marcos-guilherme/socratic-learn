@@ -4,6 +4,7 @@ import ast
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -305,12 +306,39 @@ def tracked_files(root: Path) -> tuple[set[str], str | None]:
 
 def semantic_runtime_errors(root: Path) -> list[str]:
     raw_root = root / ".semantic-runs"
-    if not raw_root.is_dir():
+    try:
+        raw_status = raw_root.lstat()
+    except FileNotFoundError:
         return []
-    errors = []
-    for directory, subdirectories, _ in os.walk(raw_root, followlinks=False):
-        relative = Path(directory).relative_to(raw_root).as_posix()
-        names = set(subdirectories)
+    if stat.S_ISLNK(raw_status.st_mode):
+        return ["Unsafe symlink under .semantic-runs: ."]
+    if not stat.S_ISDIR(raw_status.st_mode):
+        return []
+
+    errors: list[str] = []
+    pending = [(raw_root, ".")]
+    while pending:
+        directory, relative = pending.pop()
+        subdirectories: set[str] = set()
+        with os.scandir(directory) as entries:
+            for entry in sorted(entries, key=lambda item: item.name):
+                child_relative = (
+                    entry.name
+                    if relative == "."
+                    else f"{relative}/{entry.name}"
+                )
+                if entry.is_symlink():
+                    errors.append(
+                        "Unsafe symlink under .semantic-runs: "
+                        + child_relative
+                    )
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    subdirectories.add(entry.name)
+                    pending.append(
+                        (Path(entry.path), child_relative)
+                    )
+        names = subdirectories
         if names & set(RUNTIME_WORKSPACE_MARKERS) or (
             Path(directory).name == "home" and "learning" in names
         ):
@@ -1130,7 +1158,17 @@ def validate(root: Path) -> list[str]:
         if not relative.startswith(TRACKED_EVALUATION_ASSET_ROOTS):
             continue
         path = root / relative
-        if not path.is_file():
+        try:
+            status = path.lstat()
+        except OSError:
+            errors.append(f"Unsafe tracked evaluation asset: {relative}")
+            continue
+        if stat.S_ISLNK(status.st_mode):
+            errors.append(
+                f"Unsafe tracked evaluation asset symlink: {relative}"
+            )
+            continue
+        if not stat.S_ISREG(status.st_mode):
             continue
         try:
             assert_tracked_safe(

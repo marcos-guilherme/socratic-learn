@@ -2195,6 +2195,35 @@ class RepositoryValidationTests(unittest.TestCase):
             semantic_runtime_errors(root),
         )
 
+    def test_validator_rejects_symlinked_semantic_runs_root(self) -> None:
+        temp, root = self.make_root(nested_under_workspace=True)
+        self.addCleanup(temp.cleanup)
+        target = Path(temp.name) / "external-runtime-root"
+        (target / "home/learning").mkdir(parents=True)
+        (root / ".semantic-runs").symlink_to(target, target_is_directory=True)
+
+        self.assertEqual(
+            ["Unsafe symlink under .semantic-runs: ."],
+            semantic_runtime_errors(root),
+        )
+
+    def test_validator_rejects_symlinked_semantic_run_directory(self) -> None:
+        temp, root = self.make_root(nested_under_workspace=True)
+        self.addCleanup(temp.cleanup)
+        raw_root = root / ".semantic-runs"
+        raw_root.mkdir()
+        target = Path(temp.name) / "external-runtime"
+        (target / "home/learning").mkdir(parents=True)
+        (raw_root / "suite").symlink_to(target, target_is_directory=True)
+
+        with patch("builtins.open", side_effect=AssertionError("raw content read")):
+            errors = semantic_runtime_errors(root)
+
+        self.assertEqual(
+            ["Unsafe symlink under .semantic-runs: suite"],
+            errors,
+        )
+
     def test_raw_semantic_tree_is_not_runtime_placement(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
@@ -2228,6 +2257,114 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn(
             "Unsafe tracked evaluation asset: "
             "evaluation/fixtures/antigravity/leak.json",
+            validate(root),
+        )
+
+    def test_validator_rejects_guarded_tracked_asset_symlinks_without_reading(
+        self,
+    ) -> None:
+        for label, target_relative in (
+            ("external", "outside-provider-data.json"),
+            ("ignored raw", ".semantic-runs/raw-provider-data.json"),
+        ):
+            with self.subTest(target=label):
+                temp, root = self.make_root(
+                    nested_under_workspace=label == "external"
+                )
+                self.addCleanup(temp.cleanup)
+                target = (
+                    Path(temp.name) / target_relative
+                    if label == "external"
+                    else root / target_relative
+                )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(
+                    '{"Authorization": "Bearer provider-secret"}\n',
+                    encoding="utf-8",
+                )
+                guarded = (
+                    root / "evaluation/fixtures/antigravity/tracked-link.json"
+                )
+                guarded.parent.mkdir(parents=True)
+                guarded.symlink_to(target)
+                subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+                subprocess.run(
+                    [
+                        "git",
+                        "add",
+                        "-f",
+                        "evaluation/fixtures/antigravity/tracked-link.json",
+                    ],
+                    cwd=root,
+                    check=True,
+                )
+                original_read_text = Path.read_text
+
+                def reject_guarded_read(
+                    path: Path,
+                    *args: object,
+                    **kwargs: object,
+                ) -> str:
+                    if path == guarded:
+                        raise AssertionError("guarded symlink content was read")
+                    return original_read_text(path, *args, **kwargs)
+
+                with patch("pathlib.Path.read_text", new=reject_guarded_read):
+                    errors = validate(root)
+
+                self.assertIn(
+                    "Unsafe tracked evaluation asset symlink: "
+                    "evaluation/fixtures/antigravity/tracked-link.json",
+                    errors,
+                )
+
+    def test_validator_guards_tracked_evaluation_reports(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        report = root / "evaluation/reports/leak.md"
+        report.parent.mkdir(parents=True)
+        report.write_text(
+            "Authorization: Bearer provider-secret\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "add", "-f", "evaluation/reports/leak.md"],
+            cwd=root,
+            check=True,
+        )
+
+        self.assertIn(
+            "Unsafe tracked evaluation asset: evaluation/reports/leak.md",
+            validate(root),
+        )
+
+    def test_validator_rejects_home_path_in_tracked_evaluation_asset(
+        self,
+    ) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        fixture = root / "evaluation/fixtures/antigravity/home-path.json"
+        fixture.parent.mkdir(parents=True)
+        fixture.write_text(
+            '{"path": "/home/private-user/provider-output.json"}\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "add",
+                "-f",
+                "evaluation/fixtures/antigravity/home-path.json",
+            ],
+            cwd=root,
+            check=True,
+        )
+
+        self.assertIn(
+            "Unsafe tracked evaluation asset: "
+            "evaluation/fixtures/antigravity/home-path.json",
             validate(root),
         )
 
