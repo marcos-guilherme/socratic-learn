@@ -16,6 +16,10 @@ _ARRAY_INDEX = re.compile(r"(?:0|[1-9][0-9]*)")
 _MISSING = object()
 
 
+class _PathShapeError(ValueError):
+    """A valid pointer cannot traverse the encountered JSON container shape."""
+
+
 @dataclass(frozen=True)
 class TutorTurn:
     text: str
@@ -49,7 +53,9 @@ def _tokens(pointer: str) -> tuple[str, ...]:
 
 def _array_index(token: str) -> int:
     if not _ARRAY_INDEX.fullmatch(token):
-        raise ValueError(f"JSON Pointer array token must be a canonical index, got {token!r}")
+        raise _PathShapeError(
+            f"JSON Pointer array token must be a canonical index, got {token!r}"
+        )
     return int(token)
 
 
@@ -170,7 +176,7 @@ def request_line(contract: StreamContract, text: str) -> bytes:
 def _pointer_value(value: JsonValue, pointer: str) -> JsonValue | object:
     try:
         return json_pointer_get(value, pointer)
-    except (KeyError, IndexError, TypeError):
+    except (KeyError, IndexError, TypeError, _PathShapeError):
         return _MISSING
 
 
@@ -189,10 +195,23 @@ def _exact_json_match(left: JsonValue, right: JsonValue) -> bool:
     return left == right
 
 
+def is_completion(event: dict[str, JsonValue], contract: StreamContract) -> bool:
+    completion = _pointer_value(event, contract.completion_pointer)
+    return completion is not _MISSING and _exact_json_match(
+        completion, contract.completion_value
+    )
+
+
 def _merge_fragment(text: str, fragment: str) -> str:
-    if not fragment or text.startswith(fragment):
+    """Merge losslessly unless content proves a strictly newer cumulative snapshot.
+
+    Equality and shorter-prefix relationships are ambiguous: they may be repeated
+    deltas, so they are appended. A strict extension is the only positive evidence
+    available in the captured contract that the fragment subsumes prior output.
+    """
+    if not fragment:
         return text
-    if fragment.startswith(text):
+    if len(fragment) > len(text) and fragment.startswith(text):
         return fragment
     return text + fragment
 
@@ -217,10 +236,7 @@ def collect_tutor_turn(
                 )
             text = _merge_fragment(text, fragment)
 
-        completion = _pointer_value(event, contract.completion_pointer)
-        if completion is not _MISSING and _exact_json_match(
-            completion, contract.completion_value
-        ):
+        if is_completion(event, contract):
             completed = True
             break
 
