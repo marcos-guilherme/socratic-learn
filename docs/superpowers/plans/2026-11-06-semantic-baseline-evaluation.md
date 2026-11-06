@@ -4,7 +4,7 @@
 
 **Goal:** Build a private, development-only semantic evaluation system and use it to run exactly one unchanged-protocol Antigravity baseline session for each of the conceptual physics, practical programming, and communication-writing scenarios, producing a tracked sanitized evidence report.
 
-**Architecture:** Keep all evaluation implementation and fictitious fixtures in the repository-root `evaluation/` package, which is importable from a checkout but excluded from published wheels, source distributions, and native executables. A contract-capture gate records Antigravity's observed stream-json envelope and one explicit available model before the adapter is implemented; isolated sessions then reuse the public launcher's exact Antigravity bootstrap while storing every raw event under ignored `.semantic-runs/`. The implementing agent is the only adaptive learner evaluator: it reads each tutor turn, responds faithfully to the scenario persona, chooses stop reasons, and scores evidence through a console workflow without delegating the learner role to another model.
+**Architecture:** Keep all evaluation implementation and fictitious fixtures in the repository-root `evaluation/` package, which is importable from a checkout but excluded from published wheels, source distributions, and native executables. A contract-capture gate records Antigravity's observed stream-json envelope and one explicit available model before the adapter is implemented; isolated sessions then reuse the public launcher's exact Antigravity bootstrap with an ephemeral home and working directory outside the repository, while storing every raw event under the repository's ignored `.semantic-runs/`. The implementing agent is the only adaptive learner evaluator: it reads each tutor turn, responds faithfully to the scenario persona, chooses stop reasons, and scores evidence through a console workflow without delegating the learner role to another model.
 
 **Tech Stack:** Python 3.11+ standard library, `unittest`, newline-delimited JSON, existing `socratic_learn` resource/workspace/host interfaces, Antigravity CLI headless structured-streaming mode with stream-json input and output (no `--print`, no `--mode`).
 
@@ -19,11 +19,15 @@
 - Antigravity must run in headless structured-streaming mode with `--input-format stream-json`, `--output-format stream-json`, `--sandbox`, and a bounded print timeout. Never pass `--print` or `--mode`.
 - Compatibility rationale (user decision, 2026-11-06): installed `agy 1.5.2` treats `--print` as an option that takes a prompt value, so it consumes the next flag as the prompt; the first-party headless documentation runs stream-json input without `--print`. `--mode auto` is unavailable for this account and unnecessary for stream-json. `--sandbox` stays.
 - Do not infer or hard-code the unknown Antigravity stream-json envelope. Capture it from a successful installed-CLI probe, sanitize it, and commit the resulting adapter fixture before implementing parsing.
-- Each scenario has a separate `SOCRATIC_LEARN_HOME` and working directory under `.semantic-runs/`; preserve the parent environment so Antigravity inherits existing authentication without credential inspection.
+- Each scenario has a separate external ephemeral `SOCRATIC_LEARN_HOME` and working directory under an external runtime root outside the repository (live default: a fresh `tempfile.mkdtemp()` directory in the secure system temporary location). Preserve the parent environment so Antigravity inherits existing authentication without credential inspection.
+- Runtime/raw split (user decision, 2026-11-06): the runtime home and cwd are always external; only raw evidence lives under the repository's ignored `.semantic-runs/{suite_id}/{scenario_id}/`. Runtimes discover rule files in cwd ancestors, so a cwd inside the repository would load the repository's own agent rules into the tutor.
+- Before launch, reject repository/local rule markers (`AGENTS.md`, `GEMINI.md`, `CLAUDE.md`, `.agents/`, `.agent/`) in the cwd and every ancestor strictly below the user-home boundary. Do not reject user-home/global rule markers: they stay inherited with authentication, and only their names (never their contents) are recorded privately as an evaluation limitation.
+- Delete each external home/cwd after the private run record and raw streams needed for scoring are saved, including on failure paths.
 - Never pass `--dangerously-skip-permissions`, inspect credential stores, print environment values, or copy authentication material.
 - The public-launcher-equivalent initial objective bootstrap does not consume the response budget. The hard cap is 15 adaptive learner responses after that bootstrap, and the runner must prevent response 16.
 - The implementing agent acts as the adaptive learner. No model, subagent, scripted response generator, or second runtime may play the learner in live baselines.
-- Raw transcripts, input envelopes, stderr, provider metadata, temporary learner homes, temporary working directories, evaluator notes, and unsanitized scorecards live only under ignored `.semantic-runs/`.
+- Raw transcripts, input envelopes, stderr, runtime logs, provider metadata, runtime-context records, learner-record snapshots, evaluator notes, and unsanitized scorecards live only under ignored `.semantic-runs/`. Temporary learner homes and working directories never live there; they are external and ephemeral.
+- Never replace `HOME` or `USERPROFILE`, and never read the contents of any rule file or credential store.
 - Tracked fixtures are fictitious and sanitized. The tracked baseline report contains only the minimum quoted turns required to justify scores.
 - Infrastructure failures are recorded separately and never converted into pedagogy scores.
 - The three baseline scenarios run once each under the unchanged protocol. Do not average arbitrary repetitions or silently rerun a scenario.
@@ -42,9 +46,9 @@ Create these focused development-only files before expanding any public surface:
 - `evaluation/sanitize.py`: recursive secret/path/identifier redaction and tracked-artifact privacy assertions.
 - `evaluation/contract_capture.py`: records installed Antigravity help, model listing, one successful stream-json probe, and publishes the sanitized observed contract.
 - `evaluation/parser.py`: JSON Pointer helpers and deterministic extraction of tutor text and turn-completion events from the captured contract.
-- `evaluation/isolation.py`: creates one contained `.semantic-runs/{suite_id}/{scenario_id}/` layout and prepares the unchanged packaged protocol in its isolated working directory.
+- `evaluation/isolation.py`: creates one run layout that splits internal raw evidence (`.semantic-runs/{suite_id}/{scenario_id}/`) from an external ephemeral runtime home/cwd outside the repository, prepares the unchanged packaged protocol in the external working directory, rejects local rule-marker ancestors, records user-level marker names only, and removes the external runtime root.
 - `evaluation/antigravity.py`: constructs the exact Antigravity argv, owns the persistent stream-json process, writes raw input/output/stderr, and returns parsed tutor turns.
-- `evaluation/session.py`: applies the 15-message cap, stop conditions, manual evaluator console, and immutable run-record persistence.
+- `evaluation/session.py`: applies the 15-message cap, stop conditions, manual evaluator console, immutable run-record persistence, and guaranteed external-runtime cleanup after records are saved.
 - `evaluation/scoring.py`: validates eight rubric scores, critical failures, evidence turn references, finding classifications, and infrastructure outcomes.
 - `evaluation/report.py`: renders and validates the sanitized Markdown baseline report.
 - `evaluation/cli.py`: private `python -m evaluation.cli` entry point for contract capture, preflight, live baseline, scoring, report generation, and validation.
@@ -59,7 +63,7 @@ Create these focused development-only files before expanding any public surface:
 - `tests/test_evaluation_contract.py`: contract capture and tracked fixture validation with a fake process boundary.
 - `tests/test_evaluation_parser.py`: NDJSON and JSON Pointer behavior against the captured and synthetic fixtures.
 - `tests/test_evaluation_sanitize.py`: recursive redaction and leak rejection.
-- `tests/test_evaluation_isolation.py`: path containment, separate homes/directories, protocol identity, and inherited-environment behavior.
+- `tests/test_evaluation_isolation.py`: raw-path containment, external runtime placement, separate homes/directories, local rule-ancestor rejection, user-level marker recording, runtime cleanup, protocol identity, and inherited-environment behavior.
 - `tests/test_evaluation_antigravity.py`: exact argv, persistent process, raw logging, timeout/error classification, and no learner-model behavior.
 - `tests/test_evaluation_session.py`: manual evaluator flow, message cap, stop precedence, and run-record persistence.
 - `tests/test_evaluation_report.py`: score validation, minimum evidence quoting, infrastructure separation, and deterministic report rendering.
@@ -991,10 +995,20 @@ git commit -m "feat: parse captured antigravity streams"
 - Create: `tests/test_evaluation_isolation.py`
 
 **Interfaces:**
-- Consumes: `prepare_personal_workspace`, `build_distribution`, `PROTOCOL_VERSION`.
-- Produces: `RunLayout(root: Path, home: Path, cwd: Path, raw: Path, records: Path, protocol: Path)`
+- Consumes: `prepare_personal_workspace`, `build_distribution`, `PROTOCOL_VERSION`, `write_private`.
+- Produces: `RULE_MARKERS = ("AGENTS.md", "GEMINI.md", "CLAUDE.md", ".agents", ".agent")`
+- Produces: `class LocalRuleContamination(ValueError)`
+- Produces: `RunLayout(run_dir: Path, raw: Path, evaluator: Path, runtime_root: Path, owns_runtime_root: bool, home: Path, cwd: Path, records: Path, protocol: Path, user_home: Path, user_rule_markers: tuple[str, ...])`
+  - internal (repository, ignored): `run_dir = raw_root / suite_id / scenario_id`, `raw = run_dir / "raw"`, `evaluator = run_dir / "evaluator"`;
+  - external (outside the repository): `runtime_root` (the directory removed at cleanup), `home = runtime_root / "home"`, and `cwd`, `records`, `protocol` from `prepare_personal_workspace(home)`, so `cwd == home / "learning"`.
 - Produces: `ProtocolIdentity(repository_commit: str, protocol_version: str, bundle_sha256: str)`
-- Produces: `create_run_layout(repository: Path, suite_id: str, scenario_id: str, *, private_root: Path | None = None) -> RunLayout`
+- Produces: `create_run_layout(repository: Path, suite_id: str, scenario_id: str, *, raw_root: Path | None = None, runtime_root: Path | None = None, user_home: Path | None = None) -> RunLayout`
+  - live defaults: `raw_root = repository / ".semantic-runs"`; `runtime_root = Path(tempfile.mkdtemp(prefix="socratic-semantic-"))` (a fresh, owner-only directory in the secure system temporary location, `owns_runtime_root=True`); `user_home = Path.home()`;
+  - tests inject `raw_root`, `runtime_root`, and `user_home` as temporary directories; an injected `runtime_root` is a base, and the layout uses `runtime_root / suite_id / scenario_id` with `owns_runtime_root=False`.
+- Produces: `assert_no_local_rule_ancestors(cwd: Path, user_home: Path) -> None`
+- Produces: `user_rule_markers(user_home: Path) -> tuple[str, ...]`
+- Produces: `snapshot_learner_records(layout: RunLayout) -> Path`
+- Produces: `remove_runtime_root(layout: RunLayout, repository: Path) -> None`
 - Produces: `isolated_environment(layout: RunLayout, parent: Mapping[str, str]) -> dict[str, str]`
 - Produces: `capture_protocol_identity(repository: Path) -> ProtocolIdentity`
 - Produces: `assert_protocol_unchanged(expected: ProtocolIdentity, repository: Path) -> None`
@@ -1007,30 +1021,125 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
-from evaluation.isolation import create_run_layout, isolated_environment
+from evaluation.isolation import (
+    RULE_MARKERS,
+    LocalRuleContamination,
+    assert_no_local_rule_ancestors,
+    create_run_layout,
+    isolated_environment,
+    remove_runtime_root,
+    user_rule_markers,
+)
 
 
 class EvaluationIsolationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.user_home = Path(temporary.name).resolve()
+        self.repository = self.user_home / "projects" / "repo"
+        self.repository.mkdir(parents=True)
+        self.raw_root = self.repository / ".semantic-runs"
+        self.runtime_base = self.user_home / "runtime"
+        self.runtime_base.mkdir()
+
+    def layout(self, scenario: str, **overrides: object):
+        arguments = {
+            "raw_root": self.raw_root,
+            "runtime_root": self.runtime_base,
+            "user_home": self.user_home,
+        }
+        arguments.update(overrides)
+        return create_run_layout(self.repository, "suite", scenario, **arguments)
+
+    def test_raw_is_internal_and_runtime_is_external(self) -> None:
+        layout = self.layout("conceptual-physics")
+        self.assertEqual(self.raw_root / "suite" / "conceptual-physics", layout.run_dir)
+        self.assertTrue(layout.raw.is_relative_to(layout.run_dir))
+        self.assertFalse(layout.home.is_relative_to(self.repository))
+        self.assertFalse(layout.cwd.is_relative_to(self.repository))
+        self.assertEqual(layout.home / "learning", layout.cwd)
+        self.assertTrue(layout.protocol.is_file())
+
     def test_scenarios_receive_separate_home_and_cwd(self) -> None:
-        repository = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory(dir=repository) as temporary:
-            private = Path(temporary).resolve()
-            first = create_run_layout(
-                repository,
-                "suite",
-                "conceptual-physics",
-                private_root=private,
-            )
-            second = create_run_layout(
-                repository,
-                "suite",
-                "practical-programming",
-                private_root=private,
-            )
+        first = self.layout("conceptual-physics")
+        second = self.layout("practical-programming")
         self.assertNotEqual(first.home, second.home)
         self.assertNotEqual(first.cwd, second.cwd)
+        self.assertNotEqual(first.run_dir, second.run_dir)
+
+    def test_live_default_runtime_is_secure_temporary_outside_repository(self) -> None:
+        layout = create_run_layout(
+            self.repository,
+            "suite",
+            "conceptual-physics",
+            raw_root=self.raw_root,
+            user_home=Path.home(),
+        )
+        try:
+            self.assertTrue(layout.owns_runtime_root)
+            self.assertTrue(
+                layout.runtime_root.is_relative_to(Path(tempfile.gettempdir()).resolve())
+            )
+            self.assertFalse(layout.cwd.is_relative_to(self.repository))
+        finally:
+            remove_runtime_root(layout, self.repository)
+
+    def test_runtime_inside_repository_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self.layout("conceptual-physics", runtime_root=self.repository / "runtime")
+        with self.assertRaises(ValueError):
+            self.layout("conceptual-physics", runtime_root=self.raw_root / "runtime")
+
+    def test_local_rule_markers_below_user_home_are_rejected(self) -> None:
+        for marker in RULE_MARKERS:
+            with self.subTest(marker):
+                parent = self.user_home / f"ancestor-{marker.strip('.')}"
+                cwd = parent / "child" / "learning"
+                cwd.mkdir(parents=True)
+                if marker.endswith(".md"):
+                    (parent / marker).write_text("not read", encoding="utf-8")
+                else:
+                    (parent / marker).mkdir()
+                with self.assertRaises(LocalRuleContamination):
+                    assert_no_local_rule_ancestors(cwd, self.user_home)
+
+    def test_marker_in_cwd_itself_is_rejected(self) -> None:
+        cwd = self.user_home / "work" / "learning"
+        cwd.mkdir(parents=True)
+        (cwd / "AGENTS.md").write_text("not read", encoding="utf-8")
+        with self.assertRaises(LocalRuleContamination):
+            assert_no_local_rule_ancestors(cwd, self.user_home)
+
+    def test_user_home_markers_are_allowed_and_recorded_by_name_only(self) -> None:
+        (self.user_home / "AGENTS.md").write_text("private rule text", encoding="utf-8")
+        (self.user_home / ".agents").mkdir()
+        cwd = self.user_home / "work" / "learning"
+        cwd.mkdir(parents=True)
+        with mock.patch("builtins.open", side_effect=AssertionError("must not read")):
+            assert_no_local_rule_ancestors(cwd, self.user_home)
+            markers = user_rule_markers(self.user_home)
+        self.assertEqual(("AGENTS.md", ".agents"), markers)
+
+    def test_layout_rejects_contaminated_external_runtime(self) -> None:
+        (self.runtime_base / "GEMINI.md").write_text("not read", encoding="utf-8")
+        with self.assertRaises(LocalRuleContamination):
+            self.layout("conceptual-physics")
+
+    def test_remove_runtime_root_deletes_only_external_runtime(self) -> None:
+        layout = self.layout("conceptual-physics")
+        layout.raw.mkdir(parents=True, exist_ok=True)
+        remove_runtime_root(layout, self.repository)
+        self.assertFalse(layout.runtime_root.exists())
+        self.assertTrue(layout.run_dir.is_dir())
+        unsafe = replace(layout, runtime_root=self.repository)
+        with self.assertRaises(ValueError):
+            remove_runtime_root(unsafe, self.repository)
+        self.assertTrue(self.repository.is_dir())
 
     def test_environment_inherits_auth_without_inspection(self) -> None:
         parent = {
@@ -1055,28 +1164,41 @@ python -m unittest tests.test_evaluation_isolation -v
 
 Expected: import failure for `evaluation.isolation`.
 
-- [ ] **Step 3: Implement contained layouts and in-memory protocol verification**
+- [ ] **Step 3: Implement the external-runtime / internal-raw layout and in-memory protocol verification**
 
-With `private_root=None`, construct the live root as:
+Construct the two halves separately:
 
 ```python
-run_root = repository / ".semantic-runs" / suite_id / scenario_id
-home = run_root / "home"
-raw = run_root / "raw"
-evaluator = run_root / "evaluator"
+raw_root = (raw_root or repository / ".semantic-runs").resolve()
+run_dir = raw_root / suite_id / scenario_id
+raw = run_dir / "raw"
+evaluator = run_dir / "evaluator"
+
+if runtime_root is None:
+    runtime_dir = Path(tempfile.mkdtemp(prefix="socratic-semantic-")).resolve()
+    owns_runtime_root = True
+else:
+    runtime_dir = (runtime_root / suite_id / scenario_id).resolve()
+    owns_runtime_root = False
+home = runtime_dir / "home"
 ```
 
-The injected `private_root` is accepted only by deterministic tests and replaces
-`repository / ".semantic-runs"` without changing the `suite_id/scenario_id`
-suffix.
+Validation, in this order, before any runtime launch:
 
-After `workspace = prepare_personal_workspace(home)`, construct `RunLayout`
-with `cwd=workspace.root`, `protocol=workspace.protocol`, and
-`records=workspace.records`. Each scenario therefore has a distinct launcher
-home and a distinct working directory without redirecting the runtime's own
-credential home.
+1. `suite_id` and `scenario_id` match `^[a-z0-9]+(?:-[a-z0-9]+)*$`.
+2. `run_dir` resolves under `raw_root`; with live defaults, `raw_root` is the repository's `.semantic-runs/`. Refuse an existing `run_dir` (no reuse).
+3. `runtime_dir` resolves outside the resolved repository and outside `raw_root` (`is_relative_to` is false for both); otherwise raise `ValueError`. Refuse an existing injected `runtime_dir`, and reject links in the created runtime path.
+4. `workspace = prepare_personal_workspace(home)`; use `cwd=workspace.root`, `protocol=workspace.protocol`, `records=workspace.records`. This matches bare `socratic` rather than the `--here` variant: the runtime works in the external `home/learning` workspace.
+5. `user_home = (user_home or Path.home()).resolve()`, stored on the layout; then `assert_no_local_rule_ancestors(cwd, user_home)`.
+6. `user_rule_markers(user_home)` and write `run_dir / "runtime-context.json"` with `write_private`, containing only `runtime_root` (the absolute external path, private and used for later deletion checks), `runtime_outside_repository: true`, and the marker names.
 
-Validate `suite_id` and `scenario_id` with `^[a-z0-9]+(?:-[a-z0-9]+)*$`; reject links and any resolved path outside `/.semantic-runs/`. Call `prepare_personal_workspace(home)` and use the returned `LearningWorkspace.root`, `protocol`, and `records` as the run layout. This matches bare `socratic` rather than the `--here` variant: the runtime works in the isolated `home/learning` workspace while raw evidence remains beside it under the private scenario root. Do not modify the process-wide environment.
+Steps 1–3 only validate and create nothing (the live `mkdtemp` directory is created after the injected-path checks and removed on any later failure); `run_dir` is created only at step 6. Steps 1–3 only validate and create nothing (the live `mkdtemp` directory is created after the injected-path checks and removed on any later failure); `run_dir` is created only at step 6. If any step after the runtime directory is created fails, remove the runtime directory before re-raising.
+
+`assert_no_local_rule_ancestors(cwd, user_home)` walks `cwd` and its ancestors. When `user_home` is an ancestor of `cwd`, it stops before reaching `user_home`, so user-home/global markers are never rejected. Otherwise, it checks every ancestor up to the filesystem root. For each directory it tests only `os.path.lexists(directory / marker)` for every `RULE_MARKERS` entry, and raises `LocalRuleContamination` naming the marker and the number of levels above `cwd`. It never opens, reads, or lists rule contents.
+
+`user_rule_markers(user_home)` returns, in `RULE_MARKERS` order, the names that `os.path.lexists` finds directly in `user_home`. It records names only, without reading contents or resolving targets. These names are a baseline limitation: user-level runtime rules are inherited with authentication and are not removed.
+
+`snapshot_learner_records(layout)` copies the external `layout.records` tree into `layout.run_dir / "learner-records"` with private writes so the scoring evidence survives deletion. `remove_runtime_root(layout, repository)` refuses (`ValueError`) any `runtime_root` that is inside the repository or `raw_root`, equal to or an ancestor of the user home, or a link. Otherwise it removes `runtime_root` with `shutil.rmtree`: for live defaults that is the whole `mkdtemp` directory, and for an injected base it is only the `suite_id/scenario_id` directory, never the injected base itself. The live-default test passes `user_home=Path.home()`, because markers at the real user home are user-level and must not fail the test. Do not modify the process-wide environment.
 
 Build child environment exactly:
 
@@ -1087,7 +1209,7 @@ environment["PYTHONDONTWRITEBYTECODE"] = "1"
 return environment
 ```
 
-Do not replace `HOME`, `USERPROFILE`, runtime-specific variables, or credential variables.
+Do not replace `HOME`, `USERPROFILE`, runtime-specific variables, or credential variables. Authentication and user-level runtime rules are therefore inherited unchanged.
 
 `capture_protocol_identity` must:
 
@@ -1106,7 +1228,7 @@ python -m unittest tests.test_evaluation_isolation tests.test_workspace -v
 git diff --exit-code -- core dist
 ```
 
-Expected: tests pass and canonical protocol files remain byte-unchanged.
+Expected: tests pass; every test layout's home/cwd is outside the injected repository; local rule markers below the user home are rejected; user-home markers are recorded by name only; external runtimes are removed while raw evidence remains; canonical protocol files remain byte-unchanged.
 
 - [ ] **Step 5: Commit**
 
@@ -1124,7 +1246,7 @@ git commit -m "feat: isolate semantic evaluation runs"
 - Create: `tests/test_evaluation_antigravity.py`
 
 **Interfaces:**
-- Consumes: `RunLayout`, `StreamContract`, `request_line`, and `collect_tutor_turn`.
+- Consumes: `RunLayout` (external `cwd`, internal `raw`), `assert_no_local_rule_ancestors`, `StreamContract`, `request_line`, and `collect_tutor_turn`.
 - Consumes: public `ADAPTERS["antigravity"]` and `command_for` from `socratic_learn.hosts`.
 - Produces: `initial_bootstrap(protocol: Path, goal: str) -> str`
 - Produces: `antigravity_argv(executable: str, model: str, layout: RunLayout) -> tuple[str, ...]`
@@ -1226,12 +1348,14 @@ return (
 )
 ```
 
+The log path stays internal (`layout.raw`, under the repository's ignored `.semantic-runs/`), while the subprocess working directory is the external `layout.cwd`. Immediately before launch, `start()` calls `assert_no_local_rule_ancestors(layout.cwd, layout.user_home)` again, and refuses a `layout.cwd` that resolves inside the repository.
+
 Start with:
 
 ```python
 subprocess.Popen(
     list(argv),
-    cwd=layout.cwd,
+    cwd=layout.cwd,  # external runtime cwd, never inside the repository
     env=environment,
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
@@ -1259,6 +1383,8 @@ self.assertEqual("captured-model-id", session.model)
 ```
 
 Also test timeout, early EOF, non-JSON output, and non-zero exit as infrastructure failures.
+
+Add a fake-`Popen` test using a layout from `create_run_layout` with injected `raw_root`, `runtime_root`, and `user_home`. Assert that the recorded `cwd` keyword equals `layout.cwd` and is not inside the repository, and that the `--log-file` value is `layout.raw / "antigravity.log"`. Assert that `start()` raises `LocalRuleContamination` without calling `Popen` when an `AGENTS.md` is placed in an ancestor of `layout.cwd` below `layout.user_home` after the layout is created.
 
 - [ ] **Step 5: Run adapter and parser tests**
 
@@ -1292,7 +1418,9 @@ git commit -m "feat: add private antigravity adapter"
 - Produces: `EvaluatorContext(scenario: Scenario, tutor_turns: tuple[TutorTurn, ...], learner_responses: tuple[str, ...])`
 - Produces: `ConsoleEvaluator.decide(context: EvaluatorContext) -> EvaluatorDecision`
 - Produces: `run_session(scenario: Scenario, tutor: TutorSession, evaluator: ConsoleEvaluator, identity: ProtocolIdentity, initial_request: str, run_id: str, *, record_path: Path | None = None) -> RunRecord`
-- Produces: private commands `preflight`, `run`, `score`, `report`, and `validate-report`.
+- Produces: `execute_isolated_run(layout: RunLayout, repository: Path, scenario: Scenario, tutor_factory: Callable[[RunLayout], TutorSession], evaluator: ConsoleEvaluator, identity: ProtocolIdentity, run_id: str) -> RunRecord`
+- Produces: `verify_run_isolation(run_dir: Path, repository: Path) -> None`
+- Produces: private commands `preflight`, `run`, `verify-isolation`, `score`, `report`, and `validate-report`.
 
 - [ ] **Step 1: Write failing cap and stop-precedence tests**
 
@@ -1460,8 +1588,65 @@ if len(learner_responses) >= scenario.max_learner_responses:
 
 When `record_path` is provided, require it to resolve under `.semantic-runs/`
 and write the unsanitized run record there with `write_private`. The live CLI
-passes `layout.raw.parent / "run-record.json"`; tests may leave `record_path`
-as `None`.
+passes `layout.run_dir / "run-record.json"`, which equals
+`layout.raw.parent / "run-record.json"` and is internal; tests may leave
+`record_path` as `None`.
+
+`execute_isolated_run` owns the external runtime lifecycle and guarantees
+cleanup on every path:
+
+```python
+tutor = None
+try:
+    tutor = tutor_factory(layout)
+    tutor.start()
+    record = run_session(
+        scenario, tutor, evaluator, identity,
+        initial_bootstrap(layout.protocol, scenario.initial_goal), run_id,
+        record_path=layout.run_dir / "run-record.json",
+    )
+except Exception as error:
+    record = infrastructure_record(scenario, identity, run_id, error)
+    write_private(layout.run_dir / "run-record.json", canonical_json(record), private_root=layout.run_dir)
+    raise
+finally:
+    try:
+        if tutor is not None:
+            tutor.close()  # flushes raw input/output/stderr under layout.raw
+        snapshot_learner_records(layout)
+    finally:
+        remove_runtime_root(layout, repository)
+return record
+```
+
+`infrastructure_record` uses `stop_reason="infrastructure_failure"`,
+`infrastructure_failure="runtime"` for unexpected errors, and the turns
+completed so far. Raw streams are written incrementally by the adapter, so
+they are already saved before cleanup. The external home/cwd is removed even
+if the session, the record write, or the snapshot fails; the original error
+is re-raised after cleanup.
+
+`verify_run_isolation(run_dir, repository)` reads only the private
+`run_dir / "runtime-context.json"` and `run-record.json`. It fails unless:
+
+- the record exists;
+- `runtime_outside_repository` is true;
+- the recorded `runtime_root` is outside the repository and no longer exists;
+- `user_rule_markers` contains only names from `RULE_MARKERS`.
+
+Add session tests with a fake tutor factory and layouts from
+`create_run_layout` using injected `raw_root`, `runtime_root`, and
+`user_home`:
+
+- for a successful run, the record exists and `layout.runtime_root` is gone
+  while `layout.run_dir` remains;
+- for a tutor raising `InfrastructureFailure`, the infrastructure record
+  exists and the runtime is gone;
+- for an unexpected `RuntimeError` from `send`, the error is re-raised, the
+  infrastructure record exists, and the runtime is gone;
+- for a failing `snapshot_learner_records`, the runtime is still removed;
+- `verify_run_isolation` passes after a successful run and fails while the
+  runtime still exists or when the context reports a repository runtime.
 
 - [ ] **Step 4: Wire private CLI preflight and single-session run**
 
@@ -1482,7 +1667,11 @@ as `None`.
 python -m evaluation.cli run --suite-id 2026-11-06-antigravity-baseline --scenario conceptual-physics --model-file .semantic-runs/contract/model.txt
 ```
 
-It must refuse an unknown scenario, a model argument not read from the validated model file, an existing run directory, or a dirty protocol.
+It must refuse an unknown scenario, a model argument not read from the validated model file, an existing run directory, or a dirty protocol. It builds the layout with live defaults (`create_run_layout(repository, suite_id, scenario_id)`: internal raw under `.semantic-runs/`, external runtime in a fresh system temporary directory), runs `execute_isolated_run`, then runs `verify_run_isolation` and exits non-zero if it fails.
+
+`verify-isolation --suite-id SUITE --scenario SCENARIO` runs `verify_run_isolation` for one recorded scenario and prints `Runtime isolation verified.` It prints no absolute path, no marker content, and no environment value.
+
+The fake tutors used by `execute_isolated_run` tests implement `start()`, `send()`, and `close()`; `run_session` itself still requires only `send()`.
 
 - [ ] **Step 5: Run session, isolation, and adapter tests**
 
@@ -1492,7 +1681,7 @@ Run:
 python -m unittest tests.test_evaluation_session tests.test_evaluation_isolation tests.test_evaluation_antigravity -v
 ```
 
-Expected: all tests pass; no live runtime is invoked.
+Expected: all tests pass; no live runtime is invoked; every test runtime home/cwd is removed after its private record is saved, on success and failure paths.
 
 - [ ] **Step 6: Commit**
 
@@ -1723,12 +1912,14 @@ The report begins:
 ## Baseline limitations
 ```
 
+`## Baseline limitations` must list, per scenario, the user-level rule marker names recorded in the private `runtime-context.json` (names only, never contents or paths), or state that none were present. It must also state that user-level runtime rules were inherited with authentication.
+
 For each score, include score, rationale, and only the referenced learner/tutor turns. Deduplicate repeated quotations across categories. Reject quotations longer than 600 characters per turn and report text containing a forbidden literal or raw absolute home path.
 
 The privacy statement must be exactly:
 
 ```text
-Raw Antigravity streams, runtime logs, evaluator notes, temporary learner homes, and temporary working directories remain only under ignored .semantic-runs/. This tracked report contains fictitious scenario data and the minimum sanitized excerpts needed to justify its scores.
+Raw Antigravity streams, runtime logs, provider metadata, and evaluator notes remain only under ignored .semantic-runs/. Temporary learner homes and working directories were created outside the repository and deleted after private run records were saved. This tracked report contains fictitious scenario data and the minimum sanitized excerpts needed to justify its scores.
 ```
 
 - [ ] **Step 6: Run report and schema tests**
@@ -1919,6 +2110,38 @@ The `initial_bootstrap` implementation created in Task 6 must continue to call
 the existing `command_for`; this parity task must not replace it with duplicated
 bootstrap text.
 
+Add an external-runtime parity test that does not require a repository cwd.
+The repository path is used only as the source for `build_distribution`:
+
+```python
+def test_external_layout_bootstrap_and_protocol_match_public_launcher(self) -> None:
+    import tempfile
+    from pathlib import Path
+    from evaluation.antigravity import initial_bootstrap
+    from evaluation.isolation import create_run_layout, remove_runtime_root
+    from socratic_learn.build import build_distribution
+    from socratic_learn.hosts import ADAPTERS, command_for
+
+    root = Path(__file__).resolve().parents[1]
+    with tempfile.TemporaryDirectory() as raw_base, tempfile.TemporaryDirectory() as runtime_base:
+        layout = create_run_layout(
+            root,
+            "suite",
+            "conceptual-physics",
+            raw_root=Path(raw_base),
+            runtime_root=Path(runtime_base),
+            user_home=Path(runtime_base),
+        )
+        try:
+            self.assertFalse(layout.cwd.resolve().is_relative_to(root))
+            self.assertEqual(build_distribution(root).bundle, layout.protocol.read_bytes())
+            goal = "learn cafés"
+            public = command_for(ADAPTERS["antigravity"], "agy", layout.protocol, goal)
+            self.assertEqual(public[2], initial_bootstrap(layout.protocol, goal))
+        finally:
+            remove_runtime_root(layout, root)
+```
+
 - [ ] **Step 2: Add protocol-identity and report-triplet tests**
 
 Assert:
@@ -1959,6 +2182,7 @@ Expected:
 - all unit tests pass;
 - repository validation passes;
 - preflight prints the branch, commit, protocol version/hash, Antigravity version, and explicit model without printing authentication data;
+- parity holds with an external runtime cwd/home, without a repository cwd;
 - wheel and sdist exclude `evaluation/` and `.semantic-runs/`;
 - canonical protocol files have no diff.
 
@@ -1974,7 +2198,8 @@ git commit -m "test: verify evaluation launcher parity"
 ### Task 11: Three Unchanged-Protocol Baseline Sessions and Evidence Report
 
 **Files:**
-- Create privately: `.semantic-runs/2026-11-06-antigravity-baseline/**`
+- Create privately: `.semantic-runs/2026-11-06-antigravity-baseline/**` (raw evidence, run records, runtime context, learner-record snapshots, evaluator notes; never runtime homes or working directories)
+- Create and delete ephemerally: one external runtime home/cwd per scenario in the system temporary location, outside the repository
 - Create: `evaluation/reports/2026-11-06-antigravity-baseline.md`
 
 **Interfaces:**
@@ -2007,7 +2232,13 @@ python -m evaluation.cli run `
 
 The implementing agent reads every tutor turn and supplies the next learner response according to the persona and response policy. It must not use another model or prewritten response sequence. Stop at the first applicable stop condition.
 
-Expected: one private run record with at most 15 adaptive learner responses after the public-launcher-equivalent initial bootstrap; raw input/output/stderr remains under the scenario's ignored run directory.
+Then run:
+
+```powershell
+python -m evaluation.cli verify-isolation --suite-id 2026-11-06-antigravity-baseline --scenario conceptual-physics
+```
+
+Expected: one private run record with at most 15 adaptive learner responses after the public-launcher-equivalent initial bootstrap; raw input/output/stderr remains under the scenario's ignored run directory; `verify-isolation` prints `Runtime isolation verified.`, which confirms the runtime cwd/home was external, no local rule marker existed in its ancestors below the user home, and the external directory has been deleted.
 
 - [ ] **Step 3: Run the practical-programming baseline once**
 
@@ -2020,7 +2251,9 @@ python -m evaluation.cli run `
   --model-file .semantic-runs/contract/model.txt
 ```
 
-Expected: one private run record using the identical model and protocol identity, with no reuse of the first scenario's home or working directory.
+Then run `python -m evaluation.cli verify-isolation --suite-id 2026-11-06-antigravity-baseline --scenario practical-programming`.
+
+Expected: one private run record using the identical model and protocol identity, with no reuse of the first scenario's home or working directory; `verify-isolation` prints `Runtime isolation verified.`
 
 - [ ] **Step 4: Run the communication-writing baseline once**
 
@@ -2033,7 +2266,9 @@ python -m evaluation.cli run `
   --model-file .semantic-runs/contract/model.txt
 ```
 
-Expected: one private run record using the identical model and protocol identity, with no reuse of either earlier home or working directory.
+Then run `python -m evaluation.cli verify-isolation --suite-id 2026-11-06-antigravity-baseline --scenario communication-writing`.
+
+Expected: one private run record using the identical model and protocol identity, with no reuse of either earlier home or working directory; `verify-isolation` prints `Runtime isolation verified.`
 
 - [ ] **Step 5: Score successful sessions and classify all findings**
 
@@ -2066,6 +2301,7 @@ Expected:
 - report validation prints `Semantic baseline report is valid.`;
 - the report identifies date, run IDs, commit, protocol version/hash, Antigravity version, exact model, scenario stop conditions, scores/evidence where applicable, critical failures, infrastructure failures, and general versus scenario-specific findings;
 - quotations are minimal and sanitized;
+- the baseline limitations list each scenario's user-level rule marker names (or none) and contain no rule contents or paths;
 - raw records remain ignored and untracked;
 - `git ls-files .semantic-runs` prints nothing.
 
@@ -2125,7 +2361,7 @@ Create `docs/superpowers/plans/2026-11-06-semantic-protocol-changes.md` with the
 - preserve all repository, package, native, and privacy invariants;
 - rebuild deterministic protocol artifacts only after source changes;
 - rerun the same three scenarios with Antigravity and the exact baseline model identifier;
-- use separate isolated homes and working directories;
+- use separate external ephemeral homes and working directories outside the repository, with the same local rule-ancestor rejection and `verify-isolation` checks;
 - retain the 15-message cap and unchanged evaluator personas;
 - compare every category and aggregate against baseline;
 - require no critical failure, at least 12/16 per scenario, and no zero category;
@@ -2163,10 +2399,11 @@ This subproject is complete only when all of the following are true:
 1. the deterministic evaluation suites and full repository validator pass;
 2. the observed Antigravity stream-json contract and exact model are captured without an invented wire format;
 3. `evaluation/` remains absent from wheel, source distribution, native executable inputs, and public commands;
-4. `.semantic-runs/` is ignored, contains every raw artifact, and has no tracked path;
-5. the three scenarios ran exactly once each with Antigravity, one explicit model, unchanged protocol bytes, separate `SOCRATIC_LEARN_HOME` values, separate working directories, inherited authentication, sandboxing, and no more than 15 adaptive learner responses after the initial objective bootstrap;
-6. the implementing agent—not another model—acted as the adaptive learner evaluator;
-7. the tracked baseline report validates, contains only sanitized minimum evidence, and separates infrastructure from pedagogy;
-8. `core/*.md`, public launcher UX, runtime documentation, and protocol bytes have no diff;
-9. the evidence-derived follow-on implementation plan exists and proposes no unsupported or scenario-specific protocol change;
-10. no release, tag, package publication, GitHub Release, or PyPI publication occurred.
+4. `.semantic-runs/` is ignored, contains every raw artifact, has no tracked path, and contains no runtime home or working directory;
+5. the three scenarios ran exactly once each with Antigravity, one explicit model, unchanged protocol bytes, separate external `SOCRATIC_LEARN_HOME` values, separate external working directories, inherited authentication, sandboxing, and no more than 15 adaptive learner responses after the initial objective bootstrap;
+6. `verify-isolation` passed for all three scenarios: each runtime cwd/home was outside the repository, no repository or local rule marker (`AGENTS.md`, `GEMINI.md`, `CLAUDE.md`, `.agents/`, `.agent/`) existed in its ancestors below the user home, each external directory was deleted after its private record was saved, and user-level marker names are reported as limitations;
+7. the implementing agent—not another model—acted as the adaptive learner evaluator;
+8. the tracked baseline report validates, contains only sanitized minimum evidence, and separates infrastructure from pedagogy;
+9. `core/*.md`, public launcher UX, runtime documentation, and protocol bytes have no diff;
+10. the evidence-derived follow-on implementation plan exists and proposes no unsupported or scenario-specific protocol change;
+11. no release, tag, package publication, GitHub Release, or PyPI publication occurred.

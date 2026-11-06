@@ -153,18 +153,36 @@ knowledge, or bias as an uncontrolled variable.
 
 The first evaluation round uses Antigravity only. Each scenario receives:
 
-- a separate temporary Socratic Learn home;
-- a separate temporary working directory;
+- a separate external ephemeral Socratic Learn home outside the repository;
+- a separate external ephemeral working directory outside the repository;
 - the same explicit Antigravity model;
 - the same protocol version;
 - inherited Antigravity authentication without credential inspection;
 - sandboxed execution where supported;
 - a hard maximum of 15 learner responses.
 
+The runtime home and working directory never live inside the repository,
+because runtimes discover rule files in ancestor directories and the
+repository's own agent rules would contaminate the tutor. Before launch, the
+driver rejects any repository or local rule marker (`AGENTS.md`, `GEMINI.md`,
+`CLAUDE.md`, `.agents/`, `.agent/`) found in the working directory or any of
+its ancestors below the user-home boundary.
+
+User-level runtime rules at or above the user-home boundary remain inherited
+together with authentication; the driver does not replace `HOME` or
+`USERPROFILE` and never reads rule contents or credentials. It records only
+the names of user-level rule markers that are present, and the report lists
+them as an evaluation limitation.
+
+Raw streams, runtime logs, provider metadata, and evaluator notes remain under
+the repository's ignored `.semantic-runs/`. The external home and working
+directory are deleted after the private run record and raw streams needed for
+scoring are saved, including after failed sessions.
+
 The evaluation driver uses Antigravity headless structured-streaming mode with
 stream-json input and output. It uses the installed CLI contract without the
-interactive `--print PROMPT` option. It delivers the same canonical protocol and initial goal as
-the interactive launcher. A separate launcher smoke test verifies that the
+interactive `--print PROMPT` option. It delivers the same canonical protocol
+and initial goal as the interactive launcher. A separate launcher smoke test verifies that the
 public `socratic` command prepares the same protocol and workspace.
 
 The structured driver exists only for development evaluation. It is not
@@ -291,8 +309,10 @@ directory and include:
 - deterministic transcript parser tests;
 - sanitized evaluation reports.
 
-Raw structured transcripts, temporary learner homes, provider metadata, and
-runtime logs live under `.semantic-runs/`, which is ignored by Git.
+Raw structured transcripts, provider metadata, runtime logs, and evaluator
+notes live under `.semantic-runs/`, which is ignored by Git. Temporary learner
+homes and working directories live outside the repository and are deleted
+once the private run record is saved.
 
 A sanitized report may quote only the minimum turns needed to justify a score.
 It records:
