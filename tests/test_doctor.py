@@ -78,6 +78,31 @@ class DoctorTests(unittest.TestCase):
         self.assertIn("legacy-installation", self._codes(diagnostics))
         self.assertEqual(before, snapshot_tree(project))
 
+    def test_doctor_does_not_offer_migration_for_unowned_legacy_path(self) -> None:
+        project = self.root / "legacy-unowned"
+        project.mkdir()
+        create_valid_legacy_install(project, target="generic")
+        unowned = project / ".learning-tutor/user-owned.txt"
+        unowned.write_text("preserve\n", encoding="utf-8")
+        before = snapshot_tree(project)
+
+        diagnostics = diagnose(project)
+
+        self.assertIn("legacy-installation-unsafe", self._codes(diagnostics))
+        self.assertNotIn("legacy-installation", self._codes(diagnostics))
+        self.assertEqual(before, snapshot_tree(project))
+
+    def test_missing_installation_uses_canonical_product_name(self) -> None:
+        project = self.root / "empty"
+        project.mkdir()
+
+        diagnostics = diagnose(project)
+
+        self.assertEqual(["installation-not-found"], self._codes(diagnostics))
+        self.assertIn("Socratic Learn", diagnostics[0].message)
+        self.assertIn("Socratic Learn", diagnostics[0].remediation or "")
+        self.assertNotIn("learning tutor", diagnostics[0].message.lower())
+
     def test_doctor_reports_both_installation_roots_as_collision(self) -> None:
         project = self._installed()
         create_valid_legacy_install(project, target="generic")

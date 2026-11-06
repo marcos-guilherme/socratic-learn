@@ -25,6 +25,7 @@ from .install import (
     _portable_relative_path,
     _resolve_directory,
     _template_bytes,
+    _verify_legacy_tree_is_migratable,
 )
 from .manifest import sha256_bytes, validate_manifest
 
@@ -437,8 +438,8 @@ def _receipt_diagnostics(
             _diagnostic(
                 "installation-not-found",
                 INSTALL_ROOT,
-                "no learning tutor installation or ownership receipt was found",
-                "install the learning tutor into this project",
+                "no Socratic Learn installation or ownership receipt was found",
+                "install Socratic Learn into this project",
             )
         ]
     try:
@@ -542,6 +543,31 @@ def _legacy_installation_diagnostics(project: Path) -> list[Diagnostic]:
             )
     if diagnostics:
         return _ordered_diagnostics(diagnostics)
+    try:
+        _verify_legacy_tree_is_migratable(project, receipt)
+    except LearningTutorError as error:
+        return [
+            _diagnostic(
+                "legacy-installation-unsafe",
+                _relative_error_path(
+                    project,
+                    error.path,
+                    LEGACY_INSTALL_ROOT,
+                ),
+                error.message,
+                error.remediation
+                or "preserve the legacy installation and migrate manually",
+            )
+        ]
+    except OSError as error:
+        return [
+            _diagnostic(
+                "legacy-installation-unsafe",
+                LEGACY_INSTALL_ROOT,
+                f"legacy installation tree could not be validated: {error}",
+                "preserve the legacy installation and migrate manually",
+            )
+        ]
     return [
         _diagnostic(
             "legacy-installation",

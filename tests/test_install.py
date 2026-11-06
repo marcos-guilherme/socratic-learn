@@ -164,6 +164,23 @@ class InstallTests(unittest.TestCase):
             ).is_file()
         )
 
+    def test_migration_native_directory_collision_aborts_during_planning(
+        self,
+    ) -> None:
+        create_valid_legacy_install(self.project, target="cursor")
+        collision = self.project / ".cursor/skills/socratic-learn"
+        collision.mkdir()
+
+        with self.assertRaisesRegex(
+            CollisionError,
+            "destination directory already exists",
+        ):
+            plan_install(self.source, self.project, "cursor", True)
+
+        self.assertTrue((self.project / ".learning-tutor").is_dir())
+        self.assertTrue(collision.is_dir())
+        self.assertFalse((self.project / ".socratic-learn").exists())
+
     def test_migration_refuses_unowned_legacy_path_before_mutation(self) -> None:
         create_valid_legacy_install(self.project, target="generic")
         unowned = self.project / ".learning-tutor/user-owned.txt"

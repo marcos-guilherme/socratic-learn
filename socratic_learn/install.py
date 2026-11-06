@@ -619,6 +619,7 @@ def plan_install(
                 destination,
                 previous_receipt,
             )
+            _check_native_destination(destination, target)
         if target == "claude-code" and "CLAUDE.md" in previous_receipt.owned_paths:
             include_claude_loader = True
             emitted_snippet = None
