@@ -161,8 +161,9 @@ The first evaluation round uses Antigravity only. Each scenario receives:
 - sandboxed execution where supported;
 - a hard maximum of 15 learner responses.
 
-The evaluation driver uses Antigravity print mode with structured streaming
-input and output. It delivers the same canonical protocol and initial goal as
+The evaluation driver uses Antigravity headless structured-streaming mode with
+stream-json input and output. It uses the installed CLI contract without the
+interactive `--print PROMPT` option. It delivers the same canonical protocol and initial goal as
 the interactive launcher. A separate launcher smoke test verifies that the
 public `socratic` command prepares the same protocol and workspace.
 

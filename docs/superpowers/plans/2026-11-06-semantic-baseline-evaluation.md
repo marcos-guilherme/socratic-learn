@@ -6,7 +6,7 @@
 
 **Architecture:** Keep all evaluation implementation and fictitious fixtures in the repository-root `evaluation/` package, which is importable from a checkout but excluded from published wheels, source distributions, and native executables. A contract-capture gate records Antigravity's observed stream-json envelope and one explicit available model before the adapter is implemented; isolated sessions then reuse the public launcher's exact Antigravity bootstrap while storing every raw event under ignored `.semantic-runs/`. The implementing agent is the only adaptive learner evaluator: it reads each tutor turn, responds faithfully to the scenario persona, chooses stop reasons, and scores evidence through a console workflow without delegating the learner role to another model.
 
-**Tech Stack:** Python 3.11+ standard library, `unittest`, newline-delimited JSON, existing `socratic_learn` resource/workspace/host interfaces, Antigravity CLI print mode with stream-json input and output.
+**Tech Stack:** Python 3.11+ standard library, `unittest`, newline-delimited JSON, existing `socratic_learn` resource/workspace/host interfaces, Antigravity CLI headless structured-streaming mode with stream-json input and output (no `--print`, no `--mode`).
 
 ## Global Constraints
 
@@ -16,7 +16,8 @@
 - The evaluation implementation lives under repository-root `evaluation/`, outside `socratic_learn`, `learning_tutor`, and every published package.
 - Semantic evaluation remains a private development workflow; it is not a `socratic` subcommand and does not run in ordinary CI.
 - Use Antigravity only. Each live session must pass one explicit model identifier, and all three sessions must use the same identifier.
-- Antigravity must run in print mode with `--input-format stream-json`, `--output-format stream-json`, `--sandbox`, and a bounded print timeout.
+- Antigravity must run in headless structured-streaming mode with `--input-format stream-json`, `--output-format stream-json`, `--sandbox`, and a bounded print timeout. Never pass `--print` or `--mode`.
+- Compatibility rationale (user decision, 2026-11-06): installed `agy 1.5.2` treats `--print` as an option that takes a prompt value, so it consumes the next flag as the prompt; the first-party headless documentation runs stream-json input without `--print`. `--mode auto` is unavailable for this account and unnecessary for stream-json. `--sandbox` stays.
 - Do not infer or hard-code the unknown Antigravity stream-json envelope. Capture it from a successful installed-CLI probe, sanitize it, and commit the resulting adapter fixture before implementing parsing.
 - Each scenario has a separate `SOCRATIC_LEARN_HOME` and working directory under `.semantic-runs/`; preserve the parent environment so Antigravity inherits existing authentication without credential inspection.
 - Never pass `--dangerously-skip-permissions`, inspect credential stores, print environment values, or copy authentication material.
@@ -777,7 +778,6 @@ The capture command must execute exactly:
 ```python
 argv = [
     executable,
-    "--print",
     "--input-format",
     "stream-json",
     "--output-format",
@@ -785,8 +785,6 @@ argv = [
     "--model",
     model,
     "--sandbox",
-    "--mode",
-    "auto",
     "--disable-slash-commands",
     "--print-timeout",
     "300s",
@@ -794,6 +792,8 @@ argv = [
     str(raw_root / "antigravity.log"),
 ]
 ```
+
+The argv must not contain `--print` or `--mode` (see the compatibility rationale in Global Constraints); the exact-argv test asserts both are absent.
 
 It writes request, stdout, stderr, argv, `agy --version`, `agy --help`, and `agy models` output under `.semantic-runs/contract/`. It parses every non-empty stdout line with `json.loads`; a non-JSON line, non-zero exit, absent marker, or missing completion event fails capture without publishing a tracked fixture.
 
@@ -1157,7 +1157,8 @@ class EvaluationAntigravityTests(unittest.TestCase):
         argv = antigravity_argv("agy", "captured-model-id", layout)
         self.assertEqual("agy", argv[0])
         self.assertEqual(1, argv.count("captured-model-id"))
-        self.assertIn("--print", argv)
+        self.assertNotIn("--print", argv)
+        self.assertNotIn("--mode", argv)
         self.assertEqual(
             "stream-json",
             argv[argv.index("--input-format") + 1],
@@ -1210,7 +1211,6 @@ Use this exact argv:
 ```python
 return (
     executable,
-    "--print",
     "--input-format",
     "stream-json",
     "--output-format",
@@ -1218,8 +1218,6 @@ return (
     "--model",
     model,
     "--sandbox",
-    "--mode",
-    "auto",
     "--disable-slash-commands",
     "--print-timeout",
     "300s",
