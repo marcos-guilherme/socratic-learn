@@ -256,8 +256,13 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(
             (
                 "Read and follow `.learning-tutor/learning-tutor.prompt.md` before "
-                "starting any learning session. Keep private learner state under "
-                "`.learning-tutor/workspace/` and out of version control.\n"
+                "starting any learning session.\n\n"
+                "Capability mapping:\n"
+                "- Use configured web tools for primary-source verification; "
+                "otherwise mark volatile claims unverified in conversation.\n"
+                "- Use configured filesystem tools to keep private learner state "
+                "under `.learning-tutor/workspace/` and out of version control; "
+                "otherwise return the record in conversation.\n"
             ),
             plan.emitted_snippet,
         )
@@ -300,6 +305,177 @@ class InstallTests(unittest.TestCase):
             if plan.emitted_snippet is not None:
                 target_text += plan.emitted_snippet
             self.assertIn(marker, target_text.lower())
+
+    def test_target_templates_map_capabilities_without_copying_pedagogy(self) -> None:
+        expected = {
+            "cursor": (
+                "structured question",
+                "conversation",
+                "web",
+                "primary sources",
+                "mermaid",
+                "text",
+                "filesystem",
+            ),
+            "pi": (
+                "optional quiz",
+                "preference question",
+                "conversation",
+                "research",
+                "web",
+                "visual makers",
+                "md-log",
+                "filesystem",
+            ),
+            "claude-code": (
+                "configured web",
+                "configured filesystem",
+                "conversation",
+            ),
+        }
+        forbidden = (
+            "responsive socratic",
+            "connected foundations",
+            "diagnostic budget",
+            "mastery evidence",
+        )
+        for target, phrases in expected.items():
+            with self.subTest(target=target):
+                plan = plan_install(self.source, self.project, target, False)
+                text = "\n".join(
+                    file.content.decode("utf-8")
+                    for file in plan.files
+                    if file.path not in OWNED_PATHS
+                ).lower()
+                self.assertTrue(all(phrase in text for phrase in phrases))
+                self.assertTrue(all(phrase not in text for phrase in forbidden))
+                if target in ("cursor", "pi"):
+                    self.assertTrue(text.startswith("---\nname: learning-tutor\n"))
+                    self.assertIn("description:", text)
+
+    def test_commit_time_destination_races_preserve_external_bytes(self) -> None:
+        cases = (
+            ("cursor", ".cursor/skills/learning-tutor/SKILL.md"),
+            ("pi", ".pi/skills/learning-tutor/SKILL.md"),
+            ("claude-code", "CLAUDE.md"),
+        )
+        install_module = __import__("learning_tutor.install", fromlist=["_stage"])
+        real_stage = install_module._stage
+        for target, relative in cases:
+            with self.subTest(target=target):
+                project = self.root / f"{target}-race"
+                project.mkdir()
+                plan = plan_install(self.source, project, target, False)
+                external = project / relative
+
+                def stage_then_race(current_plan):
+                    staged = real_stage(current_plan)
+                    external.parent.mkdir(parents=True, exist_ok=True)
+                    external.write_bytes(b"external race winner")
+                    return staged
+
+                with mock.patch(
+                    "learning_tutor.install._stage",
+                    side_effect=stage_then_race,
+                ):
+                    with self.assertRaises(CollisionError):
+                        apply_install(plan)
+
+                self.assertEqual(b"external race winner", external.read_bytes())
+                self.assertFalse((project / ".learning-tutor").exists())
+                self.assertFalse(
+                    any(
+                        path.name.startswith(
+                            (".learning-tutor-stage-", ".learning-tutor-backup-")
+                        )
+                        for path in project.iterdir()
+                    )
+                )
+
+    def test_commit_time_empty_native_directory_races_abort(self) -> None:
+        install_module = __import__("learning_tutor.install", fromlist=["_stage"])
+        real_stage = install_module._stage
+        for target, relative in (
+            ("cursor", ".cursor/skills/learning-tutor"),
+            ("pi", ".pi/skills/learning-tutor"),
+        ):
+            with self.subTest(target=target):
+                project = self.root / f"{target}-directory-race"
+                project.mkdir()
+                plan = plan_install(self.source, project, target, False)
+                external_directory = project / relative
+
+                def stage_then_race(current_plan):
+                    staged = real_stage(current_plan)
+                    external_directory.mkdir(parents=True)
+                    return staged
+
+                with mock.patch(
+                    "learning_tutor.install._stage",
+                    side_effect=stage_then_race,
+                ):
+                    with self.assertRaises(CollisionError):
+                        apply_install(plan)
+
+                self.assertEqual([], list(external_directory.iterdir()))
+                self.assertFalse((project / ".learning-tutor").exists())
+
+    def test_generic_package_race_during_staging_preserves_external_tree(self) -> None:
+        plan = plan_install(self.source, self.project, "generic", False)
+        install_module = __import__("learning_tutor.install", fromlist=["_stage"])
+        real_stage = install_module._stage
+        external_root = self.project / ".learning-tutor"
+        sentinel = external_root / "external.txt"
+
+        def stage_then_race(current_plan):
+            staged = real_stage(current_plan)
+            external_root.mkdir()
+            sentinel.write_bytes(b"external race winner")
+            return staged
+
+        with mock.patch("learning_tutor.install._stage", side_effect=stage_then_race):
+            with self.assertRaises(CollisionError):
+                apply_install(plan)
+
+        self.assertEqual(b"external race winner", sentinel.read_bytes())
+        self.assertEqual(["external.txt"], [path.name for path in external_root.iterdir()])
+        self.assertFalse(
+            any(
+                path.name.startswith(
+                    (".learning-tutor-stage-", ".learning-tutor-backup-")
+                )
+                for path in self.project.iterdir()
+            )
+        )
+
+    def test_update_revalidates_owned_hash_immediately_before_backup(self) -> None:
+        self._install()
+        plan = plan_install(self.source, self.project, "generic", True)
+        install_module = __import__("learning_tutor.install", fromlist=["_stage"])
+        real_stage = install_module._stage
+        manifest = self.project / ".learning-tutor/manifest.json"
+
+        def stage_then_modify(current_plan):
+            staged = real_stage(current_plan)
+            manifest.write_bytes(b"changed after preflight")
+            return staged
+
+        with mock.patch(
+            "learning_tutor.install._stage",
+            side_effect=stage_then_modify,
+        ):
+            with self.assertRaises(IntegrityError):
+                apply_install(plan)
+
+        self.assertEqual(b"changed after preflight", manifest.read_bytes())
+        self.assertFalse(
+            any(
+                path.name.startswith(
+                    (".learning-tutor-stage-", ".learning-tutor-backup-")
+                )
+                for path in self.project.iterdir()
+            )
+        )
 
     def test_native_target_update_preserves_ownership_and_private_state(self) -> None:
         for target, skill_path in (

@@ -70,3 +70,71 @@ dist/manifest.json 0913134e7c8f58753e8cb0c1bac2f96fd2c3e7a28d353a1ecf9468238ec75
 
 No blocking concerns. The 2 full-suite skips are limited to symlink checks
 that this Windows account cannot execute without symlink privilege.
+
+## Review fixes — commit races and capability mappings
+
+### RED evidence
+
+The focused review command initially ran 4 test methods and reported 7
+subtest failures plus 1 error:
+
+```text
+python -m unittest tests.test_install.InstallTests.test_commit_time_destination_races_preserve_external_bytes tests.test_install.InstallTests.test_generic_package_race_during_staging_preserves_external_tree tests.test_install.InstallTests.test_update_revalidates_owned_hash_immediately_before_backup tests.test_install.InstallTests.test_target_templates_map_capabilities_without_copying_pedagogy -v
+```
+
+Cursor, Pi, and absent-root Claude races overwrote the injected external
+files; the generic package race surfaced as a filesystem error instead of a
+collision; update backup accepted a post-staging modification; and all three
+templates lacked the required target capability semantics.
+
+### Transaction fixes
+
+- Clean installs atomically reserve `.learning-tutor/` with exclusive
+  directory creation and every absent external file with Python's
+  cross-platform exclusive `xb` create before replacing reservations with
+  staged bytes.
+- Only successfully created reservations and parent directories enter
+  rollback tracking. A failed reservation preserves the race winner and
+  removes package state, staging state, and removable operation-created
+  parents.
+- Updates reserve newly introduced unowned destinations before backup.
+- Every update-owned file is hash-checked again immediately before its
+  individual backup move. A mismatch aborts and restores any earlier backup
+  moves through the existing rollback path.
+- Race-injection tests cover Cursor and Pi files and empty native
+  directories, absent-root Claude, and the generic package root during the
+  staging/commit window.
+
+### Thin capability mappings
+
+- Cursor maps structured question UI with conversation fallback, web
+  primary-source verification, Mermaid/text visuals, and filesystem state.
+- Pi maps optional quiz versus preference questions, research/web, visual
+  makers, and md-log/filesystem with conversational fallbacks.
+- Claude maps configured web and filesystem tools with conversation
+  fallbacks.
+- Semantic tests enforce discovery paths, Cursor/Pi frontmatter, required
+  mapping terms, and absence of copied canonical pedagogy.
+
+### Final verification
+
+Focused command:
+
+```text
+python -m unittest tests.test_install -v
+```
+
+Result: exit code 0; 35 tests ran successfully.
+
+Complete-suite command:
+
+```text
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+Result: exit code 0; 150 tests ran successfully with the same 2 Windows
+symlink-privilege skips. `python -m compileall -q learning_tutor tests` also
+completed with exit code 0.
+
+Two consecutive CLI builds retained the deterministic hashes recorded above.
+No blocking concerns were introduced.

@@ -621,6 +621,80 @@ def _ensure_parent_directories(
             created.append(directory)
 
 
+def _reserve_file(path: Path) -> None:
+    """Atomically claim an absent file path without replacing a race winner."""
+
+    try:
+        with path.open("xb"):
+            pass
+    except FileExistsError as error:
+        raise CollisionError(
+            "installation destination appeared after planning",
+            path=path,
+            remediation="preserve the new path and create a new installation plan",
+        ) from error
+    except OSError as error:
+        raise FilesystemError(
+            "installation destination could not be reserved",
+            path=path,
+            remediation="check destination permissions and retry",
+        ) from error
+
+
+def _reserve_external_destination(
+    plan: InstallPlan,
+    planned: PlannedFile,
+    *,
+    created_parents: list[Path],
+    reservations: list[str],
+) -> None:
+    destination = _project_path(plan.project, planned.path)
+    if planned.path == _NATIVE_SKILL_PATHS.get(plan.target):
+        native_directory = destination.parent
+        _ensure_parent_directories(
+            native_directory,
+            stop=plan.project,
+            created=created_parents,
+        )
+        try:
+            native_directory.mkdir()
+        except FileExistsError as error:
+            raise CollisionError(
+                "native skill destination directory appeared after planning",
+                path=native_directory,
+                remediation="preserve the new directory and create a new plan",
+            ) from error
+        created_parents.append(native_directory)
+    else:
+        _ensure_parent_directories(
+            destination,
+            stop=plan.project,
+            created=created_parents,
+        )
+    _reserve_file(destination)
+    reservations.append(planned.path)
+
+
+def _expected_existing_hashes(plan: InstallPlan) -> dict[str, str]:
+    return dict(plan.expected_existing)
+
+
+def _revalidate_owned_before_backup(
+    plan: InstallPlan,
+    relative: str,
+    expected_hashes: Mapping[str, str],
+) -> Path:
+    path = _project_path(plan.project, relative)
+    content = _read_bytes(path, "owned installation file")
+    if sha256_bytes(content) != expected_hashes[relative]:
+        raise IntegrityError(
+            "owned installation file changed immediately before backup",
+            path=relative,
+            remediation="restore the file and create a new update plan",
+        )
+    return path
+
+
 def _verify_plan_still_safe(plan: InstallPlan) -> None:
     if not plan.update:
         _check_initial_destinations(plan.project, plan.target, plan.files)
@@ -689,32 +763,47 @@ def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None
     created_root = False
     installed: list[str] = []
     created_parents: list[Path] = []
+    reservations: list[str] = []
     try:
-        target.mkdir()
+        try:
+            target.mkdir()
+        except FileExistsError as error:
+            raise CollisionError(
+                "installation path appeared after staging",
+                path=target,
+                remediation="preserve the new path and create a new installation plan",
+            ) from error
         created_root = True
+        for planned in plan.files:
+            destination = _project_path(plan.project, planned.path)
+            if destination.is_relative_to(target):
+                continue
+            _reserve_external_destination(
+                plan,
+                planned,
+                created_parents=created_parents,
+                reservations=reservations,
+            )
         for planned in plan.files:
             source = stage.joinpath(*PurePosixPath(planned.path).parts)
             destination = _project_path(plan.project, planned.path)
-            if not destination.is_relative_to(target):
-                _ensure_parent_directories(
-                    destination,
-                    stop=plan.project,
-                    created=created_parents,
-                )
-            else:
+            if destination.is_relative_to(target):
                 destination.parent.mkdir(parents=True, exist_ok=True)
             os.replace(source, destination)
             installed.append(planned.path)
     except (LearningTutorError, OSError) as error:
         cleanup_failures: list[tuple[Path, OSError]] = []
-        for relative in reversed(installed):
+        for relative in reversed(reservations):
             path = _project_path(plan.project, relative)
-            if not path.is_relative_to(target):
-                try:
-                    path.unlink(missing_ok=True)
-                except OSError as cleanup_error:
-                    cleanup_failures.append((path, cleanup_error))
-        for parent in sorted(created_parents, key=lambda item: len(item.parts), reverse=True):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as cleanup_error:
+                cleanup_failures.append((path, cleanup_error))
+        for parent in sorted(
+            created_parents,
+            key=lambda item: len(item.parts),
+            reverse=True,
+        ):
             try:
                 parent.rmdir()
             except OSError as cleanup_error:
@@ -727,6 +816,8 @@ def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None
                 cleanup_failures,
                 original=error,
             ) from error
+        if isinstance(error, LearningTutorError):
+            raise
         raise FilesystemError(
             "installation commit failed",
             path=target,
@@ -744,11 +835,15 @@ def _rollback_update(
     plan: InstallPlan,
     backup: Path,
     installed: list[str],
+    reservations: list[str],
     backed_up: list[str],
     created_parents: list[Path],
 ) -> LearningTutorError | OSError | None:
     try:
         for relative in reversed(installed):
+            target = _project_path(plan.project, relative)
+            target.unlink(missing_ok=True)
+        for relative in reversed(reservations):
             target = _project_path(plan.project, relative)
             target.unlink(missing_ok=True)
         for relative in reversed(backed_up):
@@ -770,17 +865,33 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
     backup: Path | None = None
     backed_up: list[str] = []
     installed: list[str] = []
+    reservations: list[str] = []
     created_parents: list[Path] = []
     try:
         backup = Path(
             tempfile.mkdtemp(prefix=".learning-tutor-backup-", dir=plan.project)
         )
         assert plan.previous_receipt is not None
+        owned = set(plan.previous_receipt.owned_paths)
+        for planned in plan.files:
+            if planned.path in owned:
+                continue
+            _reserve_external_destination(
+                plan,
+                planned,
+                created_parents=created_parents,
+                reservations=reservations,
+            )
         replacement_paths = {planned.path for planned in plan.files}
+        expected_hashes = _expected_existing_hashes(plan)
         for relative in plan.previous_receipt.owned_paths:
             if relative not in replacement_paths:
                 continue
-            source = _project_path(plan.project, relative)
+            source = _revalidate_owned_before_backup(
+                plan,
+                relative,
+                expected_hashes,
+            )
             destination = backup.joinpath(*PurePosixPath(relative).parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
             os.replace(source, destination)
@@ -795,6 +906,8 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
             )
             os.replace(source, destination)
             installed.append(planned.path)
+            if planned.path in reservations:
+                reservations.remove(planned.path)
     except (LearningTutorError, OSError) as error:
         if backup is None:
             cleanup_failures = _cleanup_created_trees([stage])
@@ -814,10 +927,11 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
                 plan,
                 backup,
                 installed,
+                reservations,
                 backed_up,
                 created_parents,
             )
-            if backed_up or installed or created_parents
+            if backed_up or installed or reservations or created_parents
             else None
         )
         if rollback_error is not None:
@@ -847,6 +961,10 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
                 cleanup_failures,
                 original=error,
             ) from error
+        if isinstance(error, LearningTutorError) and not (
+            backed_up or installed or reservations or created_parents
+        ):
+            raise
         raise FilesystemError(
             (
                 "update failed; the previous installation was restored; "
