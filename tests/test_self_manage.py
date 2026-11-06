@@ -33,6 +33,14 @@ def canonical_temp_path(temporary: str) -> Path:
     return Path(temporary).resolve(strict=True)
 
 
+def isolated_powershell_environment(root: Path) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["PSModuleAnalysisCachePath"] = str(
+        root / "powershell-module-analysis-cache"
+    )
+    return environment
+
+
 def write_native_channel(
     home: Path,
     executable_path: Path,
@@ -519,6 +527,7 @@ class UpdateTests(unittest.TestCase):
             self.skipTest("Windows PowerShell is unavailable")
         with tempfile.TemporaryDirectory() as temporary:
             root = canonical_temp_path(temporary)
+            powershell_environment = isolated_powershell_environment(root)
             destination = root / "socratic.exe"
             staged = root / "socratic.new.exe"
             helper = root / "replace.ps1"
@@ -547,6 +556,7 @@ class UpdateTests(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                env=powershell_environment,
                 check=False,
             )
             self.assertEqual(
@@ -566,6 +576,7 @@ class UpdateTests(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                env=powershell_environment,
                 check=False,
             )
 
@@ -605,6 +616,7 @@ class UpdateTests(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                env=powershell_environment,
                 check=False,
             )
 

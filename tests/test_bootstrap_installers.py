@@ -16,6 +16,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 from urllib.request import urlopen
 
 
@@ -90,6 +91,32 @@ def fixture_server(
 
 class BootstrapInstallerTests(unittest.TestCase):
     payload = b"fixture executable bytes\n"
+
+    def test_powershell_runner_isolates_module_analysis_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve(strict=True)
+            completed = subprocess.CompletedProcess([], 0, "", "")
+            with (
+                mock.patch.object(
+                    shutil,
+                    "which",
+                    return_value=r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                ),
+                mock.patch.object(
+                    subprocess,
+                    "run",
+                    return_value=completed,
+                ) as run,
+            ):
+                self._run_powershell(
+                    root,
+                    "http://127.0.0.1/release-manifest.json",
+                    root / "install",
+                    root / "home",
+                )
+
+            cache = Path(run.call_args.kwargs["env"]["PSModuleAnalysisCachePath"])
+            self.assertTrue(cache.is_relative_to(root))
 
     def test_fixture_redirect_is_explicitly_empty_and_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -275,6 +302,9 @@ class BootstrapInstallerTests(unittest.TestCase):
             "USERPROFILE": str(home),
             "LOCALAPPDATA": str(root / "local-app-data"),
             "PATH": str(root / "isolated-path"),
+            "PSModuleAnalysisCachePath": str(
+                root / "powershell-module-analysis-cache"
+            ),
             "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
             "PROCESSOR_ARCHITECTURE": os.environ.get(
                 "PROCESSOR_ARCHITECTURE", "AMD64"
