@@ -161,7 +161,8 @@ def _require_identifier(value: str, label: str) -> None:
 
 def _require_directory(path: Path, label: str) -> Path:
     absolute = _absolute(path)
-    _assert_no_link_components(absolute)
+    if _is_link_or_reparse(absolute):
+        raise ValueError(f"{label} must not be a link or reparse point")
     resolved = _resolved(absolute, strict=True)
     if not resolved.is_dir():
         raise ValueError(f"{label} must be a regular directory")
@@ -249,22 +250,10 @@ def _runtime_context_document(
     }
 
 
-def _tree_contains_links(root: Path) -> bool:
-    if _is_link_or_reparse(root):
-        return True
-    for directory, names, files in os.walk(root, topdown=True, followlinks=False):
-        base = Path(directory)
-        for name in (*names, *files):
-            if _is_link_or_reparse(base / name):
-                return True
-    return False
-
-
-def _remove_created_runtime(runtime_root: Path) -> None:
+def _remove_created_runtime(runtime_root: Path, *, trusted_boundary: Path) -> None:
     if not os.path.lexists(runtime_root):
         return
-    if _tree_contains_links(runtime_root):
-        raise ValueError("runtime root contains a link or reparse point")
+    _assert_no_link_components(runtime_root, stop=trusted_boundary)
     shutil.rmtree(runtime_root)
 
 
@@ -301,11 +290,13 @@ def create_run_layout(
 
     owns_runtime_root = runtime_base is None
     runtime_root: Path | None = None
+    runtime_boundary: Path | None = None
+    runtime_created = False
     expected_runtime_root: Path | None = None
     if runtime_base is not None:
         shared_base = _require_directory(runtime_base, "runtime_base")
         candidate = _absolute(shared_base / suite_id / scenario_id)
-        _assert_no_link_components(candidate)
+        _assert_no_link_components(candidate, stop=shared_base)
         candidate = _resolved(candidate, strict=False)
         if not _strictly_contains(shared_base, candidate):
             raise ValueError("runtime root must be inside runtime_base")
@@ -320,15 +311,20 @@ def create_run_layout(
     run_created = False
     try:
         if runtime_base is None:
-            runtime_root = Path(
-                tempfile.mkdtemp(prefix="socratic-semantic-")
-            ).resolve(strict=True)
+            runtime_path = _absolute(
+                Path(tempfile.mkdtemp(prefix="socratic-semantic-"))
+            )
+            runtime_root = runtime_path
+            runtime_boundary = runtime_path.parent
+            runtime_created = True
         else:
+            candidate.mkdir(parents=True)
             runtime_root = candidate
-            runtime_root.mkdir(parents=True)
-            runtime_root = runtime_root.resolve(strict=True)
+            runtime_boundary = shared_base
+            runtime_created = True
 
-        _assert_no_link_components(runtime_root)
+        _assert_no_link_components(runtime_root, stop=runtime_boundary)
+        runtime_root = _resolved(runtime_root, strict=True)
         if (
             expected_runtime_root is not None
             and (
@@ -377,11 +373,28 @@ def create_run_layout(
             user_home=home_boundary,
             rule_disclosure=disclosure,
         )
-    except BaseException:
-        if run_created and os.path.lexists(run_dir) and not _tree_contains_links(run_dir):
-            shutil.rmtree(run_dir)
-        if runtime_root is not None:
-            _remove_created_runtime(runtime_root)
+    except BaseException as original:
+        cleanup_failed = False
+        if run_created and os.path.lexists(run_dir):
+            try:
+                _assert_no_link_components(run_dir, stop=repository_root)
+                shutil.rmtree(run_dir)
+            except BaseException:
+                cleanup_failed = True
+        if (
+            runtime_created
+            and runtime_root is not None
+            and runtime_boundary is not None
+        ):
+            try:
+                _remove_created_runtime(
+                    runtime_root,
+                    trusted_boundary=runtime_boundary,
+                )
+            except BaseException:
+                cleanup_failed = True
+        if cleanup_failed:
+            original.add_note("one or more owned temporary paths could not be removed")
         raise
 
 
@@ -473,10 +486,19 @@ def _read_regular_file(path: Path) -> bytes:
             os.close(descriptor)
 
 
+def _raise_walk_error(error: OSError) -> None:
+    raise error
+
+
 def snapshot_learner_records(layout: RunLayout) -> Path:
     """Copy regular learner records while explicitly pruning every linked directory."""
-    source = layout.records
-    if _is_link_or_reparse(source) or not source.is_dir():
+    _validate_layout_contract(layout)
+    records_path = _absolute(layout.records)
+    runtime_path = _absolute(layout.runtime_root)
+    _assert_no_link_components(records_path, stop=runtime_path)
+    source = _resolved(records_path, strict=True)
+    resolved_runtime = _resolved(runtime_path, strict=True)
+    if not _strictly_contains(resolved_runtime, source) or not source.is_dir():
         raise ValueError("learner records root must be a regular directory")
     destination = layout.run_dir / "learner-records"
     skipped_path = layout.run_dir / "skipped-links.json"
@@ -485,7 +507,12 @@ def snapshot_learner_records(layout: RunLayout) -> Path:
     destination.mkdir(mode=0o700)
     skipped: list[str] = []
     try:
-        for directory, names, files in os.walk(source, topdown=True, followlinks=False):
+        for directory, names, files in os.walk(
+            source,
+            topdown=True,
+            onerror=_raise_walk_error,
+            followlinks=False,
+        ):
             current = Path(directory)
             relative_directory = current.relative_to(source)
             if relative_directory != Path("."):
@@ -566,8 +593,12 @@ def remove_runtime_root(layout: RunLayout, repository: Path) -> None:
     runtime_root = _absolute(layout.runtime_root)
     if not os.path.lexists(runtime_root):
         return
-    if _is_link_or_reparse(runtime_root):
-        raise ValueError("runtime root must not be a link or reparse point")
+    trusted_boundary = (
+        runtime_root.parent
+        if layout.owns_runtime_root
+        else runtime_root.parent.parent
+    )
+    _assert_no_link_components(runtime_root, stop=trusted_boundary)
     resolved_runtime = _resolved(runtime_root, strict=True)
     raw_root = _resolved(_absolute(layout.run_dir.parent.parent), strict=True)
     user_home = _resolved(_absolute(layout.user_home), strict=True)
@@ -582,8 +613,6 @@ def remove_runtime_root(layout: RunLayout, repository: Path) -> None:
         or _contains(resolved_runtime, actual_user_home)
     ):
         raise ValueError("refusing to remove a protected or overlapping path")
-    if _tree_contains_links(resolved_runtime):
-        raise ValueError("runtime root contains a link or reparse point")
     shutil.rmtree(resolved_runtime)
 
 
@@ -601,15 +630,18 @@ def isolated_environment(
 def capture_protocol_identity(repository: Path) -> ProtocolIdentity:
     """Capture the commit/version/hash identity of the unchanged built protocol."""
     repository_root = _require_directory(repository, "repository")
-    completed = subprocess.run(
-        ("git", "rev-parse", "HEAD"),
-        cwd=repository_root,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-    )
+    try:
+        completed = subprocess.run(
+            ("git", "rev-parse", "HEAD"),
+            cwd=repository_root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        raise ValueError("repository commit could not be captured") from None
     commit = completed.stdout.strip().lower()
     if re.fullmatch(r"[0-9a-f]{40,64}", commit) is None:
         raise ValueError("repository commit identity is invalid")

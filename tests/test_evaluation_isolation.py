@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from dataclasses import replace
@@ -46,6 +48,26 @@ class EvaluationIsolationTests(unittest.TestCase):
         }
         arguments.update(overrides)
         return create_run_layout(self.repository, "suite", scenario, **arguments)
+
+    def make_directory_link(self, target: Path, link: Path) -> None:
+        try:
+            if os.name == "nt":
+                import _winapi
+
+                _winapi.CreateJunction(str(target), str(link))
+            else:
+                link.symlink_to(target, target_is_directory=True)
+        except (ImportError, OSError) as error:
+            self.skipTest(f"directory links unavailable: {error}")
+
+        def cleanup() -> None:
+            if os.path.lexists(link):
+                if link.is_symlink() or os.name == "nt":
+                    os.unlink(link)
+                else:
+                    shutil.rmtree(link)
+
+        self.addCleanup(cleanup)
 
     def test_raw_is_internal_and_runtime_is_external(self) -> None:
         layout = self.layout("conceptual-physics")
@@ -91,25 +113,43 @@ class EvaluationIsolationTests(unittest.TestCase):
         self.assertNotEqual(first.run_dir, second.run_dir)
 
     def test_live_default_runtime_is_secure_temporary_outside_repository(self) -> None:
-        repository = Path(__file__).resolve().parents[1]
-        raw_root = repository / ".semantic-runs" / "isolation-live-test"
         layout = create_run_layout(
-            repository,
+            self.repository,
             "suite",
             "conceptual-physics",
-            raw_root=raw_root,
+            raw_root=self.raw_root,
             user_home=Path.home(),
         )
         try:
             self.assertTrue(layout.owns_runtime_root)
             self.assertTrue(layout.runtime_root.is_relative_to(Path(tempfile.gettempdir()).resolve()))
-            self.assertFalse(layout.cwd.is_relative_to(repository))
+            self.assertFalse(layout.cwd.is_relative_to(self.repository))
         finally:
-            remove_runtime_root(layout, repository)
-            if layout.run_dir.exists():
-                import shutil
+            remove_runtime_root(layout, self.repository)
 
-                shutil.rmtree(raw_root)
+    def test_runtime_mkdir_race_never_deletes_foreign_directory(self) -> None:
+        foreign_root = self.runtime_base / "suite" / "conceptual-physics"
+        foreign_root.parent.mkdir()
+        sentinel = foreign_root / "foreign-sentinel.txt"
+        real_mkdir = Path.mkdir
+
+        def race(
+            path: Path,
+            mode: int = 0o777,
+            parents: bool = False,
+            exist_ok: bool = False,
+        ) -> None:
+            if path == foreign_root:
+                os.mkdir(path)
+                sentinel.write_text("foreign", encoding="utf-8")
+                raise FileExistsError("foreign creator won")
+            real_mkdir(path, mode=mode, parents=parents, exist_ok=exist_ok)
+
+        with mock.patch("evaluation.isolation.Path.mkdir", autospec=True, side_effect=race):
+            with self.assertRaises(FileExistsError):
+                self.layout("conceptual-physics")
+
+        self.assertEqual("foreign", sentinel.read_text(encoding="utf-8"))
 
     def test_runtime_inside_repository_is_rejected_before_creation(self) -> None:
         with self.assertRaises(ValueError):
@@ -140,6 +180,22 @@ class EvaluationIsolationTests(unittest.TestCase):
             self.layout("conceptual-physics")
         self.assertTrue(first.run_dir.is_dir())
         self.assertTrue(first.runtime_root.is_dir())
+
+    def test_linked_ancestors_above_trusted_boundaries_are_allowed(self) -> None:
+        runtime_base = self.user_home / "container" / "runtime"
+        runtime_base.mkdir(parents=True)
+        linked_ancestors = {self.repository.parent, runtime_base.parent}
+
+        import evaluation.isolation as isolation
+
+        real_check = isolation._is_link_or_reparse
+        with mock.patch(
+            "evaluation.isolation._is_link_or_reparse",
+            side_effect=lambda path: path in linked_ancestors or real_check(path),
+        ):
+            layout = self.layout("conceptual-physics", runtime_base=runtime_base)
+
+        self.assertTrue(layout.runtime_root.is_dir())
 
     def test_local_rule_markers_below_user_home_are_rejected(self) -> None:
         for marker in RULE_MARKERS:
@@ -302,6 +358,33 @@ class EvaluationIsolationTests(unittest.TestCase):
         self.assertIn("junction", skipped)
         self.assertNotIn("junction/outside-record.md", skipped)
 
+    def test_snapshot_rejects_mocked_reparse_in_records_ancestry(self) -> None:
+        layout = self.layout("conceptual-physics")
+
+        import evaluation.isolation as isolation
+
+        real_check = isolation._is_link_or_reparse
+        with mock.patch(
+            "evaluation.isolation._is_link_or_reparse",
+            side_effect=lambda path: path == layout.cwd or real_check(path),
+        ):
+            with self.assertRaisesRegex(ValueError, "link|reparse"):
+                snapshot_learner_records(layout)
+
+        self.assertFalse((layout.run_dir / "learner-records").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction regression")
+    def test_snapshot_rejects_real_junction_in_records_ancestry(self) -> None:
+        layout = self.layout("conceptual-physics")
+        moved_workspace = self.outer / "moved-learning"
+        layout.cwd.rename(moved_workspace)
+        self.make_directory_link(moved_workspace, layout.cwd)
+
+        with self.assertRaisesRegex(ValueError, "link|reparse"):
+            snapshot_learner_records(layout)
+
+        self.assertFalse((layout.run_dir / "learner-records").exists())
+
     def test_snapshot_refuses_linked_records_root(self) -> None:
         layout = self.layout("conceptual-physics")
         with mock.patch(
@@ -310,6 +393,24 @@ class EvaluationIsolationTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 snapshot_learner_records(layout)
+        self.assertFalse((layout.run_dir / "learner-records").exists())
+
+    def test_snapshot_raises_when_walk_cannot_read_directory(self) -> None:
+        layout = self.layout("conceptual-physics")
+
+        def unreadable_walk(
+            *args: object,
+            onerror: object = None,
+            **kwargs: object,
+        ):
+            if callable(onerror):
+                onerror(PermissionError("unreadable learner records"))
+            return iter(())
+
+        with mock.patch("evaluation.isolation.os.walk", side_effect=unreadable_walk):
+            with self.assertRaises(PermissionError):
+                snapshot_learner_records(layout)
+
         self.assertFalse((layout.run_dir / "learner-records").exists())
 
     def test_remove_runtime_root_deletes_only_per_run_runtime(self) -> None:
@@ -348,7 +449,7 @@ class EvaluationIsolationTests(unittest.TestCase):
             )
         self.assertTrue(unrelated.is_dir())
 
-    def test_cleanup_refuses_mocked_reparse_entries_without_partial_removal(self) -> None:
+    def test_cleanup_removes_mocked_internal_reparse_entry(self) -> None:
         layout = self.layout("conceptual-physics")
         reparse = layout.runtime_root / "home" / "mocked-junction"
         reparse.mkdir()
@@ -361,11 +462,82 @@ class EvaluationIsolationTests(unittest.TestCase):
             "evaluation.isolation._is_link_or_reparse",
             side_effect=lambda path: path == reparse or real_check(path),
         ):
-            with self.assertRaises(ValueError):
+            remove_runtime_root(layout, self.repository)
+
+        self.assertFalse(layout.runtime_root.exists())
+
+    def test_cleanup_removes_internal_link_without_following_target(self) -> None:
+        layout = self.layout("conceptual-physics")
+        target = self.outer / "junction-target"
+        target.mkdir()
+        sentinel = target / "outside.txt"
+        sentinel.write_text("preserve", encoding="utf-8")
+        self.make_directory_link(target, layout.runtime_root / "internal-link")
+
+        remove_runtime_root(layout, self.repository)
+
+        self.assertFalse(layout.runtime_root.exists())
+        self.assertEqual("preserve", sentinel.read_text(encoding="utf-8"))
+
+    def test_cleanup_refuses_mocked_reparse_in_runtime_ancestry(self) -> None:
+        layout = self.layout("conceptual-physics")
+        unsafe_ancestor = layout.runtime_root.parent
+
+        import evaluation.isolation as isolation
+
+        real_check = isolation._is_link_or_reparse
+        with mock.patch(
+            "evaluation.isolation._is_link_or_reparse",
+            side_effect=lambda path: path == unsafe_ancestor or real_check(path),
+        ):
+            with self.assertRaisesRegex(ValueError, "link|reparse"):
                 remove_runtime_root(layout, self.repository)
 
         self.assertTrue(layout.runtime_root.is_dir())
-        self.assertTrue((reparse / "private.txt").is_file())
+
+    def test_rollback_removes_internal_link_and_preserves_target(self) -> None:
+        runtime_root = self.runtime_base / "suite" / "conceptual-physics"
+        target = self.outer / "rollback-target"
+        target.mkdir()
+        sentinel = target / "outside.txt"
+        sentinel.write_text("preserve", encoding="utf-8")
+
+        class WorkspaceFailure(RuntimeError):
+            pass
+
+        def fail_workspace(home: Path) -> None:
+            self.make_directory_link(target, home.parent / "internal-link")
+            raise WorkspaceFailure("original workspace failure")
+
+        with mock.patch(
+            "evaluation.isolation.prepare_personal_workspace",
+            side_effect=fail_workspace,
+        ):
+            with self.assertRaisesRegex(WorkspaceFailure, "original workspace failure"):
+                self.layout("conceptual-physics")
+
+        self.assertFalse(runtime_root.exists())
+        self.assertEqual("preserve", sentinel.read_text(encoding="utf-8"))
+
+    def test_rollback_preserves_original_exception_when_cleanup_fails(self) -> None:
+        class WorkspaceFailure(RuntimeError):
+            pass
+
+        with (
+            mock.patch(
+                "evaluation.isolation.prepare_personal_workspace",
+                side_effect=WorkspaceFailure("original workspace failure"),
+            ),
+            mock.patch(
+                "evaluation.isolation._remove_created_runtime",
+                side_effect=OSError("cleanup failure"),
+            ),
+        ):
+            with self.assertRaisesRegex(
+                WorkspaceFailure,
+                "original workspace failure",
+            ):
+                self.layout("conceptual-physics")
 
     def test_environment_inherits_auth_home_and_userprofile_without_mutation(self) -> None:
         parent = {
@@ -424,3 +596,33 @@ class ProtocolIdentityTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 capture_protocol_identity(self.repository)
+
+    def test_protocol_identity_normalizes_missing_git_executable(self) -> None:
+        with mock.patch(
+            "evaluation.isolation.subprocess.run",
+            side_effect=FileNotFoundError("private executable path"),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "^repository commit could not be captured$",
+            ) as captured:
+                capture_protocol_identity(self.repository)
+
+        self.assertNotIn("private", str(captured.exception))
+        self.assertNotIn("git", str(captured.exception))
+
+    def test_protocol_identity_normalizes_git_command_failure(self) -> None:
+        failure = subprocess.CalledProcessError(
+            128,
+            ("git", "rev-parse", "HEAD"),
+            stderr="private repository path",
+        )
+        with mock.patch("evaluation.isolation.subprocess.run", side_effect=failure):
+            with self.assertRaisesRegex(
+                ValueError,
+                "^repository commit could not be captured$",
+            ) as captured:
+                capture_protocol_identity(self.repository)
+
+        self.assertNotIn("private", str(captured.exception))
+        self.assertNotIn("rev-parse", str(captured.exception))

@@ -2365,8 +2365,10 @@ The `initial_bootstrap` implementation created in Task 6 must continue to call
 the existing `command_for`; this parity task must not replace it with duplicated
 bootstrap text.
 
-Add an external-runtime parity test that does not require a repository cwd.
-The repository path is used only as the source for `build_distribution`:
+Add an external-runtime parity test that does not use the real checkout for
+runtime or raw state. The real repository remains only the canonical source
+for `build_distribution`; a temporary repository owns an ignored
+`.semantic-runs/` tree and is destroyed with the test:
 
 ```python
 def test_external_layout_bootstrap_and_protocol_match_public_launcher(self) -> None:
@@ -2378,23 +2380,27 @@ def test_external_layout_bootstrap_and_protocol_match_public_launcher(self) -> N
     from socratic_learn.hosts import ADAPTERS, command_for
 
     root = Path(__file__).resolve().parents[1]
-    with tempfile.TemporaryDirectory() as raw_base, tempfile.TemporaryDirectory() as runtime_base:
+    with tempfile.TemporaryDirectory() as repository_base, tempfile.TemporaryDirectory() as runtime_base:
+        repository = Path(repository_base) / "repo"
+        repository.mkdir()
+        (repository / ".gitignore").write_text("/.semantic-runs/\n", encoding="utf-8")
         layout = create_run_layout(
-            root,
+            repository,
             "suite",
             "conceptual-physics",
-            raw_root=Path(raw_base),
+            raw_root=repository / ".semantic-runs",
             runtime_base=Path(runtime_base),
             user_home=Path(runtime_base),
         )
         try:
             self.assertFalse(layout.cwd.resolve().is_relative_to(root))
+            self.assertFalse(layout.cwd.resolve().is_relative_to(repository))
             self.assertEqual(build_distribution(root).bundle, layout.protocol.read_bytes())
             goal = "learn cafés"
             public = command_for(ADAPTERS["antigravity"], "agy", layout.protocol, goal)
             self.assertEqual(public[2], initial_bootstrap(layout.protocol, goal))
         finally:
-            remove_runtime_root(layout, root)
+            remove_runtime_root(layout, repository)
 ```
 
 - [ ] **Step 2: Add protocol-identity and report-triplet tests**
