@@ -559,6 +559,8 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn(end, text, "Missing section boundary after Socratic contract")
         section = text.split(start, 1)[1].split(end, 1)[0]
         section = " ".join(section.split())
+        self.assertIn("across subjects and skills", section)
+        self.assertNotIn("for mathematics and ai, useful probes", section)
 
         cycle = (
             "receive an answer or claim",
@@ -636,13 +638,15 @@ class RepositoryValidationTests(unittest.TestCase):
                 "information is not deducible",
                 "inappropriate cognitive load",
             ),
-            "mathematics and ai applications": (
-                "for mathematics and ai",
+            "subject-neutral probes": (
+                "across subjects and skills",
                 "why does this work?",
-                "which hypothesis is necessary?",
+                "which assumption is necessary?",
                 "what evidence would refute the claim?",
-                "what changes when this variable or condition varies?",
+                "what changes when this condition varies?",
                 "how does another approach compare?",
+                "domain-specific evidence rules",
+                "mathematical classification and hypothesis rules",
             ),
         }
         for contract, clauses in contracts.items():

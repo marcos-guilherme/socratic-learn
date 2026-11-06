@@ -35,7 +35,11 @@ bytes after deterministic build normalization: UTF-8 decoding, CRLF/CR to LF,
 removal of leading and trailing blank lines, and exactly one trailing newline.
 
 The current manifest lists four canonical core files followed by the
-mathematics and AI curriculum maps. Source order contributes to bundle order.
+curriculum maps. Source order contributes to bundle order.
+
+The current source list includes the mathematics and AI starter curriculum
+maps. They are bundled examples and dependency guides, not a restriction on
+the subjects or skills the protocol can support.
 
 ## Bundle record
 

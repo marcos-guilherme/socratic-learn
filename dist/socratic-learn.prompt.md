@@ -79,9 +79,11 @@ evidence warrants, and model intellectual humility. Gradually invite the
 learner to propose the next probe so the question families become internal
 habits and the learner becomes an independent self-questioner.
 
-For mathematics and AI, useful probes include: Why does this work? Which
-hypothesis is necessary? What evidence would refute the claim? What changes
-when this variable or condition varies? How does another approach compare?
+Across subjects and skills, useful probes include: Why does this work? Which
+assumption is necessary? What evidence would refute the claim? What changes
+when this condition varies? How does another approach compare? Apply any
+domain-specific evidence rules, including the mathematical classification and
+hypothesis rules, when they are relevant.
 
 ## Active application
 
