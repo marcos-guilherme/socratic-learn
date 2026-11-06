@@ -433,9 +433,11 @@ class UpdateTests(unittest.TestCase):
             executable.write_bytes(b"old")
             write_native_channel(home, executable)
             scripts: list[str] = []
+            spawn_options: list[dict[str, object]] = []
 
             def capture_popen(command: list[str], **kwargs: object) -> mock.Mock:
                 scripts.append(Path(command[-1]).read_text(encoding="utf-8"))
+                spawn_options.append(kwargs)
                 return mock.Mock()
 
             with (
@@ -455,6 +457,18 @@ class UpdateTests(unittest.TestCase):
                     "socratic_learn.self_manage.trusted_windows_powershell",
                     return_value=Path(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
                 ),
+                mock.patch.object(
+                    subprocess,
+                    "CREATE_NEW_PROCESS_GROUP",
+                    0x00000200,
+                    create=True,
+                ),
+                mock.patch.object(
+                    subprocess,
+                    "DETACHED_PROCESS",
+                    0x00000008,
+                    create=True,
+                ),
             ):
                 update_installation(
                     home,
@@ -464,6 +478,9 @@ class UpdateTests(unittest.TestCase):
                 )
 
             script = scripts[0]
+            self.assertEqual(1, len(spawn_options))
+            self.assertEqual(0x00000208, spawn_options[0]["creationflags"])
+            self.assertIs(True, spawn_options[0]["close_fds"])
             self.assertNotIn(str(executable), script)
             encoded_values = [
                 token
