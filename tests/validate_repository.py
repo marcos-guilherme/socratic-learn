@@ -96,6 +96,36 @@ README_POSITIONING_REQUIREMENTS = (
     "any subject or skill",
     "starter curricula",
 )
+README_PORTFOLIO_REQUIREMENTS = (
+    "I built Socratic Learn out of a recurring need in my work as an AI researcher",
+    "objective → prerequisites → approved path → application → evidence",
+    "Mahoney et al. (2023)",
+    "Munshi et al. (2023)",
+    "Borchers et al. (2025)",
+    "van den Broek et al. (2025)",
+    "Stogniy et al. (2020)",
+    "Lee et al. (2025)",
+    "https://doi.org/10.1016/j.tsc.2023.101422",
+    "https://doi.org/10.1111/jcal.12761",
+    "https://doi.org/10.1016/j.compedu.2025.105364",
+    "https://doi.org/10.1016/j.learninstruc.2025.102196",
+    "https://doi.org/10.1096/fasebj.2020.34.s1.04148",
+    "https://doi.org/10.48550/arXiv.2509.16262",
+    "three unchanged-protocol Antigravity sessions",
+    "no pedagogy score was assigned",
+    "evaluation/reports/2026-11-06-antigravity-baseline.md",
+)
+README_UNSUPPORTED_EFFECTIVENESS_PATTERNS = (
+    re.compile(
+        r"\bSocratic Learn (?:is )?(?:proven|scientifically validated)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:research|studies|literature) "
+        r"(?:proves?|validates?) (?:that )?Socratic Learn\b",
+        re.IGNORECASE,
+    ),
+)
 README_LAUNCHER_REQUIREMENTS = (
     "socratic",
     'socratic "i want to learn linear algebra"',
@@ -959,6 +989,16 @@ def validate(root: Path) -> list[str]:
             for phrase in README_POSITIONING_REQUIREMENTS
         ):
             errors.append("Narrow product positioning in README.md")
+        if not all(
+            requirement.lower() in readme_text.lower()
+            for requirement in README_PORTFOLIO_REQUIREMENTS
+        ):
+            errors.append("README.md is missing portfolio narrative")
+        if any(
+            pattern.search(readme_text)
+            for pattern in README_UNSUPPORTED_EFFECTIVENESS_PATTERNS
+        ):
+            errors.append("README.md contains an unsupported effectiveness claim")
         normalized_readme = normalize(readme_text).lower()
         if not all(
             requirement in normalized_readme
@@ -967,7 +1007,7 @@ def validate(root: Path) -> list[str]:
             errors.append("README.md is missing public launcher onboarding")
         quick_start = readme_text.split("## Quick start", 1)
         quick_start_text = (
-            quick_start[1].split("## How a learning session works", 1)[0]
+            quick_start[1].split("## Supported hosts and project adapters", 1)[0]
             if len(quick_start) == 2
             else ""
         )
@@ -985,7 +1025,7 @@ def validate(root: Path) -> list[str]:
         (
             root / "README.md",
             "## Quick start",
-            "## How a learning session works",
+            "## Supported hosts and project adapters",
         ),
         (
             root / "docs/universal-installation.md",

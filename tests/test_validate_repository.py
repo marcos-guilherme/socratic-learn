@@ -499,6 +499,57 @@ class RepositoryValidationTests(unittest.TestCase):
             validate(root),
         )
 
+    def test_validator_rejects_missing_portfolio_narrative(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        readme = root / "README.md"
+        text = readme.read_text(encoding="utf-8")
+        text = text.replace(
+            "I built Socratic Learn out of a recurring need in my work as an AI researcher",
+            "Socratic Learn is a learning tool",
+        )
+        readme.write_text(text, encoding="utf-8")
+
+        self.assertIn(
+            "README.md is missing portfolio narrative",
+            validate(root),
+        )
+
+    def test_validator_rejects_missing_research_or_baseline_evidence(self) -> None:
+        replacements = (
+            ("Mahoney et al. (2023)", "A prior study"),
+            ("Lee et al. (2025)", "A recent study"),
+            ("no pedagogy score was assigned", "the sessions were successful"),
+        )
+        for original, replacement in replacements:
+            with self.subTest(original=original):
+                temp, root = self.make_root()
+                self.addCleanup(temp.cleanup)
+                readme = root / "README.md"
+                readme.write_text(
+                    readme.read_text(encoding="utf-8").replace(original, replacement),
+                    encoding="utf-8",
+                )
+                self.assertIn(
+                    "README.md is missing portfolio narrative",
+                    validate(root),
+                )
+
+    def test_validator_rejects_unsupported_effectiveness_claim(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        readme = root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8")
+            + "\nSocratic Learn is scientifically validated to improve learning.\n",
+            encoding="utf-8",
+        )
+
+        self.assertIn(
+            "README.md contains an unsupported effectiveness claim",
+            validate(root),
+        )
+
     def test_validator_rejects_missing_public_launcher_contract(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
