@@ -344,14 +344,79 @@ def workflow_job(text: str, name: str) -> str:
     return match.group(0) if match else ""
 
 
+def workflow_matrix_include_entries(job: str) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    in_include = False
+    for line in job.splitlines():
+        if line == "        include:":
+            in_include = True
+            continue
+        if not in_include:
+            continue
+        if line.startswith("          - "):
+            if current is not None:
+                entries.append(current)
+            current = {}
+            field = line[12:]
+        elif current is not None and line.startswith("            "):
+            field = line[12:]
+        else:
+            if current is not None:
+                entries.append(current)
+            break
+        if ":" not in field:
+            continue
+        key, value = field.split(":", 1)
+        value = value.split(" #", 1)[0].strip()
+        current[key.strip()] = value.strip('"\'')
+    else:
+        if current is not None:
+            entries.append(current)
+    return entries
+
+
+def workflow_steps(job: str) -> list[str]:
+    return [
+        match.group(0)
+        for match in re.finditer(
+            r"^      - .*?(?=^      - |\Z)",
+            job,
+            re.MULTILINE | re.DOTALL,
+        )
+    ]
+
+
 def workflow_step(job: str, name: str) -> str:
-    match = re.search(
-        rf"^      - name: {re.escape(name)}\n"
-        rf"(?P<body>.*?)(?=^      - |\Z)",
-        job,
-        re.MULTILINE | re.DOTALL,
+    prefix = f"      - name: {name}\n"
+    return next(
+        (step for step in workflow_steps(job) if step.startswith(prefix)),
+        "",
     )
-    return match.group(0) if match else ""
+
+
+def workflow_action_step(job: str, action: str) -> str:
+    line = f"      - uses: {action}"
+    return next(
+        (step for step in workflow_steps(job) if step.splitlines()[0] == line),
+        "",
+    )
+
+
+def workflow_action_input(step: str, name: str) -> str | None:
+    lines = step.splitlines()
+    try:
+        start = lines.index("        with:") + 1
+    except ValueError:
+        return None
+    prefix = f"          {name}: "
+    for line in lines[start:]:
+        if line.startswith(prefix):
+            value = line[len(prefix) :].split(" #", 1)[0]
+            return value.strip().strip('"\'')
+        if line and not line.startswith("          "):
+            break
+    return None
 
 
 def workflow_run_block(step: str) -> str:
@@ -369,6 +434,28 @@ def workflow_run_block(step: str) -> str:
         else:
             break
     return "\n".join(body)
+
+
+def workflow_python_assignment_matches(
+    step: str,
+    name: str,
+    expected_expression: str,
+) -> bool:
+    try:
+        statements = ast.parse(workflow_run_block(step)).body
+        expected = ast.parse(expected_expression, mode="eval").body
+    except SyntaxError:
+        return False
+    assignments = [
+        statement.value
+        for statement in statements
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in statement.targets
+        )
+    ]
+    return len(assignments) == 1 and ast.dump(assignments[0]) == ast.dump(expected)
 
 
 def version_step_imports_local_package(step: str) -> bool:
@@ -456,7 +543,6 @@ def validate_release_automation(root: Path) -> list[str]:
             "workflow_dispatch:",
             "windows-latest",
             "ubuntu-latest",
-            "macos-13",
             "actions/download-artifact@v4",
             "hashlib.sha256",
             "release-manifest.schema.json",
@@ -467,6 +553,46 @@ def validate_release_automation(root: Path) -> list[str]:
             errors.append("Release workflow is missing required triggers or artifacts")
 
         native = workflow_job(release, "native")
+        macos_entries = [
+            entry
+            for entry in workflow_matrix_include_entries(native)
+            if entry.get("platform") == "macos"
+        ]
+        macos_matrix_valid = macos_entries == [
+            {
+                "os": "macos-15-intel",
+                "platform": "macos",
+                "extension": "",
+            }
+        ]
+        if not macos_matrix_valid:
+            errors.append(
+                "Native macOS release matrix must use macos-15-intel "
+                "with an empty extension"
+            )
+
+        rename_step = workflow_step(
+            native,
+            "Rename and smoke test socratic --version",
+        )
+        rename_valid = workflow_python_assignment_matches(
+            rename_step,
+            "destination",
+            'root / "native-artifacts" / ('
+            'f"socratic-{os.environ[\'RELEASE_PLATFORM\']}-x86_64" '
+            'f"{os.environ[\'RELEASE_EXTENSION\']}"'
+            ")",
+        )
+        upload_step = workflow_action_step(native, "actions/upload-artifact@v4")
+        upload_valid = workflow_action_input(upload_step, "path") == (
+            "native-artifacts/socratic-${{ matrix.platform }}"
+            "-x86_64${{ matrix.extension }}"
+        )
+        if not rename_valid or not upload_valid:
+            errors.append(
+                "Native rename and upload steps must produce x86_64 artifacts"
+            )
+
         suite = "python -m unittest discover"
         pyinstaller = "python -m PyInstaller socratic-learn.spec"
         if (

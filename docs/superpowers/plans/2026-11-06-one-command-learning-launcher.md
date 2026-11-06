@@ -1466,9 +1466,10 @@ Jobs:
 1. `python-package` on Ubuntu: install `.[build]`, run the full suite and
    validator, build wheel and sdist, install the wheel in a clean venv, run
    `socratic --version`, upload both artifacts.
-2. `native` matrix on `windows-latest`, `ubuntu-latest`, and `macos-13`: install
-   `.[build]`, run the full suite and validator, run PyInstaller, rename output
-   to `socratic-{platform}-x86_64[.exe]`, execute `--version`, upload it.
+2. `native` matrix on `windows-latest`, `ubuntu-latest`, and
+   `macos-15-intel`: install `.[build]`, run the full suite and validator, run
+   PyInstaller, rename output to `socratic-{platform}-x86_64[.exe]`, execute
+   `--version`, upload it.
 3. `manifest`: download all native artifacts, compute size and SHA-256 with a
    checked-in Python snippet in the workflow, validate against
    `release-manifest.schema.json`, generate standard two-space-delimited

@@ -91,7 +91,7 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             extension: ""
-          - os: macos-13
+          - os: macos-15-intel
             platform: macos
             extension: ""
     runs-on: ${{ matrix.os }}
