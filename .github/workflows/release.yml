@@ -20,6 +20,9 @@ jobs:
         shell: python
         run: |
           import os
+          import sys
+
+          sys.path.insert(0, os.getcwd())
           from socratic_learn import __version__
 
           ref = os.environ["GITHUB_REF"]

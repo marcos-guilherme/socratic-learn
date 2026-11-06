@@ -1249,6 +1249,173 @@ class RepositoryValidationTests(unittest.TestCase):
             errors,
         )
 
+    def test_release_version_gate_requires_local_importability(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        release.write_text(
+            release.read_text(encoding="utf-8").replace(
+                "          sys.path.insert(0, os.getcwd())\n",
+                "",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Release version gate must add the checkout to sys.path before import",
+            errors,
+        )
+
+    def test_release_version_gate_rejects_commented_path_setup(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        release.write_text(
+            release.read_text(encoding="utf-8").replace(
+                "          sys.path.insert(0, os.getcwd())\n",
+                "          # sys.path.insert(0, os.getcwd())\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Release version gate must add the checkout to sys.path before import",
+            errors,
+        )
+
+    def test_release_version_gate_rejects_nested_dead_path_setup(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        release.write_text(
+            release.read_text(encoding="utf-8").replace(
+                "          sys.path.insert(0, os.getcwd())\n",
+                "          if False:\n"
+                "              sys.path.insert(0, os.getcwd())\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Release version gate must add the checkout to sys.path before import",
+            errors,
+        )
+
+    def test_release_version_gate_rejects_import_before_setup_and_duplicate(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        release.write_text(
+            release.read_text(encoding="utf-8").replace(
+                "          sys.path.insert(0, os.getcwd())\n",
+                "          from socratic_learn import __version__\n"
+                "          sys.path.insert(0, os.getcwd())\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Release version gate must add the checkout to sys.path before import",
+            errors,
+        )
+
+    def test_release_version_gate_rejects_aliased_os_import(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        release.write_text(
+            release.read_text(encoding="utf-8").replace(
+                "          import os\n",
+                "          import os as operating_system\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertIn(
+            "Release version gate must add the checkout to sys.path before import",
+            validate(root),
+        )
+
+    def test_release_version_gate_rejects_aliased_sys_import(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        release.write_text(
+            release.read_text(encoding="utf-8").replace(
+                "          import sys\n",
+                "          import sys as system\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertIn(
+            "Release version gate must add the checkout to sys.path before import",
+            validate(root),
+        )
+
+    def test_release_version_gate_rejects_aliased_version_import(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        release.write_text(
+            release.read_text(encoding="utf-8").replace(
+                "          from socratic_learn import __version__\n",
+                "          from socratic_learn import __version__ as version\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertIn(
+            "Release version gate must add the checkout to sys.path before import",
+            validate(root),
+        )
+
+    def test_release_version_gate_rejects_setup_in_separate_step(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        text = release.read_text(encoding="utf-8")
+        setup = (
+            "      - name: Ineffective separate path setup\n"
+            "        shell: python\n"
+            "        run: |\n"
+            "          import os\n"
+            "          import sys\n"
+            "          sys.path.insert(0, os.getcwd())\n"
+        )
+        text = text.replace(
+            "          sys.path.insert(0, os.getcwd())\n",
+            "",
+            1,
+        ).replace(
+            "      - name: Require an exact version tag\n",
+            setup + "      - name: Require an exact version tag\n",
+            1,
+        )
+        release.write_text(text, encoding="utf-8")
+
+        errors = validate(root)
+
+        self.assertIn(
+            "Release version gate must add the checkout to sys.path before import",
+            errors,
+        )
+
     def test_local_release_gates_isolate_package_output_from_canonical_dist(
         self,
     ) -> None:

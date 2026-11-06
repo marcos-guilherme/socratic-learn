@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
 import subprocess
@@ -343,6 +344,74 @@ def workflow_job(text: str, name: str) -> str:
     return match.group(0) if match else ""
 
 
+def workflow_step(job: str, name: str) -> str:
+    match = re.search(
+        rf"^      - name: {re.escape(name)}\n"
+        rf"(?P<body>.*?)(?=^      - |\Z)",
+        job,
+        re.MULTILINE | re.DOTALL,
+    )
+    return match.group(0) if match else ""
+
+
+def workflow_run_block(step: str) -> str:
+    lines = step.splitlines()
+    try:
+        start = lines.index("        run: |") + 1
+    except ValueError:
+        return ""
+    body: list[str] = []
+    for line in lines[start:]:
+        if not line:
+            body.append("")
+        elif line.startswith("          "):
+            body.append(line[10:])
+        else:
+            break
+    return "\n".join(body)
+
+
+def version_step_imports_local_package(step: str) -> bool:
+    if "        shell: python" not in step.splitlines():
+        return False
+    try:
+        statements = ast.parse(workflow_run_block(step)).body
+    except SyntaxError:
+        return False
+
+    imported_at: dict[str, int] = {}
+    setup_at: int | None = None
+    version_import_at: int | None = None
+    required_setup = ast.parse("sys.path.insert(0, os.getcwd())").body[0]
+    for index, statement in enumerate(statements):
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                if alias.asname is None:
+                    imported_at.setdefault(alias.name, index)
+        if ast.dump(statement) == ast.dump(required_setup):
+            setup_at = index
+        if (
+            isinstance(statement, ast.ImportFrom)
+            and statement.module == "socratic_learn"
+            and any(
+                alias.name == "__version__" and alias.asname is None
+                for alias in statement.names
+            )
+            and version_import_at is None
+        ):
+            version_import_at = index
+
+    return (
+        "os" in imported_at
+        and "sys" in imported_at
+        and setup_at is not None
+        and version_import_at is not None
+        and imported_at["os"] < setup_at
+        and imported_at["sys"] < setup_at
+        and setup_at < version_import_at
+    )
+
+
 def validate_release_automation(root: Path) -> list[str]:
     errors: list[str] = []
     pyproject = root / "pyproject.toml"
@@ -458,6 +527,11 @@ def validate_release_automation(root: Path) -> list[str]:
             or "refs/tags/v" not in version_job
         ):
             errors.append("Release tags must exactly match the package version")
+        version_step = workflow_step(version_job, "Require an exact version tag")
+        if not version_step_imports_local_package(version_step):
+            errors.append(
+                "Release version gate must add the checkout to sys.path before import"
+            )
 
     normal_path = root / ".github/workflows/native-python.yml"
     if normal_path.is_file():
