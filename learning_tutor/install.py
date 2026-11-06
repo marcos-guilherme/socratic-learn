@@ -1152,6 +1152,9 @@ def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None
 
 def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
     backup: Path | None = None
+    backup_may_contain_unrecorded_data = False
+    uncertain_source: Path | None = None
+    uncertain_backup: Path | None = None
     backed_up: list[BackupFile] = []
     linked_files: list[LinkedFile] = []
     created_directories: list[CreatedDirectory] = []
@@ -1168,6 +1171,9 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
             source = _project_path(plan.project, relative)
             destination = backup.joinpath(*PurePosixPath(relative).parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
+            backup_may_contain_unrecorded_data = True
+            uncertain_source = source
+            uncertain_backup = destination
             os.replace(source, destination)
             backed = BackupFile(
                 relative,
@@ -1181,6 +1187,9 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
                     path=relative,
                     remediation="restore the preserved backup before retrying",
                 )
+            backup_may_contain_unrecorded_data = False
+            uncertain_source = None
+            uncertain_backup = None
         for planned in _ordered_publication_files(plan):
             source = stage.joinpath(*PurePosixPath(planned.path).parts)
             destination = _project_path(plan.project, planned.path)
@@ -1203,6 +1212,20 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
                 "update backup could not be created",
                 path=plan.project,
                 remediation="check project permissions and retry",
+            ) from error
+        if backup_may_contain_unrecorded_data:
+            conflicts = (
+                [RecoveryConflict(uncertain_source, uncertain_backup)]
+                if uncertain_source is not None and uncertain_backup is not None
+                else []
+            )
+            raise _conservative_failure_error(
+                "update backup bookkeeping failed with preserved recovery state",
+                original=error,
+                published=[],
+                stage=stage,
+                backup=backup,
+                conflicts=conflicts,
             ) from error
         extra = (
             error.published_path

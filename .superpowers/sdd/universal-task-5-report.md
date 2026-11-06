@@ -323,3 +323,43 @@ policy instead of automatic deletion.
 No blocking concerns remain. Recovery after a post-publication failure is
 deliberately manual because cross-platform atomic conditional deletion is not
 available.
+
+## Final P1 fix — conservative backup bookkeeping
+
+### RED evidence
+
+The two new narrow fault-injection tests initially failed because the backup
+tree was removed after `os.replace` succeeded but identity capture or backup
+reading failed:
+
+```text
+python -m unittest tests.test_install.InstallTests.test_update_identity_failure_after_backup_move_preserves_only_copy tests.test_install.InstallTests.test_update_read_failure_after_backup_move_preserves_only_copy -v
+```
+
+Result: exit code 1 with 2 expected failures; neither test found the backup
+tree containing the moved file.
+
+### Fix and coverage
+
+- The backup tree is marked as potentially containing unrecorded user data
+  immediately before each `os.replace`.
+- The mark is cleared only after destination identity capture, backup read,
+  and receipt-hash verification all succeed.
+- Any move, identity, read, or hash failure while marked preserves the complete
+  backup and staging trees and reports the original and backup paths. No
+  automatic restore or cleanup runs while certainty is lost.
+- Ambiguous move failure may retain an empty backup by design. Successful
+  updates still remove all private transaction artifacts.
+- Existing hash-mismatch and restore-collision tests now enforce the same
+  conservative boundary without weakening no-overwrite restore coverage.
+
+### Final verification
+
+- Focused: 48 tests passed with 1 Windows parent-symlink privilege skip.
+- Full: 163 tests passed with 3 Windows symlink-privilege skips.
+- Compilation and repository validation passed.
+- Two consecutive builds retained the deterministic hashes recorded above.
+
+No blocking concerns remain. A bookkeeping failure after a backup move now
+requires manual recovery from the reported private backup, intentionally
+favoring preservation over automatic cleanup.

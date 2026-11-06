@@ -767,17 +767,21 @@ class InstallTests(unittest.TestCase):
             "learning_tutor.install._stage",
             side_effect=stage_then_modify,
         ):
-            with self.assertRaises(IntegrityError):
+            with self.assertRaises(FilesystemError) as raised:
                 apply_install(plan)
 
-        self.assertEqual(b"changed after preflight", manifest.read_bytes())
-        self.assertFalse(
-            any(
-                path.name.startswith(
-                    (".learning-tutor-stage-", ".learning-tutor-backup-")
-                )
-                for path in self.project.iterdir()
-            )
+        backups = [
+            path
+            for path in self.project.iterdir()
+            if path.name.startswith(".learning-tutor-backup-")
+        ]
+        self.assertEqual(1, len(backups))
+        backup_manifest = backups[0] / ".learning-tutor/manifest.json"
+        self.assertEqual(b"changed after preflight", backup_manifest.read_bytes())
+        self.assertFalse(manifest.exists())
+        self.assertIn(str(backup_manifest), str(raised.exception))
+        self.assertTrue(
+            any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir())
         )
 
     def test_update_hashes_bytes_after_atomic_backup_move(self) -> None:
@@ -804,45 +808,117 @@ class InstallTests(unittest.TestCase):
             "learning_tutor.install.os.replace",
             side_effect=mutate_during_backup,
         ):
-            with self.assertRaises(IntegrityError):
+            with self.assertRaises(FilesystemError) as raised:
                 apply_install(plan)
 
-        self.assertEqual(b"mutated during backup move", manifest.read_bytes())
-        self.assertFalse(
-            any(
-                path.name.startswith(
-                    (".learning-tutor-stage-", ".learning-tutor-backup-")
-                )
-                for path in self.project.iterdir()
-            )
+        backups = [
+            path
+            for path in self.project.iterdir()
+            if path.name.startswith(".learning-tutor-backup-")
+        ]
+        self.assertEqual(1, len(backups))
+        backup_manifest = backups[0] / ".learning-tutor/manifest.json"
+        self.assertEqual(b"mutated during backup move", backup_manifest.read_bytes())
+        self.assertFalse(manifest.exists())
+        self.assertIn(str(backup_manifest), str(raised.exception))
+        self.assertTrue(
+            any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir())
         )
+
+    def test_update_identity_failure_after_backup_move_preserves_only_copy(self) -> None:
+        self._install()
+        plan = plan_install(self.source, self.project, "generic", True)
+        relative = plan.previous_receipt.owned_paths[0]
+        source = self.project.joinpath(*relative.split("/"))
+        original = source.read_bytes()
+        install_module = __import__(
+            "learning_tutor.install",
+            fromlist=["_path_identity"],
+        )
+        real_identity = install_module._path_identity
+
+        def fail_backup_identity(path: Path):
+            if (
+                ".learning-tutor-backup-" in str(path)
+                and path.as_posix().endswith(relative)
+            ):
+                raise OSError("injected backup identity failure")
+            return real_identity(path)
+
+        with (
+            mock.patch(
+                "learning_tutor.install._path_identity",
+                side_effect=fail_backup_identity,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        backups = [
+            path
+            for path in self.project.iterdir()
+            if path.name.startswith(".learning-tutor-backup-")
+        ]
+        self.assertEqual(1, len(backups))
+        preserved = backups[0].joinpath(*relative.split("/"))
+        self.assertEqual(original, preserved.read_bytes())
+        self.assertFalse(source.exists())
+        self.assertIn(str(backups[0]), str(raised.exception))
+        self.assertIn("no external data was deleted", str(raised.exception).lower())
+
+    def test_update_read_failure_after_backup_move_preserves_only_copy(self) -> None:
+        self._install()
+        plan = plan_install(self.source, self.project, "generic", True)
+        relative = plan.previous_receipt.owned_paths[0]
+        source = self.project.joinpath(*relative.split("/"))
+        original = source.read_bytes()
+        install_module = __import__(
+            "learning_tutor.install",
+            fromlist=["_read_bytes"],
+        )
+        real_read = install_module._read_bytes
+
+        def fail_backup_read(path: Path, label: str):
+            if label == "backup file":
+                raise OSError("injected backup read failure")
+            return real_read(path, label)
+
+        with (
+            mock.patch(
+                "learning_tutor.install._read_bytes",
+                side_effect=fail_backup_read,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        backups = [
+            path
+            for path in self.project.iterdir()
+            if path.name.startswith(".learning-tutor-backup-")
+        ]
+        self.assertEqual(1, len(backups))
+        preserved = backups[0].joinpath(*relative.split("/"))
+        self.assertEqual(original, preserved.read_bytes())
+        self.assertFalse(source.exists())
+        self.assertIn(str(backups[0]), str(raised.exception))
+        self.assertIn("no external data was deleted", str(raised.exception).lower())
 
     def test_update_restore_preserves_external_destination_and_backup(self) -> None:
         self._install()
         plan = plan_install(self.source, self.project, "generic", True)
         manifest = self.project / ".learning-tutor/manifest.json"
-        real_replace = os.replace
         real_link = os.link
-        injected_backup_mutation = False
         injected_restore_collision = False
 
-        def mutate_during_backup(source, destination):
-            nonlocal injected_backup_mutation
-            source_path = Path(source)
-            destination_path = Path(destination)
-            if (
-                not injected_backup_mutation
-                and source_path == manifest
-                and ".learning-tutor-backup-" in str(destination_path)
-            ):
-                injected_backup_mutation = True
-                source_path.write_bytes(b"mismatched backup bytes")
-            real_replace(source_path, destination_path)
-
-        def collide_during_restore(source, destination, *args, **kwargs):
+        def fail_publication_and_collide_during_restore(
+            source, destination, *args, **kwargs
+        ):
             nonlocal injected_restore_collision
             source_path = Path(source)
             destination_path = Path(destination)
+            if ".learning-tutor-stage-" in str(source_path):
+                raise OSError("injected publication failure")
             if (
                 not injected_restore_collision
                 and ".learning-tutor-backup-" in str(source_path)
@@ -854,12 +930,8 @@ class InstallTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "learning_tutor.install.os.replace",
-                side_effect=mutate_during_backup,
-            ),
-            mock.patch(
                 "learning_tutor.install.os.link",
-                side_effect=collide_during_restore,
+                side_effect=fail_publication_and_collide_during_restore,
             ),
             self.assertRaises(FilesystemError) as raised,
         ):
@@ -873,7 +945,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(b"external restore winner", manifest.read_bytes())
         self.assertEqual(1, len(backups))
         backup_manifest = backups[0] / ".learning-tutor/manifest.json"
-        self.assertEqual(b"mismatched backup bytes", backup_manifest.read_bytes())
+        self.assertTrue(backup_manifest.is_file())
         self.assertIn(str(manifest), str(raised.exception))
         self.assertIn(str(backup_manifest), str(raised.exception))
 
@@ -1126,10 +1198,12 @@ class InstallTests(unittest.TestCase):
             any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir())
         )
 
-    def test_backup_failure_restores_every_old_file(self) -> None:
+    def test_ambiguous_backup_move_failure_preserves_backup_tree(self) -> None:
         self._install()
-        before = self._snapshot()
         plan = plan_install(self.source, self.project, "generic", True)
+        first_relative = plan.previous_receipt.owned_paths[0]
+        first_source = self.project.joinpath(*first_relative.split("/"))
+        first_bytes = first_source.read_bytes()
         real_replace = os.replace
         backup_moves = 0
 
@@ -1142,10 +1216,19 @@ class InstallTests(unittest.TestCase):
             real_replace(source, destination)
 
         with mock.patch("learning_tutor.install.os.replace", side_effect=fail_backup):
-            with self.assertRaises(FilesystemError):
+            with self.assertRaises(FilesystemError) as raised:
                 apply_install(plan)
 
-        self.assertEqual(before, self._snapshot())
+        backups = [
+            path
+            for path in self.project.iterdir()
+            if path.name.startswith(".learning-tutor-backup-")
+        ]
+        self.assertEqual(1, len(backups))
+        preserved = backups[0].joinpath(*first_relative.split("/"))
+        self.assertEqual(first_bytes, preserved.read_bytes())
+        self.assertFalse(first_source.exists())
+        self.assertIn(str(backups[0]), str(raised.exception))
 
     def test_update_commit_failure_preserves_partial_recovery_state(self) -> None:
         self._install()
