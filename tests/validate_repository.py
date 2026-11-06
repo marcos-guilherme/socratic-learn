@@ -59,6 +59,7 @@ REQUIRED_PATHS = (
     "docs/universal-installation.md",
     "docs/manifest-reference.md",
     "docs/adding-an-adapter.md",
+    ".github/workflows/native-python.yml",
 )
 SKILL_PATHS = (
     ".cursor/skills/learning-tutor/SKILL.md",

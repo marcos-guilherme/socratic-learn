@@ -22,6 +22,7 @@ from .errors import (
 from .manifest import serialize_json, sha256_bytes, validate_manifest
 from .safe_fs import (
     AtomicNoReplaceUnsupportedError,
+    IdentityMismatchError,
     ParentIdentity,
     PathIdentity,
     TrackedDirectory,
@@ -578,9 +579,24 @@ def plan_install(
     )
 
 
-def _write_staged_file(path: Path, content: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as stream:
+def _write_staged_file(path: Path, content: bytes, *, root: Path) -> None:
+    relative_parent = path.parent.relative_to(root)
+    current = root
+    for part in relative_parent.parts:
+        current /= part
+        if current.exists() or current.is_symlink():
+            if current.is_symlink() or not current.is_dir():
+                raise IntegrityError(
+                    "staging parent changed into a non-directory",
+                    path=current,
+                    remediation="preserve the staging tree and retry",
+                )
+            continue
+        identity_bound_mkdir(current, root=root)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
         stream.write(content)
         stream.flush()
         os.fsync(stream.fileno())
@@ -773,10 +789,38 @@ def _open_verified_parent(parent: ParentIdentity) -> int:
 def _parent_chain_publication_error(
     destination: Path,
     *,
+    project: Path,
+    source: Path,
+    source_identity: PathIdentity,
     original_parent: ParentIdentity,
     published: bool,
     original: BaseException,
 ) -> FilesystemError:
+    def observed(path: Path) -> str:
+        try:
+            identity = _path_identity(path)
+        except OSError:
+            return "missing"
+        return f"({identity.device}, {identity.inode})"
+
+    recovery_locations: list[Path] = []
+    try:
+        for current, directory_names, _file_names in os.walk(
+            project,
+            topdown=True,
+            followlinks=False,
+        ):
+            current_path = Path(current)
+            directory_names[:] = [
+                name
+                for name in directory_names
+                if not (current_path / name).is_symlink()
+            ]
+            if _has_identity(current_path, original_parent.identity):
+                recovery_locations.append(current_path)
+    except OSError:
+        pass
+    locations = ", ".join(str(path) for path in recovery_locations) or "not found"
     error_type = _PublicationFailure if published else FilesystemError
     arguments: dict[str, object] = {}
     if published:
@@ -785,15 +829,21 @@ def _parent_chain_publication_error(
         (
             "publication parent chain changed before commit completed; "
             "published state was preserved and no external data was deleted; "
-            f"original parent identity "
-            f"({original_parent.identity.device}, {original_parent.identity.inode}); "
+            f"original parent identity=({original_parent.identity.device}, "
+            f"{original_parent.identity.inode}); observed parent identity="
+            f"{observed(original_parent.path)}; source expected identity="
+            f"({source_identity.device}, {source_identity.inode}); observed source "
+            f"identity={observed(source)}; destination expected identity="
+            f"{'(' + str(source_identity.device) + ', ' + str(source_identity.inode) + ')' if published else 'absent'}; "
+            f"observed destination identity={observed(destination)}; bound parent "
+            f"recovery locations={locations}; "
             f"original failure: {type(original).__name__}: {original}"
         ),
         path=destination,
         remediation=(
             f"inspect {destination.parent} and {destination}; do not remove either "
             "unless its identity and ownership are established; if the original "
-            "parent was renamed, locate the reported device/inode before cleanup"
+            f"parent was renamed, inspect the reported recovery location(s): {locations}"
         ),
         **arguments,
     )
@@ -828,6 +878,9 @@ def _link_staged_file(source: Path, destination: Path) -> LinkedFile:
         close_parent_binding()
         raise _parent_chain_publication_error(
             destination,
+            project=project,
+            source=source,
+            source_identity=identity,
             original_parent=parent_chain[-1],
             published=False,
             original=error,
@@ -885,6 +938,9 @@ def _link_staged_file(source: Path, destination: Path) -> LinkedFile:
         close_parent_binding()
         raise _parent_chain_publication_error(
             destination,
+            project=project,
+            source=source,
+            source_identity=identity,
             original_parent=parent_chain[-1],
             published=True,
             original=error,
@@ -1054,7 +1110,8 @@ def _stage(plan: InstallPlan) -> tuple[Path, Path, TrackedDirectory]:
         staged_install = stage / INSTALL_ROOT
         for planned in plan.files:
             staged_path = stage.joinpath(*PurePosixPath(planned.path).parts)
-            _write_staged_file(staged_path, planned.content)
+            _write_staged_file(staged_path, planned.content, root=stage)
+            stage_directory = track_directory(stage)
         for planned in plan.files:
             staged_path = stage.joinpath(*PurePosixPath(planned.path).parts)
             if sha256_bytes(staged_path.read_bytes()) != planned.sha256:
@@ -1176,6 +1233,7 @@ def _apply_update(
     backed_up: list[BackupFile] = []
     linked_files: list[LinkedFile] = []
     created_directories: list[CreatedDirectory] = []
+    backup_phase = True
     try:
         backup = Path(
             tempfile.mkdtemp(prefix=".learning-tutor-backup-", dir=plan.project)
@@ -1194,16 +1252,28 @@ def _apply_update(
                 stop=backup,
                 created=[],
             )
+            backup_directory = track_directory(backup)
             source_identity = _path_identity(source)
-            backup_may_contain_unrecorded_data = True
             uncertain_source = source
             uncertain_backup = destination
-            identity_bound_replace(
-                source,
-                destination,
-                root=plan.project,
-                expected_source=source_identity,
-            )
+            try:
+                identity_bound_replace(
+                    source,
+                    destination,
+                    root=plan.project,
+                    expected_source=source_identity,
+                )
+            except OSError as move_error:
+                backup_may_contain_unrecorded_data = (
+                    isinstance(move_error, IdentityMismatchError)
+                    and not isinstance(
+                        move_error,
+                        AtomicNoReplaceUnsupportedError,
+                    )
+                ) or destination.exists() or not source.exists()
+                raise
+            backup_may_contain_unrecorded_data = True
+            backup_directory = track_directory(backup)
             backed = BackupFile(
                 relative,
                 destination,
@@ -1219,6 +1289,7 @@ def _apply_update(
             backup_may_contain_unrecorded_data = False
             uncertain_source = None
             uncertain_backup = None
+        backup_phase = False
         for planned in _ordered_publication_files(plan):
             source = stage.joinpath(*PurePosixPath(planned.path).parts)
             destination = _project_path(plan.project, planned.path)
@@ -1260,6 +1331,19 @@ def _apply_update(
                 backup=backup,
                 conflicts=conflicts,
             ) from error
+        if backup_phase and backed_up:
+            raise _conservative_failure_error(
+                "update backup phase failed after prior managed files moved",
+                original=error,
+                published=[],
+                stage=stage,
+                backup=backup,
+                conflicts=(
+                    [RecoveryConflict(uncertain_source, uncertain_backup)]
+                    if uncertain_source is not None and uncertain_backup is not None
+                    else []
+                ),
+            ) from error
         extra = (
             error.published_path
             if isinstance(error, _PublicationFailure)
@@ -1298,7 +1382,8 @@ def _apply_update(
             raise
         raise FilesystemError(
             (
-                "update failed before publication; the previous installation was restored; "
+                "update failed before publication; the previous installation was "
+                "restored and external state was preserved; "
                 f"original failure: {type(error).__name__}: {error}"
             ),
             path=plan.project / INSTALL_ROOT,

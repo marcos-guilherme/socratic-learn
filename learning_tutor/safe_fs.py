@@ -28,10 +28,22 @@ class ParentIdentity:
 class TrackedDirectory:
     path: Path
     identity: PathIdentity
+    entries: tuple["TrackedEntry", ...]
+
+
+@dataclass(frozen=True)
+class TrackedEntry:
+    relative: str
+    identity: PathIdentity
+    directory: bool
 
 
 class IdentityMismatchError(OSError):
     """A pathname no longer identifies the object authorized for mutation."""
+
+
+class PostMutationIdentityError(IdentityMismatchError):
+    """A mutation completed, but its resulting pathname identity is ambiguous."""
 
 
 class AtomicNoReplaceUnsupportedError(IdentityMismatchError):
@@ -57,7 +69,33 @@ def track_directory(path: Path) -> TrackedDirectory:
     status = path.stat(follow_symlinks=False)
     if _is_reparse_or_symlink(status) or not stat.S_ISDIR(status.st_mode):
         raise IdentityMismatchError(f"tracked path is not a plain directory: {path}")
-    return TrackedDirectory(path, status_identity(status))
+    entries: list[TrackedEntry] = []
+
+    def capture(directory: Path) -> None:
+        for item in sorted(os.scandir(directory), key=lambda entry: entry.name):
+            child = Path(item.path)
+            child_status = child.stat(follow_symlinks=False)
+            if _is_reparse_or_symlink(child_status):
+                raise IdentityMismatchError(
+                    f"tracked tree contains a link or reparse point: {child}"
+                )
+            child_is_directory = stat.S_ISDIR(child_status.st_mode)
+            if not child_is_directory and not stat.S_ISREG(child_status.st_mode):
+                raise IdentityMismatchError(
+                    f"tracked tree contains an unsupported entry type: {child}"
+                )
+            entries.append(
+                TrackedEntry(
+                    child.relative_to(path).as_posix(),
+                    status_identity(child_status),
+                    child_is_directory,
+                )
+            )
+            if child_is_directory:
+                capture(child)
+
+    capture(path)
+    return TrackedDirectory(path, status_identity(status), tuple(entries))
 
 
 def _is_reparse_or_symlink(status: os.stat_result) -> bool:
@@ -192,6 +230,67 @@ def _lock_windows_chain(chain: tuple[ParentIdentity, ...]) -> list[int]:
 
 def _before_bound_replace(source: Path, destination: Path) -> None:
     """Narrow race-test hook after parent capture and before mutation."""
+
+
+def _after_bound_replace(source: Path, destination: Path) -> None:
+    """Narrow race-test hook after mutation and before pathname verification."""
+
+
+def _observed_identity(path: Path) -> str:
+    try:
+        identity = path_identity(path)
+    except OSError:
+        return "missing"
+    return f"({identity.device}, {identity.inode})"
+
+
+def _identity_locations(root: Path, identity: PathIdentity) -> tuple[Path, ...]:
+    locations: list[Path] = []
+    try:
+        for current, directory_names, _file_names in os.walk(
+            root,
+            topdown=True,
+            followlinks=False,
+        ):
+            current_path = Path(current)
+            directory_names[:] = [
+                name
+                for name in directory_names
+                if not (current_path / name).is_symlink()
+            ]
+            if has_identity(current_path, identity):
+                locations.append(current_path)
+    except OSError:
+        pass
+    return tuple(locations)
+
+
+def _post_mutation_error(
+    source: Path,
+    destination: Path,
+    *,
+    root: Path,
+    expected_source: PathIdentity,
+    source_parent: ParentIdentity,
+    destination_parent: ParentIdentity,
+    original: BaseException,
+) -> PostMutationIdentityError:
+    recovery = _identity_locations(root, destination_parent.identity)
+    recovery_locations = ", ".join(str(path) for path in recovery) or "not found"
+    return PostMutationIdentityError(
+        "post-mutation recovery required; both current locations were preserved; "
+        f"source expected=({expected_source.device}, {expected_source.inode}), "
+        f"source observed={_observed_identity(source)}, destination expected="
+        f"({expected_source.device}, {expected_source.inode}), destination "
+        f"observed={_observed_identity(destination)}; source parent original="
+        f"({source_parent.identity.device}, {source_parent.identity.inode}), "
+        f"source parent observed={_observed_identity(source_parent.path)}; "
+        f"destination parent original=({destination_parent.identity.device}, "
+        f"{destination_parent.identity.inode}), destination parent observed="
+        f"{_observed_identity(destination_parent.path)}; bound destination parent "
+        f"recovery locations={recovery_locations}; original failure: "
+        f"{type(original).__name__}: {original}"
+    )
 
 
 def _load_posix_symbol(name: str) -> Any | None:
@@ -334,26 +433,30 @@ def _posix_identity_bound_replace(
             raise IdentityMismatchError(
                 f"destination cannot be verified after rename: {destination}"
             ) from error
-        if moved_identity == identity and status_identity(os.fstat(source_fd)) == identity:
+        source_handle_identity = status_identity(os.fstat(source_fd))
+        if moved_identity == identity and source_handle_identity == identity:
             return
 
-        recovery_error: OSError | None = None
         try:
-            _native_posix_rename_no_replace(
-                destination_parent_fd,
-                destination.name,
-                source_parent_fd,
-                source.name,
+            observed_source = _posix_entry_identity(source_parent_fd, source.name)
+            source_observed = (
+                f"({observed_source.device}, {observed_source.inode})"
             )
-        except OSError as error:
-            recovery_error = error
-        detail = (
-            "unexpected source was restored"
-            if recovery_error is None
-            else f"automatic restoration failed: {recovery_error}"
-        )
-        raise IdentityMismatchError(
-            f"source identity changed during atomic rename; {detail}: {source}"
+        except OSError:
+            source_observed = "missing"
+        source_parent = status_identity(os.fstat(source_parent_fd))
+        destination_parent = status_identity(os.fstat(destination_parent_fd))
+        raise PostMutationIdentityError(
+            "post-mutation recovery required; no reverse rename was attempted; "
+            f"source expected=({identity.device}, {identity.inode}), "
+            f"source handle=({source_handle_identity.device}, "
+            f"{source_handle_identity.inode}), source observed={source_observed}; "
+            f"destination observed=({moved_identity.device}, "
+            f"{moved_identity.inode}); source parent=({source_parent.device}, "
+            f"{source_parent.inode}); destination parent="
+            f"({destination_parent.device}, {destination_parent.inode}); "
+            f"preserve source location {source} and destination recovery "
+            f"location {destination}"
         )
     finally:
         os.close(source_fd)
@@ -418,6 +521,8 @@ def identity_bound_replace(
     *,
     root: Path,
     expected_source: PathIdentity | None = None,
+    expected_source_chain: tuple[ParentIdentity, ...] | None = None,
+    expected_destination_chain: tuple[ParentIdentity, ...] | None = None,
 ) -> PathIdentity:
     """Move a verified source without replacing any destination.
 
@@ -429,6 +534,18 @@ def identity_bound_replace(
     identity = path_identity(source) if expected_source is None else expected_source
     source_chain = capture_parent_chain(root, source)
     destination_chain = capture_parent_chain(root, destination)
+    if expected_source_chain is not None and source_chain != expected_source_chain:
+        raise IdentityMismatchError(
+            f"source parent identity changed before mutation: {source.parent}"
+        )
+    if (
+        expected_destination_chain is not None
+        and destination_chain != expected_destination_chain
+    ):
+        raise IdentityMismatchError(
+            f"destination parent identity changed before mutation: "
+            f"{destination.parent}"
+        )
     source_fd: int | None = None
     destination_fd: int | None = None
     windows_locks: list[int] = []
@@ -450,11 +567,23 @@ def identity_bound_replace(
                 destination_fd,
                 identity,
             )
-            verify_parent_chain(root, destination, destination_chain)
-            if path_identity(destination) != identity:
-                raise IdentityMismatchError(
-                    f"destination identity changed after rename: {destination}"
-                )
+            try:
+                _after_bound_replace(source, destination)
+                verify_parent_chain(root, destination, destination_chain)
+                if path_identity(destination) != identity:
+                    raise IdentityMismatchError(
+                        f"destination identity changed after rename: {destination}"
+                    )
+            except OSError as error:
+                raise _post_mutation_error(
+                    source,
+                    destination,
+                    root=root,
+                    expected_source=identity,
+                    source_parent=source_chain[-1],
+                    destination_parent=destination_chain[-1],
+                    original=error,
+                ) from error
             return identity
         windows_locks.extend(_lock_windows_chain(source_chain))
         windows_locks.extend(_lock_windows_chain(destination_chain))
@@ -472,11 +601,23 @@ def identity_bound_replace(
             source_fd,
             destination,
         )
-        verify_parent_chain(root, destination, destination_chain)
-        if path_identity(destination) != identity:
-            raise IdentityMismatchError(
-                f"destination identity changed after rename: {destination}"
-            )
+        try:
+            _after_bound_replace(source, destination)
+            verify_parent_chain(root, destination, destination_chain)
+            if path_identity(destination) != identity:
+                raise IdentityMismatchError(
+                    f"destination identity changed after rename: {destination}"
+                )
+        except OSError as error:
+            raise _post_mutation_error(
+                source,
+                destination,
+                root=root,
+                expected_source=identity,
+                source_parent=source_chain[-1],
+                destination_parent=destination_chain[-1],
+                original=error,
+            ) from error
         return identity
     finally:
         if source_fd is not None:
@@ -529,6 +670,51 @@ def _before_windows_handle_delete(path: Path) -> None:
     """Race-test hook after a Windows object is bound to a delete handle."""
 
 
+def _before_tracked_entry_delete(path: Path) -> None:
+    """Race-test hook immediately before an identity-checked entry deletion."""
+
+
+def _tracked_entries(directory: TrackedDirectory) -> dict[str, TrackedEntry]:
+    return {entry.relative: entry for entry in directory.entries}
+
+
+def _verify_tracked_tree(directory: TrackedDirectory) -> None:
+    if not has_identity(directory.path, directory.identity):
+        raise IdentityMismatchError(
+            f"cleanup root identity changed; preserved for recovery: {directory.path}"
+        )
+    try:
+        observed = track_directory(directory.path)
+    except OSError as error:
+        raise IdentityMismatchError(
+            f"cleanup tree could not be verified; preserved for recovery: "
+            f"{directory.path}: {error}"
+        ) from error
+    expected_by_name = _tracked_entries(directory)
+    observed_by_name = _tracked_entries(observed)
+    if set(expected_by_name) != set(observed_by_name):
+        unknown = sorted(set(observed_by_name) - set(expected_by_name))
+        missing = sorted(set(expected_by_name) - set(observed_by_name))
+        raise IdentityMismatchError(
+            "cleanup tree topology changed; entire tree was preserved for "
+            f"recovery: {directory.path}; unknown={unknown}; missing={missing}"
+        )
+    for relative, expected in expected_by_name.items():
+        actual = observed_by_name[relative]
+        if (
+            actual.identity != expected.identity
+            or actual.directory != expected.directory
+        ):
+            raise IdentityMismatchError(
+                "cleanup child identity or type changed; entire tree was "
+                f"preserved for recovery: {directory.path / relative}; "
+                f"expected=({expected.identity.device}, "
+                f"{expected.identity.inode}, directory={expected.directory}); "
+                f"observed=({actual.identity.device}, "
+                f"{actual.identity.inode}, directory={actual.directory})"
+            )
+
+
 def _windows_mark_delete(descriptor: int) -> None:
     import ctypes
     import msvcrt
@@ -557,7 +743,12 @@ def _windows_mark_delete(descriptor: int) -> None:
         raise ctypes.WinError(ctypes.get_last_error())
 
 
-def _windows_delete_bound_tree(path: Path, descriptor: int) -> None:
+def _windows_delete_bound_tree(
+    path: Path,
+    descriptor: int,
+    root: Path,
+    expected: dict[str, TrackedEntry],
+) -> None:
     """Delete a tree through non-delete-share handles from leaf to root."""
 
     _before_windows_handle_delete(path)
@@ -568,6 +759,16 @@ def _windows_delete_bound_tree(path: Path, descriptor: int) -> None:
             child_is_directory = False
         else:
             child_is_directory = stat.S_ISDIR(child_status.st_mode)
+        relative = child.relative_to(root).as_posix()
+        recorded = expected.get(relative)
+        if (
+            recorded is None
+            or recorded.identity != status_identity(child_status)
+            or recorded.directory != child_is_directory
+        ):
+            raise IdentityMismatchError(
+                f"cleanup entry changed; preserved for recovery: {child}"
+            )
         child_descriptor = _open_windows_path(
             child,
             status_identity(child_status),
@@ -576,7 +777,7 @@ def _windows_delete_bound_tree(path: Path, descriptor: int) -> None:
         )
         try:
             if child_is_directory:
-                _windows_delete_bound_tree(child, child_descriptor)
+                _windows_delete_bound_tree(child, child_descriptor, root, expected)
             else:
                 _before_windows_handle_delete(child)
             _windows_mark_delete(child_descriptor)
@@ -585,14 +786,61 @@ def _windows_delete_bound_tree(path: Path, descriptor: int) -> None:
     _windows_mark_delete(descriptor)
 
 
+def _posix_delete_bound_tree(
+    directory: TrackedDirectory,
+    directory_fd: int,
+    relative_parent: str = "",
+) -> None:
+    expected = _tracked_entries(directory)
+    names = sorted(os.listdir(directory_fd))
+    for name in names:
+        relative = f"{relative_parent}/{name}" if relative_parent else name
+        recorded = expected.get(relative)
+        if recorded is None:
+            raise IdentityMismatchError(
+                "cleanup tree topology changed; entire remaining tree was "
+                f"preserved for recovery: {directory.path}; unknown={relative}"
+            )
+        status = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if (
+            status_identity(status) != recorded.identity
+            or stat.S_ISDIR(status.st_mode) != recorded.directory
+            or _is_reparse_or_symlink(status)
+        ):
+            raise IdentityMismatchError(
+                f"cleanup entry identity changed; preserved for recovery: "
+                f"{directory.path / relative}"
+            )
+        path = directory.path / relative
+        _before_tracked_entry_delete(path)
+        status = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if status_identity(status) != recorded.identity:
+            raise IdentityMismatchError(
+                f"cleanup entry identity changed at deletion boundary; "
+                f"preserved for recovery: {path}"
+            )
+        if recorded.directory:
+            flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            child_fd = os.open(name, flags, dir_fd=directory_fd)
+            try:
+                if status_identity(os.fstat(child_fd)) != recorded.identity:
+                    raise IdentityMismatchError(
+                        f"cleanup directory changed while binding: {path}"
+                    )
+                _posix_delete_bound_tree(directory, child_fd, relative)
+            finally:
+                os.close(child_fd)
+            os.rmdir(name, dir_fd=directory_fd)
+        else:
+            os.unlink(name, dir_fd=directory_fd)
+
+
 def remove_tracked_tree(directory: TrackedDirectory) -> None:
-    """Remove only the plain directory object recorded by the caller."""
+    """Remove an exact operation-owned tree or preserve it on any ambiguity."""
 
     _before_identity_cleanup(directory)
-    if not has_identity(directory.path, directory.identity):
-        raise IdentityMismatchError(
-            f"cleanup path identity changed; preserved for recovery: {directory.path}"
-        )
+    _verify_tracked_tree(directory)
     parent_chain = capture_parent_chain(directory.path.parent, directory.path)
     parent_fd: int | None = None
     windows_locks: list[int] = []
@@ -606,19 +854,17 @@ def remove_tracked_tree(directory: TrackedDirectory) -> None:
                 directory=True,
                 delete=True,
             )
-            _windows_delete_bound_tree(directory.path, directory_fd)
+            _windows_delete_bound_tree(
+                directory.path,
+                directory_fd,
+                directory.path,
+                _tracked_entries(directory),
+            )
         elif (
             os.stat in os.supports_dir_fd
             and os.unlink in os.supports_dir_fd
             and os.rmdir in os.supports_dir_fd
         ):
-            import shutil
-
-            if not shutil.rmtree.avoids_symlink_attacks:
-                raise IdentityMismatchError(
-                    "safe descriptor-bound recursive cleanup is unavailable; "
-                    f"preserved for recovery: {directory.path}"
-                )
             parent_fd = _open_verified_parent(parent_chain[-1])
             if status_identity(
                 os.stat(
@@ -630,7 +876,19 @@ def remove_tracked_tree(directory: TrackedDirectory) -> None:
                 raise IdentityMismatchError(
                     f"cleanup path identity changed; preserved for recovery: {directory.path}"
                 )
-            shutil.rmtree(directory.path.name, dir_fd=parent_fd)
+            flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            directory_fd = os.open(
+                directory.path.name,
+                flags,
+                dir_fd=parent_fd,
+            )
+            if status_identity(os.fstat(directory_fd)) != directory.identity:
+                raise IdentityMismatchError(
+                    f"cleanup path changed while binding; preserved: {directory.path}"
+                )
+            _posix_delete_bound_tree(directory, directory_fd)
+            os.rmdir(directory.path.name, dir_fd=parent_fd)
         else:
             raise IdentityMismatchError(
                 "safe descriptor-bound recursive cleanup is unavailable; "

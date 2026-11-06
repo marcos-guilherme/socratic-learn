@@ -26,6 +26,7 @@ from .manifest import (
     validate_manifest,
 )
 from .safe_fs import (
+    ParentIdentity,
     TrackedDirectory,
     identity_bound_replace,
     path_identity,
@@ -274,12 +275,22 @@ def build_distribution(root: Path) -> BuildResult:
     return BuildResult(bundle=bundle, manifest=serialize_json(manifest))
 
 
-def _atomic_write(path: Path, data: bytes) -> None:
+def _atomic_write(
+    path: Path,
+    data: bytes,
+    *,
+    root: Path | None = None,
+    temporary_directory: Path | None = None,
+    expected_destination_chain: tuple[ParentIdentity, ...] | None = None,
+) -> None:
     temporary_path: Path | None = None
+    temporary_identity = None
+    mutation_root = path.parent if root is None else root
+    temporary_parent = path.parent if temporary_directory is None else temporary_directory
     try:
         with tempfile.NamedTemporaryFile(
             mode="wb",
-            dir=path.parent,
+            dir=temporary_parent,
             prefix=f".{path.name}.",
             suffix=".tmp",
             delete=False,
@@ -288,17 +299,22 @@ def _atomic_write(path: Path, data: bytes) -> None:
             temporary.flush()
             os.fsync(temporary.fileno())
             temporary_path = Path(temporary.name)
-        os.replace(temporary_path, path)
+            temporary_identity = path_identity(temporary_path)
+        identity_bound_replace(
+            temporary_path,
+            path,
+            root=mutation_root,
+            expected_source=temporary_identity,
+            expected_destination_chain=expected_destination_chain,
+        )
     except OSError as error:
-        if temporary_path is not None:
-            try:
-                temporary_path.unlink(missing_ok=True)
-            except OSError:
-                pass
         raise FilesystemError(
             "distribution artifact could not be written",
             path=path,
-            remediation="check destination permissions and retry",
+            remediation=(
+                "check destination permissions and retry; preserve any reported "
+                f"temporary path for recovery: {temporary_path}"
+            ),
         ) from error
 
 
@@ -334,6 +350,29 @@ def _validate_staged_distribution(stage: Path, result: BuildResult) -> None:
         )
 
 
+def _fully_owned_dist_tree(dist: Path) -> TrackedDirectory | None:
+    """Return an identity snapshot only for the exact deterministic dist tree."""
+
+    try:
+        names = {entry.name for entry in os.scandir(dist)}
+        if names != {"manifest.json", "learning-tutor.prompt.md"}:
+            return None
+        manifest_bytes = (dist / "manifest.json").read_bytes()
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+        if not isinstance(manifest, dict):
+            return None
+        validate_manifest(manifest)
+        bundle = manifest["bundle"]
+        if not isinstance(bundle, dict) or bundle["path"] != "learning-tutor.prompt.md":
+            return None
+        bundle_bytes = (dist / "learning-tutor.prompt.md").read_bytes()
+        if sha256_bytes(bundle_bytes) != bundle["sha256"]:
+            return None
+        return track_directory(dist)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, IntegrityError):
+        return None
+
+
 def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
     """Stage, validate, and replace the complete distribution with rollback."""
 
@@ -343,16 +382,20 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
     stage_directory: TrackedDirectory | None = None
     backup = repository / f".dist-backup-{uuid.uuid4().hex}"
     backup_directory: TrackedDirectory | None = None
+    backup_fully_owned = False
     old_moved = False
     committed = False
     try:
         stage = Path(tempfile.mkdtemp(prefix=".dist-stage-", dir=repository))
         stage_directory = track_directory(stage)
         _atomic_write(stage / "learning-tutor.prompt.md", result.bundle)
+        stage_directory = track_directory(stage)
         _atomic_write(stage / "manifest.json", result.manifest)
+        stage_directory = track_directory(stage)
         _validate_staged_distribution(stage, result)
 
         if dist.exists():
+            owned_dist = _fully_owned_dist_tree(dist)
             dist_identity = path_identity(dist)
             identity_bound_replace(
                 dist,
@@ -361,7 +404,19 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
                 expected_source=dist_identity,
             )
             old_moved = True
-            backup_directory = track_directory(backup)
+            if owned_dist is None:
+                backup_directory = track_directory(backup)
+            else:
+                backup_directory = TrackedDirectory(
+                    backup,
+                    owned_dist.identity,
+                    owned_dist.entries,
+                )
+                try:
+                    # Re-capture verifies no child changed between proof and move.
+                    backup_fully_owned = track_directory(backup) == backup_directory
+                except OSError:
+                    backup_fully_owned = False
         assert stage_directory is not None
         identity_bound_replace(
             stage,
@@ -409,7 +464,7 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
         cleanup_targets: list[TrackedDirectory] = []
         if stage is not None and stage_directory is not None:
             cleanup_targets.append(stage_directory)
-        if committed and backup_directory is not None:
+        if committed and backup_directory is not None and backup_fully_owned:
             cleanup_targets.append(backup_directory)
         for directory in cleanup_targets:
             if not directory.path.exists() and not directory.path.is_symlink():
@@ -425,6 +480,16 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
                         "confirming its recorded operation ownership"
                     ),
                 ) from cleanup_error
+        if committed and backup_directory is not None and not backup_fully_owned:
+            raise FilesystemError(
+                "distribution committed, but the previous distribution backup "
+                "was not fully owned and was preserved",
+                path=backup_directory.path,
+                remediation=(
+                    f"inspect {backup_directory.path}; remove it only after "
+                    "establishing ownership of every entry"
+                ),
+            )
 
     bundle_path = dist / "learning-tutor.prompt.md"
     manifest_path = dist / "manifest.json"

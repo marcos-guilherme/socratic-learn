@@ -31,6 +31,7 @@ UNIVERSAL_REQUIRED_PATHS = (
     "docs/universal-installation.md",
     "docs/manifest-reference.md",
     "docs/adding-an-adapter.md",
+    ".github/workflows/native-python.yml",
 )
 
 CURRICULUM_FIELDS = (
@@ -728,6 +729,29 @@ class RepositoryValidationTests(unittest.TestCase):
         for relative in UNIVERSAL_REQUIRED_PATHS:
             with self.subTest(path=relative):
                 self.assertIn(f"Missing required path: {relative}", errors)
+
+    def test_native_ci_workflow_covers_required_platforms_and_checks(self) -> None:
+        workflow = Path(__file__).resolve().parents[1] / (
+            ".github/workflows/native-python.yml"
+        )
+        text = workflow.read_text(encoding="utf-8")
+
+        for value in (
+            "windows-latest",
+            "ubuntu-latest",
+            "macos-latest",
+            "python-version: \"3.11\"",
+            "python -m learning_tutor build",
+            "python -m unittest discover",
+            "python tests/validate_repository.py",
+            '"install", "generic"',
+            "--update",
+            '"doctor", str(project)',
+            '"git", "diff", "--check"',
+            '"git", "status", "--porcelain"',
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, text)
 
     def test_required_file_directory_masquerade_is_reported_clearly(self) -> None:
         temp, root = self.make_root()

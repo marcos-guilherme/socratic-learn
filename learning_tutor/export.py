@@ -12,8 +12,9 @@ from .build import (
     _ensure_contained,
     _resolve_repository_root,
 )
-from .errors import FilesystemError, IntegrityError
+from .errors import CollisionError, FilesystemError, IntegrityError
 from .manifest import sha256_bytes, validate_manifest
+from .safe_fs import ParentIdentity, capture_parent_chain, identity_bound_mkdir
 
 
 def _read_artifact(path: Path, label: str) -> bytes:
@@ -31,6 +32,48 @@ def _read_artifact(path: Path, label: str) -> bytes:
             path=path,
             remediation="check artifact permissions and run 'learning-tutor build'",
         ) from error
+
+
+def _ensure_output_parent(
+    repository: Path,
+    parent: Path,
+) -> tuple[ParentIdentity, ...]:
+    try:
+        relative = parent.relative_to(repository)
+    except ValueError as error:
+        raise IntegrityError(
+            "export parent escapes the repository",
+            path=parent,
+            remediation="choose an output inside the repository",
+        ) from error
+    current = repository
+    for part in relative.parts:
+        current /= part
+        if current.exists() or current.is_symlink():
+            try:
+                capture_parent_chain(repository, current / ".export-parent-probe")
+            except OSError as error:
+                raise IntegrityError(
+                    "export parent is not a plain identity-bound directory",
+                    path=current,
+                    remediation="choose a different output path",
+                ) from error
+            continue
+        try:
+            identity_bound_mkdir(current, root=repository)
+        except FileExistsError as error:
+            raise CollisionError(
+                "export parent appeared during creation",
+                path=current,
+                remediation="preserve the raced path and choose another output",
+            ) from error
+        except OSError as error:
+            raise FilesystemError(
+                "export directory could not be created safely",
+                path=current,
+                remediation="choose a writable directory inside the repository",
+            ) from error
+    return capture_parent_chain(repository, parent / ".export-parent-probe")
 
 
 def export_prompt(output: Path | None = None, *, root: Path | None = None) -> None:
@@ -92,12 +135,29 @@ def export_prompt(output: Path | None = None, *, root: Path | None = None) -> No
         requested_output,
         display_path=output,
     )
+    if safe_output.exists() or safe_output.is_symlink():
+        raise CollisionError(
+            "export output already exists",
+            path=safe_output,
+            remediation="choose a new output path; export has no --force mode",
+        )
+    destination_chain = _ensure_output_parent(repository, safe_output.parent)
     try:
-        safe_output.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as error:
-        raise FilesystemError(
-            "export directory could not be created",
-            path=safe_output.parent,
-            remediation="choose a writable directory inside the repository",
-        ) from error
-    _atomic_write(safe_output, bundle_bytes)
+        _atomic_write(
+            safe_output,
+            bundle_bytes,
+            root=repository,
+            temporary_directory=repository,
+            expected_destination_chain=destination_chain,
+        )
+    except FilesystemError as error:
+        if isinstance(error.__cause__, FileExistsError):
+            raise CollisionError(
+                "export output appeared during atomic publication",
+                path=safe_output,
+                remediation=(
+                    "preserve the raced output and choose a new path; inspect "
+                    "the temporary recovery path reported by the original error"
+                ),
+            ) from error
+        raise

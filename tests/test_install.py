@@ -1172,6 +1172,79 @@ class InstallTests(unittest.TestCase):
         self.assertTrue(detached.is_dir())
         self.assertIn(str(replacement), str(raised.exception))
 
+    def test_staging_cleanup_unknown_child_preserves_complete_tree(self) -> None:
+        plan = plan_install(self.source, self.project, "generic", False)
+        install_module = __import__(
+            "learning_tutor.install",
+            fromlist=["_write_staged_file"],
+        )
+        real_write = install_module._write_staged_file
+        writes = 0
+        inserted: Path | None = None
+
+        def fail_second(path: Path, content: bytes, *, root: Path) -> None:
+            nonlocal writes
+            writes += 1
+            if writes == 2:
+                raise OSError("injected staging failure")
+            real_write(path, content, root=root)
+
+        def insert_unknown(directory) -> None:
+            nonlocal inserted
+            inserted = directory.path / "external.txt"
+            inserted.write_bytes(b"external")
+
+        with (
+            mock.patch(
+                "learning_tutor.install._write_staged_file",
+                side_effect=fail_second,
+            ),
+            mock.patch(
+                "learning_tutor.safe_fs._before_identity_cleanup",
+                side_effect=insert_unknown,
+            ),
+            self.assertRaises(FilesystemError),
+        ):
+            apply_install(plan)
+
+        assert inserted is not None
+        self.assertEqual(b"external", inserted.read_bytes())
+        self.assertTrue((inserted.parent / ".learning-tutor/manifest.json").is_file())
+
+    def test_parent_rename_diagnostic_reports_observed_identities_and_location(self) -> None:
+        install_module = __import__(
+            "learning_tutor.install",
+            fromlist=["_parent_chain_publication_error"],
+        )
+        parent = self.project / "parent"
+        parent.mkdir()
+        source = parent / "source"
+        source.write_bytes(b"source")
+        destination = parent / "destination"
+        parent_identity = safe_fs.path_identity(parent)
+        source_identity = safe_fs.path_identity(source)
+        detached = self.project / "renamed-parent"
+        parent.rename(detached)
+        parent.mkdir()
+
+        error = install_module._parent_chain_publication_error(
+            destination,
+            project=self.project,
+            source=source,
+            source_identity=source_identity,
+            original_parent=safe_fs.ParentIdentity(parent, parent_identity),
+            published=True,
+            original=OSError("injected parent rename"),
+        )
+
+        message = str(error)
+        self.assertIn("original parent identity=", message)
+        self.assertIn("observed parent identity=", message)
+        self.assertIn("source expected identity=", message)
+        self.assertIn("observed source identity=", message)
+        self.assertIn("observed destination identity=", message)
+        self.assertIn(str(detached), message)
+
     def test_staged_hash_mismatch_cleans_actual_stage_tree(self) -> None:
         plan = plan_install(self.source, self.project, "generic", False)
         bad_file = replace(plan.files[0], sha256="0" * 64)

@@ -357,7 +357,7 @@ class SafeFilesystemTests(unittest.TestCase):
         self.assertEqual(b"authorized source", source.read_bytes())
         self.assertEqual(b"external destination", destination.read_bytes())
 
-    def test_posix_final_source_race_is_reversed_without_overwrite(self) -> None:
+    def test_posix_final_source_race_preserves_destination_without_reverse_rename(self) -> None:
         source = self.root / "source"
         destination = self.root / "destination"
         expected = safe_fs.PathIdentity(1, 10)
@@ -367,18 +367,29 @@ class SafeFilesystemTests(unittest.TestCase):
         with (
             mock.patch(
                 "learning_tutor.safe_fs._posix_entry_identity",
-                side_effect=[expected, expected, replacement],
+                side_effect=[expected, expected, replacement, replacement],
             ),
             mock.patch(
                 "learning_tutor.safe_fs._open_posix_source",
                 return_value=12,
             ),
             mock.patch(
+                "learning_tutor.safe_fs.os.fstat",
+                side_effect=[
+                    mock.Mock(st_dev=1, st_ino=10),
+                    mock.Mock(st_dev=2, st_ino=20),
+                    mock.Mock(st_dev=3, st_ino=30),
+                ],
+            ),
+            mock.patch(
                 "learning_tutor.safe_fs._native_posix_rename_no_replace",
                 native,
             ),
             mock.patch("learning_tutor.safe_fs.os.close"),
-            self.assertRaisesRegex(IdentityMismatchError, "was restored"),
+            self.assertRaisesRegex(
+                safe_fs.PostMutationIdentityError,
+                "post-mutation recovery",
+            ) as raised,
         ):
             safe_fs._posix_identity_bound_replace(
                 source,
@@ -388,13 +399,93 @@ class SafeFilesystemTests(unittest.TestCase):
                 expected,
             )
 
-        self.assertEqual(
-            [
-                mock.call(3, "source", 4, "destination"),
-                mock.call(4, "destination", 3, "source"),
-            ],
-            native.call_args_list,
+        native.assert_called_once_with(3, "source", 4, "destination")
+        message = str(raised.exception)
+        self.assertIn("source expected=(1, 10)", message)
+        self.assertIn("destination observed=(1, 11)", message)
+        self.assertIn("source parent=(2, 20)", message)
+        self.assertIn("destination parent=(3, 30)", message)
+        self.assertIn(str(source), message)
+        self.assertIn(str(destination), message)
+
+    def test_cleanup_unknown_child_insertion_preserves_entire_tree(self) -> None:
+        directory = self.root / "tracked"
+        directory.mkdir()
+        owned = directory / "owned.txt"
+        owned.write_bytes(b"owned")
+        tracked = track_directory(directory)
+        unknown = directory / "unknown.txt"
+
+        def insert_unknown(_directory: object) -> None:
+            unknown.write_bytes(b"external")
+
+        with (
+            mock.patch(
+                "learning_tutor.safe_fs._before_identity_cleanup",
+                side_effect=insert_unknown,
+            ),
+            self.assertRaisesRegex(IdentityMismatchError, "topology"),
+        ):
+            remove_tracked_tree(tracked)
+
+        self.assertEqual(b"owned", owned.read_bytes())
+        self.assertEqual(b"external", unknown.read_bytes())
+        self.assertTrue(directory.is_dir())
+
+    def test_cleanup_child_replacement_preserves_entire_tree(self) -> None:
+        directory = self.root / "tracked"
+        directory.mkdir()
+        owned = directory / "owned.txt"
+        owned.write_bytes(b"owned")
+        tracked = track_directory(directory)
+        detached = self.root / "detached.txt"
+
+        def replace_child(_directory: object) -> None:
+            owned.rename(detached)
+            owned.write_bytes(b"external replacement")
+
+        with (
+            mock.patch(
+                "learning_tutor.safe_fs._before_identity_cleanup",
+                side_effect=replace_child,
+            ),
+            self.assertRaisesRegex(IdentityMismatchError, "identity"),
+        ):
+            remove_tracked_tree(tracked)
+
+        self.assertEqual(b"external replacement", owned.read_bytes())
+        self.assertEqual(b"owned", detached.read_bytes())
+        self.assertTrue(directory.is_dir())
+
+    def test_post_mutation_parent_rename_reports_recovery_location(self) -> None:
+        parent = self.root / "parent"
+        parent.mkdir()
+        source = parent / "source"
+        destination = parent / "destination"
+        destination.write_bytes(b"moved")
+        expected = path_identity(destination)
+        original_parent = safe_fs.ParentIdentity(parent, path_identity(parent))
+        detached = self.root / "renamed-parent"
+        parent.rename(detached)
+        parent.mkdir()
+
+        error = safe_fs._post_mutation_error(
+            source,
+            destination,
+            root=self.root,
+            expected_source=expected,
+            source_parent=original_parent,
+            destination_parent=original_parent,
+            original=IdentityMismatchError("parent changed"),
         )
+
+        message = str(error)
+        self.assertIn("post-mutation recovery", message)
+        self.assertIn("source parent original=", message)
+        self.assertIn("source parent observed=", message)
+        self.assertIn("destination expected=", message)
+        self.assertIn("destination observed=", message)
+        self.assertIn(str(detached), message)
 
     @unittest.skipUnless(os.name == "posix", "requires a native POSIX kernel")
     def test_native_posix_move_in_subprocess(self) -> None:

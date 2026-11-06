@@ -23,6 +23,12 @@ Build the checked-in distribution before installing:
 python -m learning_tutor build
 ```
 
+`export prompt --output PATH` is also no-force: every parent is created through
+identity-bound operations, an existing output is rejected, and publication is
+an atomic native no-replace move. If another process wins the final output
+race, its file is preserved. The error reports the private temporary artifact
+for recovery; it is never blindly unlinked after an identity ambiguity.
+
 ## Generic
 
 ```powershell
@@ -77,8 +83,16 @@ replace, or delete pre-existing agent files.
 After a successful install or update, private staging and backup directories
 are removed; required installation and adapter parent directories remain as
 containers for managed files. Before publication, failed operations clean up
-operation-created temporary paths when their identity is known and cleanup is
-safe.
+operation-created temporary paths only when the exact recorded topology, entry
+types, and per-entry identities still match. An inserted, replaced, missing,
+or unknown child preserves the complete remaining recovery tree and produces
+an actionable error.
+
+Build applies the same rule to the previous `dist/` backup. It removes that
+backup only when the old distribution has exactly the deterministic manifest
+and bundle topology, their hashes validate, and every entry remains
+identity-bound through the swap. Unknown or changed content is preserved in
+the reported backup path.
 
 Publication is deliberately conservative. If a failure occurs after a path
 may have been published, or if identity-safe restoration or cleanup cannot be
@@ -128,3 +142,12 @@ and temporary paths and complete manual recovery first. For
 `owned-file-changed`, restore the file from a trusted installation or keep the
 change and perform a reviewed clean reinstall. For `tracked-private-file`,
 remove the private path from the Git index without deleting the local file.
+
+## Native CI
+
+`.github/workflows/native-python.yml` defines a Python 3.11 matrix for native
+Windows, Ubuntu, and macOS. Each job builds, runs the full test suite and
+validator, performs install/update/doctor smoke checks, and requires clean
+diff/status output. The workflow is structurally checked by repository tests.
+Only Windows was executed locally for this change; native Linux and macOS
+results remain pending until the hosted jobs run.

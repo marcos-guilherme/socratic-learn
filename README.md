@@ -29,7 +29,8 @@ Installations live under `.learning-tutor/`; Cursor and Pi also receive thin
 native skills, while Claude Code receives an owned thin loader only when root
 `CLAUDE.md` is absent. Every install has a schema-1 ownership receipt. Existing
 agent paths are never merged or overwritten automatically, and there is no
-`--force` option. If publication fails after paths may have appeared, partial
+`--force` option. Export output follows the same rule: an existing or raced
+output is preserved and rejected. If publication fails after paths may have appeared, partial
 paths, private staging directories, and backups are preserved and reported for
 manual recovery rather than deleted.
 
@@ -104,6 +105,11 @@ The validator checks required files, internal Markdown links, adapter metadata,
 canonical-content boundaries, workspace ignore rules, tracked private files,
 manifest validity, the generated header, and byte-for-byte agreement between
 an in-memory build and checked-in `dist/`. It does not write generated files.
+
+The native CI workflow runs these checks plus build and
+install/update/doctor smoke tests on Python 3.11 for Windows, Ubuntu, and
+macOS. Native Linux and macOS execution remains pending until hosted CI runs;
+local verification does not substitute for those backends.
 
 ## Limitations
 

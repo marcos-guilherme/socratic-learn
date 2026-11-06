@@ -15,7 +15,7 @@ from learning_tutor.build import (
     write_distribution,
 )
 from learning_tutor.__main__ import main
-from learning_tutor.errors import FilesystemError, IntegrityError
+from learning_tutor.errors import CollisionError, FilesystemError, IntegrityError
 from learning_tutor.export import export_prompt
 from learning_tutor.manifest import sha256_bytes
 
@@ -573,6 +573,51 @@ class BuildTests(unittest.TestCase):
         self.assertTrue(detached.is_dir())
         self.assertIn(str(replacement), str(raised.exception))
 
+    def test_dist_backup_with_unknown_content_is_preserved(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        result = build_distribution(root)
+        write_distribution(root, result)
+        unknown = root / "dist/user-owned.txt"
+        unknown.write_bytes(b"user owned")
+
+        with self.assertRaisesRegex(FilesystemError, "preserv") as raised:
+            write_distribution(root, result)
+
+        backups = [
+            path for path in root.iterdir() if path.name.startswith(".dist-backup-")
+        ]
+        self.assertEqual(1, len(backups))
+        self.assertEqual(b"user owned", (backups[0] / "user-owned.txt").read_bytes())
+        self.assertIn(str(backups[0]), str(raised.exception))
+
+    def test_dist_backup_unknown_child_at_cleanup_preserves_complete_tree(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        result = build_distribution(root)
+        write_distribution(root, result)
+        inserted: Path | None = None
+
+        def insert_unknown(directory) -> None:
+            nonlocal inserted
+            if directory.path.name.startswith(".dist-backup-"):
+                inserted = directory.path / "external.txt"
+                inserted.write_bytes(b"external")
+
+        with (
+            mock.patch(
+                "learning_tutor.safe_fs._before_identity_cleanup",
+                side_effect=insert_unknown,
+            ),
+            self.assertRaisesRegex(FilesystemError, "cleanup"),
+        ):
+            write_distribution(root, result)
+
+        assert inserted is not None
+        self.assertEqual(b"external", inserted.read_bytes())
+        self.assertTrue((inserted.parent / "manifest.json").is_file())
+        self.assertTrue((inserted.parent / "learning-tutor.prompt.md").is_file())
+
     def test_export_prompt_writes_exact_validated_bundle(self) -> None:
         temporary, root = self.make_repository()
         self.addCleanup(temporary.cleanup)
@@ -583,6 +628,75 @@ class BuildTests(unittest.TestCase):
         export_prompt(output, root=root)
 
         self.assertEqual(result.bundle, output.read_bytes())
+
+    def test_export_rejects_existing_output_without_overwrite(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        result = build_distribution(root)
+        write_distribution(root, result)
+        output = root / "prompt.md"
+        output.write_bytes(b"existing")
+
+        with self.assertRaises(CollisionError):
+            export_prompt(output, root=root)
+
+        self.assertEqual(b"existing", output.read_bytes())
+
+    def test_export_raced_output_is_preserved(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        result = build_distribution(root)
+        write_distribution(root, result)
+        output = root / "out/prompt.md"
+
+        def race_output(_source: Path, destination: Path) -> None:
+            if destination == output:
+                output.write_bytes(b"race winner")
+
+        with (
+            mock.patch(
+                "learning_tutor.safe_fs._before_bound_replace",
+                side_effect=race_output,
+            ),
+            self.assertRaises(CollisionError),
+        ):
+            export_prompt(output, root=root)
+
+        self.assertEqual(b"race winner", output.read_bytes())
+
+    def test_export_parent_replacement_is_not_adopted(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        result = build_distribution(root)
+        write_distribution(root, result)
+        output_parent = root / "out"
+        output_parent.mkdir()
+        output = output_parent / "prompt.md"
+        detached = root / "detached-out"
+        build_module = __import__("learning_tutor.build", fromlist=["_atomic_write"])
+        real_write = build_module._atomic_write
+
+        def replace_parent(path: Path, data: bytes, **kwargs: object) -> None:
+            output_parent.rename(detached)
+            output_parent.mkdir()
+            (output_parent / "external.txt").write_bytes(b"external")
+            real_write(path, data, **kwargs)
+
+        with (
+            mock.patch(
+                "learning_tutor.export._atomic_write",
+                side_effect=replace_parent,
+            ),
+            self.assertRaises(FilesystemError),
+        ):
+            export_prompt(output, root=root)
+
+        self.assertEqual(
+            b"external",
+            (output_parent / "external.txt").read_bytes(),
+        )
+        self.assertFalse(output.exists())
+        self.assertFalse((detached / "prompt.md").exists())
 
     def test_export_output_must_remain_inside_repository(self) -> None:
         temporary, root = self.make_repository()
