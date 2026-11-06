@@ -178,6 +178,37 @@ def _runtime_is_separate(runtime_root: Path, repository: Path, raw_root: Path) -
     )
 
 
+def _validated_raw_root(
+    repository_path: Path,
+    repository_root: Path,
+    raw_root: Path | None,
+) -> Path:
+    if raw_root is None:
+        candidate = repository_root / ".semantic-runs"
+    else:
+        supplied = _absolute(raw_root)
+        if _strictly_contains(repository_path, supplied):
+            _assert_no_link_components(supplied, stop=repository_path)
+            try:
+                relative = Path(os.path.relpath(supplied, repository_path))
+            except ValueError:
+                raise ValueError("raw_root must be inside the repository") from None
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError("raw_root must be inside the repository")
+            candidate = repository_root / relative
+        elif _strictly_contains(repository_root, supplied):
+            candidate = supplied
+        else:
+            raise ValueError("raw_root must be inside the repository")
+
+    candidate = _absolute(candidate)
+    _assert_no_link_components(candidate, stop=repository_root)
+    resolved = _resolved(candidate, strict=False)
+    if not _strictly_contains(repository_root, resolved):
+        raise ValueError("raw_root must be inside the repository")
+    return resolved
+
+
 def assert_no_local_rule_ancestors(cwd: Path, user_home: Path) -> RuleBoundary:
     """Check cwd ancestry using existence checks only, excluding the home boundary."""
     current = _resolved(_absolute(cwd), strict=True)
@@ -269,19 +300,18 @@ def create_run_layout(
     """Create private repository evidence and one external per-run workspace."""
     _require_identifier(suite_id, "suite_id")
     _require_identifier(scenario_id, "scenario_id")
+    repository_path = _absolute(repository)
     repository_root = _require_directory(repository, "repository")
     home_boundary = _require_directory(
         Path.home() if user_home is None else user_home,
         "user_home",
     )
 
-    raw_candidate = _absolute(
-        repository_root / ".semantic-runs" if raw_root is None else raw_root
+    resolved_raw = _validated_raw_root(
+        repository_path,
+        repository_root,
+        raw_root,
     )
-    _assert_no_link_components(raw_candidate, stop=repository_root)
-    resolved_raw = _resolved(raw_candidate, strict=False)
-    if not _strictly_contains(repository_root, resolved_raw):
-        raise ValueError("raw_root must be inside the repository")
     run_dir = _resolved(resolved_raw / suite_id / scenario_id, strict=False)
     if not _strictly_contains(resolved_raw, run_dir):
         raise ValueError("run directory must be inside raw_root")
