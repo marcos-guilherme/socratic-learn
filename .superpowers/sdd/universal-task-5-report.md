@@ -138,3 +138,74 @@ completed with exit code 0.
 
 Two consecutive CLI builds retained the deterministic hashes recorded above.
 No blocking concerns were introduced.
+
+## Re-review fixes — inode-safe publication and restore
+
+### RED evidence
+
+The new TOCTOU regression command initially failed all 4 tests with 3
+assertion failures and 1 missing-implementation error:
+
+```text
+python -m unittest tests.test_install.InstallTests.test_hard_link_identity_race_preserves_external_replacement tests.test_install.InstallTests.test_initial_rollback_unlinks_only_matching_installer_identity tests.test_install.InstallTests.test_update_hashes_bytes_after_atomic_backup_move tests.test_install.InstallTests.test_update_restore_preserves_external_destination_and_backup -v
+```
+
+The placeholder implementation never used `os.link`, rollback could unlink a
+replacement by path alone, update accepted bytes mutated during the
+precheck-to-backup window, and restore could overwrite a new destination.
+
+### Transaction redesign
+
+- Removed absent-file placeholders completely.
+- Every absent file is published directly from adjacent staging with
+  `os.link`, which atomically fails rather than replacing a path that appeared.
+- Each linked destination records its stable device/inode identity and is
+  verified with `os.path.samefile` plus a fresh stat identity.
+- Initial and update rollback unlink only paths that still match the recorded
+  installer-created identity. Replaced files are preserved and reported as
+  recovery conflicts.
+- Every installer-created directory records the same stable identity.
+  Rollback removes it only while that identity still matches and the directory
+  remains empty; replacements or external contents are preserved and reported.
+- Updates atomically move each current owned file into the private adjacent
+  backup before hashing. The hash is computed from backup bytes, so mutation
+  immediately before the move is detected.
+- Backup restore uses the same no-overwrite hard-link primitive. If an
+  external destination appears, both it and the private backup are preserved,
+  and the error identifies both paths and the required inspection action.
+- Existing commit, backup, cleanup, and rollback fault-injection tests were
+  migrated from replace-based assumptions to the hard-link transaction model.
+
+### Race coverage
+
+Real temporary filesystems and narrow operation hooks now verify:
+
+- replacement after hard-link creation but before identity verification;
+- replacement of an installed file immediately before rollback;
+- replacement of an installer-created native directory before cleanup;
+- mutation during the precheck-to-backup move window;
+- external destination creation during backup restore;
+- preservation and reporting of external bytes and private backups.
+
+### Final verification
+
+Focused command:
+
+```text
+python -m unittest tests.test_install -v
+```
+
+Result: exit code 0; 40 tests ran successfully.
+
+Complete-suite command:
+
+```text
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+Result: exit code 0; 155 tests ran successfully with the same 2 Windows
+symlink-privilege skips. `python -m compileall -q learning_tutor tests`
+completed with exit code 0.
+
+Two consecutive CLI builds again produced the deterministic hashes recorded
+above. No blocking concerns remain.

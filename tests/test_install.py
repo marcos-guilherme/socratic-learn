@@ -392,6 +392,105 @@ class InstallTests(unittest.TestCase):
                     )
                 )
 
+    def test_hard_link_identity_race_preserves_external_replacement(self) -> None:
+        plan = plan_install(self.source, self.project, "claude-code", False)
+        claude = self.project / "CLAUDE.md"
+        real_link = os.link
+
+        def replace_after_link(source, destination, *args, **kwargs):
+            real_link(source, destination, *args, **kwargs)
+            if Path(destination) == claude:
+                claude.unlink()
+                claude.write_bytes(b"external replacement")
+
+        with mock.patch(
+            "learning_tutor.install.os.link",
+            side_effect=replace_after_link,
+        ):
+            with self.assertRaises(FilesystemError) as raised:
+                apply_install(plan)
+
+        self.assertEqual(b"external replacement", claude.read_bytes())
+        self.assertFalse((self.project / ".learning-tutor").exists())
+        self.assertIn("CLAUDE.md", str(raised.exception))
+
+    def test_initial_rollback_unlinks_only_matching_installer_identity(self) -> None:
+        plan = plan_install(self.source, self.project, "cursor", False)
+        skill = self.project / ".cursor/skills/learning-tutor/SKILL.md"
+        install_module = __import__(
+            "learning_tutor.install",
+            fromlist=["_link_staged_file", "_rollback_initial"],
+        )
+        real_link_staged = install_module._link_staged_file
+        real_rollback = install_module._rollback_initial
+
+        def fail_after_external_link(source: Path, destination: Path):
+            linked = real_link_staged(source, destination)
+            if destination != skill:
+                raise OSError("injected failure after native link")
+            return linked
+
+        def replace_before_rollback(linked_files, created_directories):
+            skill.unlink()
+            skill.write_bytes(b"external before rollback")
+            return real_rollback(linked_files, created_directories)
+
+        with (
+            mock.patch(
+                "learning_tutor.install._link_staged_file",
+                side_effect=fail_after_external_link,
+            ),
+            mock.patch(
+                "learning_tutor.install._rollback_initial",
+                side_effect=replace_before_rollback,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        self.assertEqual(b"external before rollback", skill.read_bytes())
+        self.assertIn(str(skill), str(raised.exception))
+
+    def test_initial_rollback_preserves_replaced_created_directory(self) -> None:
+        plan = plan_install(self.source, self.project, "cursor", False)
+        native_directory = self.project / ".cursor/skills/learning-tutor"
+        external = native_directory / "external.txt"
+        install_module = __import__(
+            "learning_tutor.install",
+            fromlist=["_link_staged_file", "_rollback_initial"],
+        )
+        real_link_staged = install_module._link_staged_file
+        real_rollback = install_module._rollback_initial
+
+        def fail_after_native_link(source: Path, destination: Path):
+            linked = real_link_staged(source, destination)
+            if destination != native_directory / "SKILL.md":
+                raise OSError("injected failure after native link")
+            return linked
+
+        def replace_directory_before_rollback(linked_files, created_directories):
+            (native_directory / "SKILL.md").unlink()
+            native_directory.rmdir()
+            native_directory.mkdir()
+            external.write_bytes(b"external directory replacement")
+            return real_rollback(linked_files, created_directories)
+
+        with (
+            mock.patch(
+                "learning_tutor.install._link_staged_file",
+                side_effect=fail_after_native_link,
+            ),
+            mock.patch(
+                "learning_tutor.install._rollback_initial",
+                side_effect=replace_directory_before_rollback,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        self.assertEqual(b"external directory replacement", external.read_bytes())
+        self.assertIn(str(native_directory), str(raised.exception))
+
     def test_commit_time_empty_native_directory_races_abort(self) -> None:
         install_module = __import__("learning_tutor.install", fromlist=["_stage"])
         real_stage = install_module._stage
@@ -448,7 +547,7 @@ class InstallTests(unittest.TestCase):
             )
         )
 
-    def test_update_revalidates_owned_hash_immediately_before_backup(self) -> None:
+    def test_update_hashes_post_staging_backup_bytes(self) -> None:
         self._install()
         plan = plan_install(self.source, self.project, "generic", True)
         install_module = __import__("learning_tutor.install", fromlist=["_stage"])
@@ -476,6 +575,103 @@ class InstallTests(unittest.TestCase):
                 for path in self.project.iterdir()
             )
         )
+
+    def test_update_hashes_bytes_after_atomic_backup_move(self) -> None:
+        self._install()
+        plan = plan_install(self.source, self.project, "generic", True)
+        manifest = self.project / ".learning-tutor/manifest.json"
+        real_replace = os.replace
+        injected = False
+
+        def mutate_during_backup(source, destination):
+            nonlocal injected
+            source_path = Path(source)
+            destination_path = Path(destination)
+            if (
+                not injected
+                and source_path == manifest
+                and ".learning-tutor-backup-" in str(destination_path)
+            ):
+                injected = True
+                source_path.write_bytes(b"mutated during backup move")
+            real_replace(source_path, destination_path)
+
+        with mock.patch(
+            "learning_tutor.install.os.replace",
+            side_effect=mutate_during_backup,
+        ):
+            with self.assertRaises(IntegrityError):
+                apply_install(plan)
+
+        self.assertEqual(b"mutated during backup move", manifest.read_bytes())
+        self.assertFalse(
+            any(
+                path.name.startswith(
+                    (".learning-tutor-stage-", ".learning-tutor-backup-")
+                )
+                for path in self.project.iterdir()
+            )
+        )
+
+    def test_update_restore_preserves_external_destination_and_backup(self) -> None:
+        self._install()
+        plan = plan_install(self.source, self.project, "generic", True)
+        manifest = self.project / ".learning-tutor/manifest.json"
+        real_replace = os.replace
+        real_link = os.link
+        injected_backup_mutation = False
+        injected_restore_collision = False
+
+        def mutate_during_backup(source, destination):
+            nonlocal injected_backup_mutation
+            source_path = Path(source)
+            destination_path = Path(destination)
+            if (
+                not injected_backup_mutation
+                and source_path == manifest
+                and ".learning-tutor-backup-" in str(destination_path)
+            ):
+                injected_backup_mutation = True
+                source_path.write_bytes(b"mismatched backup bytes")
+            real_replace(source_path, destination_path)
+
+        def collide_during_restore(source, destination, *args, **kwargs):
+            nonlocal injected_restore_collision
+            source_path = Path(source)
+            destination_path = Path(destination)
+            if (
+                not injected_restore_collision
+                and ".learning-tutor-backup-" in str(source_path)
+                and destination_path == manifest
+            ):
+                injected_restore_collision = True
+                destination_path.write_bytes(b"external restore winner")
+            real_link(source, destination, *args, **kwargs)
+
+        with (
+            mock.patch(
+                "learning_tutor.install.os.replace",
+                side_effect=mutate_during_backup,
+            ),
+            mock.patch(
+                "learning_tutor.install.os.link",
+                side_effect=collide_during_restore,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        backups = [
+            path
+            for path in self.project.iterdir()
+            if path.name.startswith(".learning-tutor-backup-")
+        ]
+        self.assertEqual(b"external restore winner", manifest.read_bytes())
+        self.assertEqual(1, len(backups))
+        backup_manifest = backups[0] / ".learning-tutor/manifest.json"
+        self.assertEqual(b"mismatched backup bytes", backup_manifest.read_bytes())
+        self.assertIn(str(manifest), str(raised.exception))
+        self.assertIn(str(backup_manifest), str(raised.exception))
 
     def test_native_target_update_preserves_ownership_and_private_state(self) -> None:
         for target, skill_path in (
@@ -507,19 +703,21 @@ class InstallTests(unittest.TestCase):
 
     def test_native_initial_commit_failure_removes_created_target_directories(self) -> None:
         plan = plan_install(self.source, self.project, "cursor", False)
-        real_replace = os.replace
 
         def fail_native_move(
-            source: str | os.PathLike[str],
-            destination: str | os.PathLike[str],
-        ) -> None:
+            source: Path,
+            destination: Path,
+        ):
             if str(destination).endswith(
                 os.path.join(".cursor", "skills", "learning-tutor", "SKILL.md")
             ):
                 raise OSError("injected native move failure")
-            real_replace(source, destination)
+            raise AssertionError("native destination must be linked first")
 
-        with mock.patch("learning_tutor.install.os.replace", side_effect=fail_native_move):
+        with mock.patch(
+            "learning_tutor.install._link_staged_file",
+            side_effect=fail_native_move,
+        ):
             with self.assertRaises(FilesystemError):
                 apply_install(plan)
 
@@ -667,14 +865,11 @@ class InstallTests(unittest.TestCase):
         sentinel = self.project / "sentinel"
         sentinel.write_text("keep", encoding="utf-8")
         plan = plan_install(self.source, self.project, "generic", False)
-        real_replace = os.replace
 
-        def fail_commit(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
-            if ".learning-tutor-stage-" in str(source):
-                raise OSError("injected commit failure")
-            real_replace(source, destination)
-
-        with mock.patch("learning_tutor.install.os.replace", side_effect=fail_commit):
+        with mock.patch(
+            "learning_tutor.install._link_staged_file",
+            side_effect=OSError("injected commit failure"),
+        ):
             with self.assertRaises(FilesystemError):
                 apply_install(plan)
 
@@ -683,34 +878,35 @@ class InstallTests(unittest.TestCase):
 
     def test_initial_cleanup_failure_reports_locked_partial_tree(self) -> None:
         plan = plan_install(self.source, self.project, "generic", False)
-        real_replace = os.replace
-        real_remove = __import__(
+        install_module = __import__(
             "learning_tutor.install",
-            fromlist=["_remove_created_tree"],
-        )._remove_created_tree
-        moves = 0
+            fromlist=["_link_staged_file"],
+        )
+        real_link = install_module._link_staged_file
+        real_rmdir = Path.rmdir
+        links = 0
 
-        def fail_second_move(
-            source: str | os.PathLike[str],
-            destination: str | os.PathLike[str],
-        ) -> None:
-            nonlocal moves
-            if ".learning-tutor-stage-" in str(source):
-                moves += 1
-                if moves == 2:
-                    raise OSError("injected initial commit failure")
-            real_replace(source, destination)
+        def fail_second_link(source: Path, destination: Path):
+            nonlocal links
+            links += 1
+            if links == 2:
+                raise OSError("injected initial commit failure")
+            return real_link(source, destination)
 
         def lock_install_root(path: Path) -> None:
             if path == self.project / ".learning-tutor":
                 raise PermissionError("injected locked install path")
-            real_remove(path)
+            real_rmdir(path)
 
         with (
-            mock.patch("learning_tutor.install.os.replace", side_effect=fail_second_move),
             mock.patch(
-                "learning_tutor.install._remove_created_tree",
+                "learning_tutor.install._link_staged_file",
+                side_effect=fail_second_link,
+            ),
+            mock.patch(
+                "pathlib.Path.rmdir",
                 side_effect=lock_install_root,
+                autospec=True,
             ),
             self.assertRaises(FilesystemError) as raised,
         ):
@@ -753,18 +949,24 @@ class InstallTests(unittest.TestCase):
         before = self._snapshot()
         self._make_distribution(b"# Universal Learning Tutor\nProtocol: 1.0.0\nNew.\n")
         plan = plan_install(self.source, self.project, "generic", True)
-        real_replace = os.replace
+        install_module = __import__(
+            "learning_tutor.install",
+            fromlist=["_link_staged_file"],
+        )
+        real_link = install_module._link_staged_file
         committed = 0
 
-        def fail_commit(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+        def fail_commit(source: Path, destination: Path):
             nonlocal committed
-            if ".learning-tutor-stage-" in str(source) and ".learning-tutor" in str(destination):
-                committed += 1
-                if committed == 2:
-                    raise OSError("injected update commit failure")
-            real_replace(source, destination)
+            committed += 1
+            if committed == 2:
+                raise OSError("injected update commit failure")
+            return real_link(source, destination)
 
-        with mock.patch("learning_tutor.install.os.replace", side_effect=fail_commit):
+        with mock.patch(
+            "learning_tutor.install._link_staged_file",
+            side_effect=fail_commit,
+        ):
             with self.assertRaises(FilesystemError):
                 apply_install(plan)
 
@@ -777,18 +979,18 @@ class InstallTests(unittest.TestCase):
         plan = plan_install(self.source, self.project, "generic", True)
         install_module = __import__("learning_tutor.install", fromlist=["_project_path"])
         real_project_path = install_module._project_path
-        real_replace = os.replace
+        real_link = install_module._link_staged_file
         first_commit_completed = False
         injected = False
 
         def track_commit(
-            source: str | os.PathLike[str],
-            destination: str | os.PathLike[str],
-        ) -> None:
+            source: Path,
+            destination: Path,
+        ):
             nonlocal first_commit_completed
-            real_replace(source, destination)
-            if ".learning-tutor-stage-" in str(source):
-                first_commit_completed = True
+            linked = real_link(source, destination)
+            first_commit_completed = True
+            return linked
 
         def race_on_second_commit(project: Path, relative: str) -> Path:
             nonlocal injected
@@ -806,7 +1008,10 @@ class InstallTests(unittest.TestCase):
             return real_project_path(project, relative)
 
         with (
-            mock.patch("learning_tutor.install.os.replace", side_effect=track_commit),
+            mock.patch(
+                "learning_tutor.install._link_staged_file",
+                side_effect=track_commit,
+            ),
             mock.patch(
                 "learning_tutor.install._project_path",
                 side_effect=race_on_second_commit,
@@ -838,21 +1043,19 @@ class InstallTests(unittest.TestCase):
             encoding="utf-8",
         )
         plan = plan_install(self.source, self.project, "generic", True)
-        real_replace = os.replace
+        install_module = __import__(
+            "learning_tutor.install",
+            fromlist=["_link_staged_file"],
+        )
+        real_link_staged = install_module._link_staged_file
 
-        def fail_after_parent_creation(
-            source: str | os.PathLike[str],
-            destination: str | os.PathLike[str],
-        ) -> None:
-            if (
-                ".learning-tutor-stage-" in str(source)
-                and Path(destination).name == ".gitkeep"
-            ):
+        def fail_after_parent_creation(source: Path, destination: Path):
+            if destination.name == ".gitkeep":
                 raise OSError("injected commit failure after parent creation")
-            real_replace(source, destination)
+            return real_link_staged(source, destination)
 
         with mock.patch(
-            "learning_tutor.install.os.replace",
+            "learning_tutor.install._link_staged_file",
             side_effect=fail_after_parent_creation,
         ):
             with self.assertRaises(FilesystemError):
@@ -864,21 +1067,25 @@ class InstallTests(unittest.TestCase):
     def test_rollback_failure_keeps_backup_and_reports_recovery_path(self) -> None:
         self._install()
         plan = plan_install(self.source, self.project, "generic", True)
-        real_replace = os.replace
+        real_link = os.link
 
         def fail_commit_and_rollback(
             source: str | os.PathLike[str],
             destination: str | os.PathLike[str],
+            *args,
+            **kwargs,
         ) -> None:
             source_path = Path(source)
-            destination_path = Path(destination)
             if ".learning-tutor-stage-" in str(source_path):
                 raise OSError("injected commit failure")
             if ".learning-tutor-backup-" in str(source_path):
                 raise OSError("injected rollback failure")
-            real_replace(source_path, destination_path)
+            real_link(source, destination, *args, **kwargs)
 
-        with mock.patch("learning_tutor.install.os.replace", side_effect=fail_commit_and_rollback):
+        with mock.patch(
+            "learning_tutor.install.os.link",
+            side_effect=fail_commit_and_rollback,
+        ):
             with self.assertRaisesRegex(FilesystemError, "rollback") as raised:
                 apply_install(plan)
 
