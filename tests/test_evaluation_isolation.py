@@ -736,6 +736,8 @@ class ProtocolIdentityTests(unittest.TestCase):
             try:
                 self.assertFalse(layout.cwd.resolve().is_relative_to(root))
                 self.assertFalse(layout.cwd.resolve().is_relative_to(repository))
+                self.assertFalse(layout.home.resolve().is_relative_to(root))
+                self.assertFalse(layout.home.resolve().is_relative_to(repository))
                 self.assertEqual(
                     build_distribution(root).bundle,
                     layout.protocol.read_bytes(),
