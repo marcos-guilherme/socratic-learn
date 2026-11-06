@@ -8,12 +8,14 @@ import os
 import platform
 import shlex
 import shutil
-import socketserver
+import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +33,21 @@ RELEASE_BASE_URL = (
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:
         pass
+
+
+class QuietThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    def handle_error(
+        self,
+        request: object,
+        client_address: object,
+    ) -> None:
+        error = sys.exc_info()[1]
+        if isinstance(
+            error,
+            (BrokenPipeError, ConnectionAbortedError, ConnectionResetError),
+        ):
+            return
+        super().handle_error(request, client_address)
 
 
 @contextlib.contextmanager
@@ -57,7 +74,7 @@ def fixture_server(
     handler = lambda *args, **kwargs: FixtureHandler(  # noqa: E731
         *args, directory=str(directory), **kwargs
     )
-    with socketserver.TCPServer(("127.0.0.1", 0), handler) as server:
+    with QuietThreadingHTTPServer(("127.0.0.1", 0), handler) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
@@ -69,6 +86,20 @@ def fixture_server(
 
 class BootstrapInstallerTests(unittest.TestCase):
     payload = b"fixture executable bytes\n"
+
+    def test_fixture_server_handles_concurrent_connections(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "payload").write_bytes(self.payload)
+            with fixture_server(root) as base_url:
+                host, port_text = base_url.removeprefix("http://").split(":")
+                blocked = socket.create_connection((host, int(port_text)))
+                try:
+                    blocked.sendall(b"GET /blocked HTTP/1.1\r\nHost: fixture\r\n")
+                    with urlopen(f"{base_url}/payload", timeout=1) as response:
+                        self.assertEqual(self.payload, response.read())
+                finally:
+                    blocked.close()
 
     def test_installers_pin_canonical_release_locations(self) -> None:
         powershell = POWERSHELL_INSTALLER.read_text(encoding="utf-8")
@@ -173,6 +204,7 @@ class BootstrapInstallerTests(unittest.TestCase):
             "chmod",
             "mv",
             "mktemp",
+            "rmdir",
             "sha256sum",
             "shasum",
             "touch",
@@ -180,6 +212,20 @@ class BootstrapInstallerTests(unittest.TestCase):
             destination = isolated_path / command
             if command in replacements:
                 destination.write_text(replacements[command], encoding="utf-8")
+                destination.chmod(0o755)
+                continue
+            if command == "uname":
+                real_uname = shutil.which(command)
+                assert real_uname is not None
+                destination.write_text(
+                    "#!/bin/sh\n"
+                    'case "${1:-}" in\n'
+                    "    -m) printf '%s\\n' x86_64 ;;\n"
+                    f"    -s) printf '%s\\n' {shlex.quote(platform.system())} ;;\n"
+                    f"    *) exec {shlex.quote(real_uname)} \"$@\" ;;\n"
+                    "esac\n",
+                    encoding="utf-8",
+                )
                 destination.chmod(0o755)
                 continue
             source = shutil.which(command)
@@ -569,7 +615,7 @@ class BootstrapInstallerTests(unittest.TestCase):
         if shutil.which("sh") is None or shutil.which("curl") is None:
             self.skipTest("sh and curl are required for the POSIX installer test")
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve(strict=True)
             home = root / "home"
             home.mkdir()
             install_dir = root / (
@@ -577,8 +623,8 @@ class BootstrapInstallerTests(unittest.TestCase):
                 "$(touch PWNED) \\ end"
             )
             system = {"Linux": "linux", "Darwin": "macos"}.get(platform.system())
-            if system is None or platform.machine().lower() not in ("x86_64", "amd64"):
-                self.skipTest("POSIX execution test requires an x86-64 Linux or macOS host")
+            if system is None:
+                self.skipTest("POSIX execution test requires Linux or macOS")
             asset = f"socratic-{system}-x86_64"
             (root / asset).write_bytes(self.payload)
             digest = hashlib.sha256(self.payload).hexdigest()
@@ -650,15 +696,17 @@ class BootstrapInstallerTests(unittest.TestCase):
         if shutil.which("sh") is None:
             self.skipTest("sh is required for the POSIX installer test")
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve(strict=True)
             home = root / "home"
             home.mkdir()
+            isolated_path = self._isolated_posix_path(root)
             requests: list[str] = []
             with fixture_server(root, requests=requests) as base_url:
                 environment = os.environ.copy()
                 environment.update(
                     {
                         "HOME": str(home),
+                        "PATH": str(isolated_path),
                         "SOCRATIC_RELEASE_BASE_URL": base_url,
                         "SOCRATIC_INSTALL_DIR": str(root / "install"),
                     }
@@ -675,6 +723,45 @@ class BootstrapInstallerTests(unittest.TestCase):
             self.assertNotEqual(0, result.returncode)
             self.assertEqual([], requests)
             self.assertIn("Gatekeeper", result.stderr)
+
+    @unittest.skipIf(os.name == "nt", "POSIX installer executes only on POSIX")
+    def test_posix_rejects_unsupported_architecture_before_network(self) -> None:
+        if shutil.which("sh") is None:
+            self.skipTest("sh is required for the POSIX installer test")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve(strict=True)
+            fake_uname = (
+                "#!/bin/sh\n"
+                'case "${1:-}" in\n'
+                f"    -s) printf '%s\\n' {shlex.quote(platform.system())} ;;\n"
+                "    -m) printf '%s\\n' arm64 ;;\n"
+                "esac\n"
+            )
+            isolated_path = self._isolated_posix_path(
+                root,
+                overrides={"uname": fake_uname},
+            )
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "HOME": str(root / "home"),
+                    "PATH": str(isolated_path),
+                    "SOCRATIC_INSTALL_YES": "1",
+                    "SOCRATIC_INSTALL_DIR": str(root / "install"),
+                }
+            )
+
+            result = subprocess.run(
+                [shutil.which("sh") or "sh", str(POSIX_INSTALLER)],
+                capture_output=True,
+                text=True,
+                env=environment,
+                check=False,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("Only x86-64 is supported", result.stderr)
+            self.assertFalse((root / "install").exists())
 
     @unittest.skipIf(os.name == "nt", "POSIX installer executes only on POSIX")
     def test_posix_rejects_hostile_release_urls_before_network(self) -> None:
@@ -697,15 +784,17 @@ class BootstrapInstallerTests(unittest.TestCase):
             RELEASE_BASE_URL + "#fragment",
         )
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve(strict=True)
             home = root / "home"
             home.mkdir()
+            isolated_path = self._isolated_posix_path(root)
             for release_url in hostile_urls:
                 with self.subTest(release_url=release_url):
                     environment = os.environ.copy()
                     environment.update(
                         {
                             "HOME": str(home),
+                            "PATH": str(isolated_path),
                             "SOCRATIC_INSTALL_YES": "1",
                             "SOCRATIC_RELEASE_BASE_URL": release_url,
                             "SOCRATIC_INSTALL_DIR": str(root / "install"),
@@ -726,9 +815,10 @@ class BootstrapInstallerTests(unittest.TestCase):
         if shutil.which("sh") is None or shutil.which("curl") is None:
             self.skipTest("sh and curl are required for the POSIX installer test")
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve(strict=True)
             home = root / "home"
             home.mkdir()
+            isolated_path = self._isolated_posix_path(root)
             evil_requests: list[str] = []
             with fixture_server(root, requests=evil_requests) as evil_base:
                 hostile_redirect = evil_base.replace("http://", "http://localhost@")
@@ -738,6 +828,7 @@ class BootstrapInstallerTests(unittest.TestCase):
                     environment.update(
                         {
                             "HOME": str(home),
+                            "PATH": str(isolated_path),
                             "SOCRATIC_INSTALL_YES": "1",
                             "SOCRATIC_RELEASE_BASE_URL": trusted_base,
                             "SOCRATIC_INSTALL_DIR": str(root / "install"),
@@ -759,7 +850,7 @@ class BootstrapInstallerTests(unittest.TestCase):
         if shutil.which("sh") is None:
             self.skipTest("sh is required for the POSIX installer test")
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve(strict=True)
             home = root / "home"
             home.mkdir()
             calls = root / "curl-calls"
@@ -809,7 +900,7 @@ printf '302'
         if any(shutil.which(command) is None for command in required):
             self.skipTest("POSIX installer test dependencies are unavailable")
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve(strict=True)
             home = root / "home"
             home.mkdir()
             install_dir = root / "install"
@@ -817,19 +908,21 @@ printf '302'
             target = install_dir / "socratic"
             target.write_bytes(b"existing")
             system = {"Linux": "linux", "Darwin": "macos"}.get(platform.system())
-            if system is None or platform.machine().lower() not in ("x86_64", "amd64"):
-                self.skipTest("POSIX execution test requires an x86-64 Linux or macOS host")
+            if system is None:
+                self.skipTest("POSIX execution test requires Linux or macOS")
             asset = f"socratic-{system}-x86_64"
             (root / asset).write_bytes(self.payload)
             (root / "SHA256SUMS").write_text(
                 f"{'0' * 64}  {asset}\n", encoding="ascii"
             )
+            isolated_path = self._isolated_posix_path(root)
 
             with fixture_server(root) as base_url:
                 environment = os.environ.copy()
                 environment.update(
                     {
                         "HOME": str(home),
+                        "PATH": str(isolated_path),
                         "SOCRATIC_INSTALL_YES": "1",
                         "SOCRATIC_RELEASE_BASE_URL": base_url,
                         "SOCRATIC_INSTALL_DIR": str(install_dir),
@@ -845,6 +938,7 @@ printf '302'
                 )
 
             self.assertNotEqual(0, result.returncode)
+            self.assertIn("SHA-256 mismatch", result.stderr)
             self.assertEqual(b"existing", target.read_bytes())
             self.assertFalse((install_dir / "socratic.new").exists())
             self.assertFalse((home / ".socratic-learn" / "channel.json").exists())
@@ -856,7 +950,7 @@ printf '302'
             self.skipTest("POSIX installer test dependencies are unavailable")
         for reinstall in (False, True):
             with self.subTest(reinstall=reinstall), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
+                root = Path(temporary).resolve(strict=True)
                 home = root / "home"
                 home.mkdir()
                 install_dir = root / "install"
@@ -874,13 +968,8 @@ printf '302'
                     target.write_bytes(b"existing")
                     channel.write_bytes(previous_channel)
                 system = {"Linux": "linux", "Darwin": "macos"}.get(platform.system())
-                if system is None or platform.machine().lower() not in (
-                    "x86_64",
-                    "amd64",
-                ):
-                    self.skipTest(
-                        "POSIX execution test requires an x86-64 Linux or macOS host"
-                    )
+                if system is None:
+                    self.skipTest("POSIX execution test requires Linux or macOS")
                 asset = f"socratic-{system}-x86_64"
                 (root / asset).write_bytes(self.payload)
                 digest = hashlib.sha256(self.payload).hexdigest()

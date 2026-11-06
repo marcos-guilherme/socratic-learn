@@ -35,33 +35,34 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_personal_workspace_is_idempotent_and_preserves_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary) / "home"
+            home = Path(temporary).resolve(strict=True) / "home"
             first = prepare_personal_workspace(home)
             profile = first.records / "learner-profile.md"
             profile.write_text("private learner evidence\n", encoding="utf-8")
             second = prepare_personal_workspace(home)
             self.assertEqual(first, second)
             self.assertEqual("private learner evidence\n", profile.read_text("utf-8"))
-            self.assertEqual(home / "learning", second.root)
+            self.assertTrue((home / "learning").samefile(second.root))
             self.assertTrue((second.records / "learning-goal.md").is_file())
             self.assertTrue((second.records / "progress.md").is_file())
             self.assertTrue((second.records / "sessions").is_dir())
 
     def test_here_mode_reuses_existing_target_without_retargeting(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            project = Path(temporary) / "project"
+            project = Path(temporary).resolve(strict=True) / "project"
             project.mkdir()
             first = prepare_here_workspace(project)
             second = prepare_here_workspace(project)
             self.assertEqual(first.protocol, second.protocol)
-            self.assertEqual(
-                project / ".socratic-learn/socratic-learn.prompt.md",
-                second.protocol,
+            self.assertTrue(
+                (
+                    project / ".socratic-learn/socratic-learn.prompt.md"
+                ).samefile(second.protocol)
             )
 
     def test_here_mode_retains_existing_native_target(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            project = Path(temporary) / "project"
+            project = Path(temporary).resolve(strict=True) / "project"
             project.mkdir()
             with packaged_distribution_root() as source:
                 apply_install(plan_install(source, project, "cursor", False))
@@ -75,7 +76,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_workspace_preparation_does_not_print_installer_loader(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            project = Path(temporary) / "project"
+            project = Path(temporary).resolve(strict=True) / "project"
             project.mkdir()
             output = StringIO()
 
@@ -86,7 +87,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_personal_workspace_rejects_non_directory_home(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary) / "home"
+            home = Path(temporary).resolve(strict=True) / "home"
             home.write_text("not a directory", encoding="utf-8")
 
             with self.assertRaises(IntegrityError):
@@ -94,7 +95,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_existing_record_directory_is_rejected_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            project = Path(temporary) / "project"
+            project = Path(temporary).resolve(strict=True) / "project"
             project.mkdir()
             workspace = prepare_here_workspace(project)
             profile = workspace.records / "learner-profile.md"
@@ -109,11 +110,12 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_existing_record_symlink_is_rejected_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            project = Path(temporary) / "project"
+            root = Path(temporary).resolve(strict=True)
+            project = root / "project"
             project.mkdir()
             workspace = prepare_here_workspace(project)
             profile = workspace.records / "learner-profile.md"
-            outside = Path(temporary) / "outside.md"
+            outside = root / "outside.md"
             outside.write_text("external learner evidence\n", encoding="utf-8")
             profile.unlink()
             try:

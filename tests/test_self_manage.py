@@ -29,6 +29,10 @@ MANIFEST_URL = (
 )
 
 
+def canonical_temp_path(temporary: str) -> Path:
+    return Path(temporary).resolve(strict=True)
+
+
 def write_native_channel(
     home: Path,
     executable_path: Path,
@@ -72,11 +76,11 @@ def fake_artifact(artifact: ReleaseArtifact, destination: Path) -> Path:
 class InstallChannelTests(unittest.TestCase):
     def test_absent_channel_means_python_install(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            self.assertIsNone(load_install_channel(Path(temporary)))
+            self.assertIsNone(load_install_channel(canonical_temp_path(temporary)))
 
     def test_loads_exact_native_channel(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            home = canonical_temp_path(temporary)
             executable = home / "bin/socratic"
             executable.parent.mkdir()
             executable.write_bytes(b"old")
@@ -96,7 +100,7 @@ class InstallChannelTests(unittest.TestCase):
             {"manifest_url": ""},
         )
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            home = canonical_temp_path(temporary)
             executable = home / "socratic"
             executable.write_bytes(b"old")
             for overrides in cases:
@@ -118,7 +122,7 @@ class InstallChannelTests(unittest.TestCase):
 
     def test_rejects_symlinked_metadata_and_executable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = canonical_temp_path(temporary)
             executable = root / "socratic"
             executable.write_bytes(b"old")
             home = root / "home"
@@ -143,7 +147,7 @@ class InstallChannelTests(unittest.TestCase):
 
     def test_rejects_symlinked_executable_ancestor(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = canonical_temp_path(temporary)
             real_bin = root / "real-bin"
             real_bin.mkdir()
             executable = real_bin / "socratic"
@@ -161,7 +165,7 @@ class InstallChannelTests(unittest.TestCase):
 
     def test_rejects_launcher_home_through_symlinked_ancestor(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = canonical_temp_path(temporary)
             executable = root / "socratic"
             executable.write_bytes(b"old")
             real_parent = root / "real-parent"
@@ -181,7 +185,7 @@ class UpdateTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows helper policy runs on Windows")
     def test_windows_helper_ignores_hostile_cwd_and_path_powershell(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = canonical_temp_path(temporary)
             hostile = root / "powershell.exe"
             hostile.write_bytes(b"hostile executable")
             helper = root / "helper.ps1"
@@ -224,7 +228,7 @@ class UpdateTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows helper policy runs on Windows")
     def test_windows_helper_rejects_missing_trusted_powershell_before_spawn(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = canonical_temp_path(temporary)
             helper = root / "helper.ps1"
             helper.write_text("must remain", encoding="utf-8")
             popen = mock.Mock()
@@ -251,7 +255,7 @@ class UpdateTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows helper policy runs on Windows")
     def test_windows_helper_rejects_reparse_point_in_trusted_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = canonical_temp_path(temporary)
             real_root = root / "real-windows"
             powershell = (
                 real_root
@@ -301,7 +305,7 @@ class UpdateTests(unittest.TestCase):
 
     def test_python_install_reports_pipx_command_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            home = canonical_temp_path(temporary)
             marker = home / "marker"
             marker.write_text("unchanged", encoding="utf-8")
             messages: list[str] = []
@@ -316,7 +320,7 @@ class UpdateTests(unittest.TestCase):
 
     def test_native_executable_must_match_channel_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            home = canonical_temp_path(temporary)
             executable = home / "socratic"
             executable.write_bytes(b"old")
             write_native_channel(home, executable)
@@ -327,7 +331,7 @@ class UpdateTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows helper policy runs on Windows")
     def test_windows_update_rejects_missing_trusted_powershell_before_fetch(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            home = canonical_temp_path(temporary)
             executable = home / "bin/socratic.exe"
             executable.parent.mkdir()
             executable.write_bytes(b"old")
@@ -357,7 +361,7 @@ class UpdateTests(unittest.TestCase):
 
     def test_posix_update_replaces_verified_artifact_and_sets_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            home = canonical_temp_path(temporary)
             executable = home / "bin/socratic"
             executable.parent.mkdir()
             executable.write_bytes(b"old")
@@ -392,7 +396,7 @@ class UpdateTests(unittest.TestCase):
 
     def test_failed_native_replacement_preserves_old_executable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            home = canonical_temp_path(temporary)
             executable = home / "bin/socratic"
             executable.parent.mkdir()
             executable.write_bytes(b"old")
@@ -422,8 +426,9 @@ class UpdateTests(unittest.TestCase):
 
     def test_windows_helper_embeds_base64_paths_and_not_raw_paths(self) -> None:
         with tempfile.TemporaryDirectory(prefix="space's root ") as temporary:
-            home = Path(temporary) / "learner home"
-            executable = Path(temporary) / "bin's folder/socratic.exe"
+            root = canonical_temp_path(temporary)
+            home = root / "learner home"
+            executable = root / "bin's folder/socratic.exe"
             executable.parent.mkdir()
             executable.write_bytes(b"old")
             write_native_channel(home, executable)
@@ -445,6 +450,10 @@ class UpdateTests(unittest.TestCase):
                 mock.patch(
                     "socratic_learn.self_manage.subprocess.Popen",
                     side_effect=capture_popen,
+                ),
+                mock.patch(
+                    "socratic_learn.self_manage.trusted_windows_powershell",
+                    return_value=Path(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
                 ),
             ):
                 update_installation(
@@ -492,7 +501,7 @@ class UpdateTests(unittest.TestCase):
         if powershell is None:
             self.skipTest("Windows PowerShell is unavailable")
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = canonical_temp_path(temporary)
             destination = root / "socratic.exe"
             staged = root / "socratic.new.exe"
             helper = root / "replace.ps1"
@@ -596,8 +605,9 @@ class UninstallTests(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary) / "home"
-            executable = Path(temporary) / "bin/socratic.exe"
+            root = canonical_temp_path(temporary)
+            home = root / "home"
+            executable = root / "bin/socratic.exe"
             executable.parent.mkdir()
             executable.write_bytes(b"old")
             write_native_channel(home, executable)
@@ -627,7 +637,7 @@ class UninstallTests(unittest.TestCase):
 
     def test_python_install_reports_pipx_command_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            home = canonical_temp_path(temporary)
             marker = home / "marker"
             marker.write_text("unchanged", encoding="utf-8")
             messages: list[str] = []
@@ -647,7 +657,7 @@ class UninstallTests(unittest.TestCase):
 
     def test_uninstall_preserves_records_without_delete_data(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            home = canonical_temp_path(temporary)
             executable = home / "bin/socratic"
             executable.parent.mkdir()
             executable.write_bytes(b"old")
@@ -677,7 +687,7 @@ class UninstallTests(unittest.TestCase):
         )
         for answer in ("", "n", "sure"):
             with self.subTest(answer=answer), tempfile.TemporaryDirectory() as temporary:
-                home = Path(temporary)
+                home = canonical_temp_path(temporary)
                 executable = home / "socratic"
                 executable.write_bytes(b"old")
                 write_native_channel(home, executable)
@@ -702,8 +712,9 @@ class UninstallTests(unittest.TestCase):
     def test_confirmed_delete_data_removes_managed_home(self) -> None:
         for answer in ("y", "YES"):
             with self.subTest(answer=answer), tempfile.TemporaryDirectory() as temporary:
-                home = Path(temporary) / "home"
-                executable = Path(temporary) / "bin/socratic"
+                root = canonical_temp_path(temporary)
+                home = root / "home"
+                executable = root / "bin/socratic"
                 executable.parent.mkdir()
                 executable.write_bytes(b"old")
                 record = home / "workspace/progress.md"
@@ -727,7 +738,7 @@ class UninstallTests(unittest.TestCase):
 
     def test_uninstall_rejects_unrelated_metadata_before_any_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = canonical_temp_path(temporary)
             home = root / "home"
             home.mkdir()
             running = root / "running-socratic.exe"
