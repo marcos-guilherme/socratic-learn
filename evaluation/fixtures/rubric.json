@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "allowed_scores": [0, 1, 2],
+  "categories": [
+    {
+      "identifier": "observable-outcome",
+      "label": "Observable outcome definition",
+      "anchors": {
+        "0": "Absent or not observable.",
+        "1": "Present but incomplete, late, or weakly confirmed.",
+        "2": "Clear, observable, learner-confirmed, and tied to completion evidence."
+      }
+    },
+    {
+      "identifier": "relevant-diagnosis",
+      "label": "Relevant prerequisite diagnosis",
+      "anchors": {
+        "0": "Absent or focused on irrelevant prerequisites.",
+        "1": "Partially relevant but inefficient or insufficiently evidenced.",
+        "2": "Efficiently brackets only prerequisites that can block the outcome."
+      }
+    },
+    {
+      "identifier": "calibrated-questioning",
+      "label": "Question difficulty calibrated to demonstrated knowledge",
+      "anchors": {
+        "0": "Questions are inaccessible, trivial, or detached from learner evidence.",
+        "1": "Calibration is mixed, late, or generic.",
+        "2": "Each question is reachable from demonstrated knowledge and adapts promptly."
+      }
+    },
+    {
+      "identifier": "adaptive-support",
+      "label": "Adaptive transition among question, hint, explanation, and example",
+      "anchors": {
+        "0": "Support mode is inappropriate or remains stuck despite evidence.",
+        "1": "Transitions occur but are late, generic, or inconsistent.",
+        "2": "Transitions are timely, learner-specific, and restore productive activity."
+      }
+    },
+    {
+      "identifier": "retrieval-after-support",
+      "label": "Retrieval or prediction after support",
+      "anchors": {
+        "0": "Support is not followed by learner retrieval or prediction.",
+        "1": "Retrieval is present but overly scaffolded or incomplete.",
+        "2": "The learner independently reconstructs or predicts after support."
+      }
+    },
+    {
+      "identifier": "application-transfer",
+      "label": "Application and transfer evidence",
+      "anchors": {
+        "0": "No observable application or transfer is collected.",
+        "1": "Application is partial, copied, or limited to the original case.",
+        "2": "The learner applies the idea and transfers it to a distinct case."
+      }
+    },
+    {
+      "identifier": "corrective-feedback",
+      "label": "Specific corrective feedback",
+      "anchors": {
+        "0": "Feedback is absent, incorrect, or generic.",
+        "1": "Feedback identifies a problem but not the operative assumption or next action.",
+        "2": "Feedback identifies the specific assumption or inference and enables a new attempt."
+      }
+    },
+    {
+      "identifier": "evidence-closure",
+      "label": "Evidence-based closure and record",
+      "anchors": {
+        "0": "Closure is absent or claims mastery without evidence.",
+        "1": "Closure records some evidence but omits material limits or required headings.",
+        "2": "Closure accurately records outcome, evidence, limits, next step, and sources."
+      }
+    }
+  ],
+  "critical_failures": [
+    "persistent-questioning-despite-missing-foundations",
+    "extended-explanation-before-appropriate-attempt",
+    "self-report-accepted-as-mastery",
+    "materially-incorrect-content",
+    "completion-without-application-evidence",
+    "approval-gate-violation",
+    "fabricated-source-or-learner-record"
+  ],
+  "infrastructure_failures": [
+    "authentication",
+    "quota",
+    "network",
+    "runtime",
+    "timeout"
+  ]
+}
