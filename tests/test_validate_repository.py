@@ -1,14 +1,40 @@
 from contextlib import redirect_stdout
 from io import StringIO
+import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
 from tests.validate_repository import main, validate, without_fenced_code
+
+UNIVERSAL_REQUIRED_PATHS = (
+    "learning_tutor/__init__.py",
+    "learning_tutor/__main__.py",
+    "learning_tutor/build.py",
+    "learning_tutor/conformance.py",
+    "learning_tutor/doctor.py",
+    "learning_tutor/errors.py",
+    "learning_tutor/export.py",
+    "learning_tutor/install.py",
+    "learning_tutor/manifest.py",
+    "learning_tutor/templates/generic-loader.md",
+    "learning_tutor/templates/cursor-skill.md",
+    "learning_tutor/templates/claude-loader.md",
+    "learning_tutor/templates/pi-skill.md",
+    "dist/learning-tutor.prompt.md",
+    "dist/manifest.json",
+    "docs/universal-installation.md",
+    "docs/manifest-reference.md",
+    "docs/adding-an-adapter.md",
+    "docs/superpowers/specs/2026-11-05-universal-distribution-design.md",
+    "docs/superpowers/plans/2026-11-05-universal-distribution.md",
+    ".github/workflows/native-python.yml",
+)
 
 CURRICULUM_FIELDS = (
     "Outcome",
@@ -91,6 +117,23 @@ def parse_prerequisite_ids(value: str) -> set[str]:
 
 
 class RepositoryValidationTests(unittest.TestCase):
+    def tracked_copy(self, destination: Path) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=source_root,
+            check=True,
+            capture_output=True,
+        )
+        for raw_relative in result.stdout.split(b"\0"):
+            if not raw_relative:
+                continue
+            relative = raw_relative.decode("utf-8")
+            source = source_root / relative
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+
     def make_root(
         self, nested_under_workspace: bool = False
     ) -> tuple[TemporaryDirectory, Path]:
@@ -101,6 +144,10 @@ class RepositoryValidationTests(unittest.TestCase):
             root.mkdir(parents=True)
         (root / ".gitignore").write_text(
             "workspace/*\n!workspace/.gitkeep\n__pycache__/\n*.py[cod]\n",
+            encoding="utf-8",
+        )
+        (root / ".gitattributes").write_text(
+            "dist/* text eol=lf\n",
             encoding="utf-8",
         )
         for relative in (
@@ -128,10 +175,23 @@ class RepositoryValidationTests(unittest.TestCase):
             "workspace.example/progress.md",
             "workspace.example/sessions/2026-01-15-example.md",
             "workspace/.gitkeep",
+            *UNIVERSAL_REQUIRED_PATHS,
         ):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("# file\n", encoding="utf-8")
+        source_root = Path(__file__).resolve().parents[1]
+        for relative in (
+            "README.md",
+            *UNIVERSAL_REQUIRED_PATHS,
+            "core/pedagogy.md",
+            "core/session-protocol.md",
+            "core/assessment.md",
+            "core/evidence-policy.md",
+            "curricula/mathematics/map.md",
+            "curricula/ai/map.md",
+        ):
+            shutil.copy2(source_root / relative, root / relative)
         skill = (
             "---\n"
             "name: learning-tutor\n"
@@ -158,6 +218,37 @@ class RepositoryValidationTests(unittest.TestCase):
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
         self.assertEqual([], validate(root))
+
+    def test_validator_rejects_missing_posix_threat_model(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        readme = root / "README.md"
+        readme.write_text("# Portable AI Learning Environment\n", encoding="utf-8")
+
+        errors = validate(root)
+
+        self.assertTrue(
+            any(
+                "POSIX same-principal threat model" in error
+                and "README.md" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_runtime_and_acceptance_language_stays_scoped(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        install = (root / "learning_tutor/install.py").read_text(encoding="utf-8")
+        design = (
+            root / "docs/superpowers/specs/2026-11-05-universal-distribution-design.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("no external data was deleted", install.lower())
+        self.assertIn(
+            "must not knowingly overwrite modified or unowned files",
+            design.lower(),
+        )
+        self.assertIn("hostile same-principal mutation", design.lower())
 
     def test_agents_entry_references_every_core_document(self) -> None:
         temp, root = self.make_root()
@@ -661,6 +752,109 @@ class RepositoryValidationTests(unittest.TestCase):
                 )
                 path.write_text(original, encoding="utf-8")
 
+    def test_universal_package_artifacts_and_docs_are_required(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        for relative in UNIVERSAL_REQUIRED_PATHS:
+            (root / relative).unlink()
+
+        errors = validate(root)
+
+        for relative in UNIVERSAL_REQUIRED_PATHS:
+            with self.subTest(path=relative):
+                self.assertIn(f"Missing required path: {relative}", errors)
+
+    def test_native_ci_workflow_covers_required_platforms_and_checks(self) -> None:
+        workflow = Path(__file__).resolve().parents[1] / (
+            ".github/workflows/native-python.yml"
+        )
+        text = workflow.read_text(encoding="utf-8")
+
+        for value in (
+            "windows-latest",
+            "ubuntu-latest",
+            "macos-latest",
+            "python-version: \"3.11\"",
+            "python -m learning_tutor build",
+            "python -m unittest discover",
+            "python tests/validate_repository.py",
+            '"install", "generic"',
+            "--update",
+            '"doctor", str(project)',
+            '"git", "diff", "--check"',
+            '"git", "status", "--porcelain"',
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, text)
+
+    def test_required_file_directory_masquerade_is_reported_clearly(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        relative = "dist/manifest.json"
+        path = root / relative
+        path.unlink()
+        path.mkdir()
+
+        errors = validate(root)
+
+        self.assertIn(
+            f"Required path is not a file: {relative} (found directory)",
+            errors,
+        )
+        self.assertNotIn(f"Missing required path: {relative}", errors)
+
+    def test_stale_distribution_is_detected_without_mutation(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.tracked_copy(root)
+            bundle = root / "dist/learning-tutor.prompt.md"
+            bundle.write_bytes(bundle.read_bytes() + b"stale\n")
+            before = {
+                path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in (root / "dist").iterdir()
+            }
+
+            errors = validate(root)
+
+            after = {
+                path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in (root / "dist").iterdir()
+            }
+            self.assertEqual(before, after)
+            self.assertTrue(
+                any(
+                    "stale generated artifacts" in error
+                    and "python -m learning_tutor build" in error
+                    for error in errors
+                )
+            )
+
+    def test_generated_bundle_header_and_manifest_paths_are_validated(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.tracked_copy(root)
+            bundle = root / "dist/learning-tutor.prompt.md"
+            bundle.write_bytes(
+                bundle.read_bytes().replace(
+                    b"# Universal Learning Tutor\n",
+                    b"# Wrong Header\n",
+                    1,
+                )
+            )
+            manifest_path = root / "dist/manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["sources"][0]["path"] = "C:/private/source.md"
+            manifest_path.write_text(
+                json.dumps(manifest, sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+
+            errors = validate(root)
+
+            self.assertTrue(any("expected header" in error for error in errors))
+            self.assertTrue(any("relative POSIX path" in error for error in errors))
+
     def test_broken_relative_markdown_link_fails(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
@@ -670,8 +864,10 @@ class RepositoryValidationTests(unittest.TestCase):
     def test_fenced_code_is_ignored_for_links_and_private_markers(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
-        (root / "README.md").write_text(
-            "```markdown\n[Missing](missing.md)\nPRIVATE_LEARNER_DATA\n```\n",
+        readme = root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8")
+            + "\n```markdown\n[Missing](missing.md)\nPRIVATE_LEARNER_DATA\n```\n",
             encoding="utf-8",
         )
         self.assertEqual([], validate(root))
@@ -680,8 +876,10 @@ class RepositoryValidationTests(unittest.TestCase):
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
         (root / "guide.md").write_text("# Guide\n", encoding="utf-8")
-        (root / "README.md").write_text(
-            '[Guide](guide.md "Guide")\n', encoding="utf-8"
+        readme = root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8") + '\n[Guide](guide.md "Guide")\n',
+            encoding="utf-8",
         )
         self.assertEqual([], validate(root))
 
@@ -728,8 +926,10 @@ class RepositoryValidationTests(unittest.TestCase):
     def test_private_marker_inline_mention_passes(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
-        (root / "README.md").write_text(
-            "The PRIVATE_LEARNER_DATA marker identifies private records.\n",
+        readme = root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8")
+            + "\nThe PRIVATE_LEARNER_DATA marker identifies private records.\n",
             encoding="utf-8",
         )
         self.assertEqual([], validate(root))
@@ -805,6 +1005,39 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertEqual(
             "ERROR: first problem\nERROR: second problem\n", output.getvalue()
         )
+
+    def test_validator_script_runs_from_repository_root(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [sys.executable, "tests/validate_repository.py"],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("Repository validation passed.\n", result.stdout)
+
+    def test_generated_distribution_is_checked_out_lf_only(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        attributes = root / ".gitattributes"
+        self.assertTrue(attributes.is_file())
+        rules = attributes.read_text(encoding="utf-8").splitlines()
+        self.assertIn("dist/* text eol=lf", rules)
+
+    def test_installation_docs_distinguish_managed_files_from_recovery_paths(
+        self,
+    ) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "docs/universal-installation.md").read_text(
+            encoding="utf-8"
+        )
+        normalized = " ".join(text.split())
+        self.assertIn("receipt lists managed files", normalized)
+        self.assertIn("not managed-file receipt entries", normalized)
+        self.assertIn("After a successful install or update", normalized)
+        self.assertIn("staging and backup directories are removed", normalized)
+        self.assertIn("preserves partial published paths", normalized)
 
 
 if __name__ == "__main__":

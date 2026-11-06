@@ -1,0 +1,73 @@
+name: Native Python safety matrix
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build deterministic distribution
+        run: python -m learning_tutor build
+      - name: Run full unit suite
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+      - name: Validate repository
+        run: python tests/validate_repository.py
+      - name: Smoke install update and doctor
+        shell: python
+        run: |
+          import pathlib
+          import subprocess
+          import sys
+          import tempfile
+
+          root = pathlib.Path.cwd()
+          with tempfile.TemporaryDirectory() as temporary:
+              project = pathlib.Path(temporary) / "project"
+              project.mkdir()
+              command = [sys.executable, "-m", "learning_tutor"]
+              subprocess.run(
+                  [*command, "install", "generic", str(project)],
+                  cwd=root,
+                  check=True,
+              )
+              subprocess.run(
+                  [*command, "install", "generic", str(project), "--update"],
+                  cwd=root,
+                  check=True,
+              )
+              subprocess.run(
+                  [*command, "doctor", str(project)],
+                  cwd=root,
+                  check=True,
+              )
+      - name: Check generated diff and repository status
+        shell: python
+        run: |
+          import subprocess
+
+          subprocess.run(["git", "diff", "--check"], check=True)
+          subprocess.run(["git", "diff", "--exit-code"], check=True)
+          status = subprocess.run(
+              ["git", "status", "--porcelain", "--untracked-files=all"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout
+          if status:
+              raise SystemExit(f"repository is dirty after validation:\n{status}")
