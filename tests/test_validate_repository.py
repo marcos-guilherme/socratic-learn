@@ -290,9 +290,11 @@ class RepositoryValidationTests(unittest.TestCase):
         text = readme.read_text(encoding="utf-8")
         self.assertTrue(text.startswith("# Socratic Learn\n"))
         self.assertIn(
-            "A portable Socratic learning protocol for mathematics and AI.",
+            "A portable, evidence-aware Socratic protocol for learning anything.",
             text,
         )
+        self.assertIn("any subject or skill", text.lower())
+        self.assertIn("starter curricula", text.lower())
         headings = tuple(
             line for line in text.splitlines() if line.startswith("## ")
         )
@@ -310,6 +312,22 @@ class RepositoryValidationTests(unittest.TestCase):
         for command in README_WORKSPACE_COMMANDS:
             with self.subTest(command=command):
                 self.assertIn(command, text)
+
+    def test_validator_rejects_narrow_readme_positioning(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        readme = root / "README.md"
+        text = readme.read_text(encoding="utf-8")
+        text = text.replace(
+            "A portable, evidence-aware Socratic protocol for learning anything.",
+            "A portable Socratic learning protocol for mathematics and AI.",
+        ).replace("any subject or skill", "mathematics and AI")
+        readme.write_text(text, encoding="utf-8")
+
+        self.assertIn(
+            "Narrow product positioning in README.md",
+            validate(root),
+        )
 
     def test_repository_uses_mit_license(self) -> None:
         root = Path(__file__).resolve().parents[1]

@@ -72,6 +72,11 @@ SKILL_PATHS = (
     ".cursor/skills/socratic-learn/SKILL.md",
     "adapters/pi/skills/socratic-learn/SKILL.md",
 )
+README_POSITIONING_REQUIREMENTS = (
+    "A portable, evidence-aware Socratic protocol for learning anything.",
+    "any subject or skill",
+    "starter curricula",
+)
 ADAPTER_ROOTS = (".cursor", "adapters")
 LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 CANONICAL_RE = re.compile(
@@ -248,6 +253,15 @@ def validate(root: Path) -> list[str]:
             errors.append(
                 f"Required path is not a file: {relative} (found non-file)"
             )
+
+    readme = root / "README.md"
+    if readme.is_file():
+        readme_text = readme.read_text(encoding="utf-8")
+        if not all(
+            phrase.lower() in readme_text.lower()
+            for phrase in README_POSITIONING_REQUIREMENTS
+        ):
+            errors.append("Narrow product positioning in README.md")
 
     legacy_package = root / "learning_tutor"
     allowed_legacy_modules = {"__init__.py", "__main__.py"}

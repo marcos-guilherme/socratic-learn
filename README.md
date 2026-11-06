@@ -4,12 +4,17 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**A portable Socratic learning protocol for mathematics and AI.**
+**A portable, evidence-aware Socratic protocol for learning anything.**
 
-Socratic Learn gives compatible AI agents one evidence-aware method for
-teaching mathematics, machine learning, neural networks, transformers, and
-their prerequisites. It is a protocol and distribution toolkit—not an AI
-model or a separate chat application.
+Socratic Learn gives compatible AI agents one structured method for helping
+people learn any subject or skill—from conceptual domains to practical
+abilities. It turns goals into observable outcomes, diagnoses only relevant
+prerequisites, and adapts instruction from the learner's demonstrated
+understanding.
+
+Mathematics and AI are included as starter curricula and rigorous examples,
+not as limits on what the protocol can teach. Socratic Learn is a protocol and
+distribution toolkit—not an AI model or a separate chat application.
 
 ## What Socratic Learn provides
 
@@ -67,6 +72,12 @@ cp -R workspace.example/. workspace/
 ```
 
 Then ask your agent for an observable learning outcome, for example:
+
+```text
+I want to learn to write a persuasive policy brief well enough to produce and
+revise one for a real audience. First diagnose only the prerequisites needed
+for that outcome.
+```
 
 ```text
 I want to understand self-attention well enough to implement it with tensor
@@ -215,9 +226,18 @@ search provider, rendering service, persistent memory service, or agent
 runtime. Those capabilities belong to the selected host. The protocol defines
 fallbacks; it does not manufacture missing tools.
 
-The curriculum maps are dependency guides, not exhaustive courses. Support
-means the four installation and discovery paths satisfy this repository's
-contract; it does not certify every model or guarantee identical
+The bundled mathematics and AI maps are starter curricula, not the boundary
+of the protocol and not exhaustive courses. For another subject or skill, the
+agent constructs the smallest relevant dependency path from the learner's
+goal and available evidence.
+
+Universal protocol scope does not mean universal host knowledge. Reliability
+still depends on the selected model, available sources and tools, and the
+quality of evidence produced during the session. Socratic Learn does not
+guarantee mastery.
+
+Support means the four installation and discovery paths satisfy this
+repository's contract; it does not certify every model or guarantee identical
 interpretation.
 
 ## License
