@@ -40,6 +40,14 @@ UNIVERSAL_REQUIRED_PATHS = (
     "docs/superpowers/plans/2026-11-05-socratic-learn-rename.md",
     ".github/workflows/native-python.yml",
 )
+RELEASE_REQUIRED_PATHS = (
+    "pyproject.toml",
+    "release-manifest.schema.json",
+    "socratic-learn.spec",
+    "scripts/install.ps1",
+    "scripts/install.sh",
+    ".github/workflows/release.yml",
+)
 
 CURRICULUM_FIELDS = (
     "Outcome",
@@ -188,6 +196,7 @@ class RepositoryValidationTests(unittest.TestCase):
             "workspace.example/sessions/2026-01-15-example.md",
             "workspace/.gitkeep",
             *UNIVERSAL_REQUIRED_PATHS,
+            *RELEASE_REQUIRED_PATHS,
         ):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -196,6 +205,7 @@ class RepositoryValidationTests(unittest.TestCase):
         for relative in (
             "README.md",
             *UNIVERSAL_REQUIRED_PATHS,
+            *RELEASE_REQUIRED_PATHS,
             "core/pedagogy.md",
             "core/session-protocol.md",
             "core/assessment.md",
@@ -843,6 +853,111 @@ class RepositoryValidationTests(unittest.TestCase):
         for relative in UNIVERSAL_REQUIRED_PATHS:
             with self.subTest(path=relative):
                 self.assertIn(f"Missing required path: {relative}", errors)
+
+    def test_native_release_automation_contract(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        for relative in RELEASE_REQUIRED_PATHS:
+            with self.subTest(path=relative):
+                self.assertTrue((root / relative).is_file(), f"Missing {relative}")
+
+        pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn(
+            'socratic = "socratic_learn.cli:entry_point"',
+            pyproject,
+        )
+
+        release = (root / ".github/workflows/release.yml").read_text(
+            encoding="utf-8"
+        )
+        for value in (
+            'tags: ["v*"]',
+            "workflow_dispatch:",
+            "windows-latest",
+            "ubuntu-latest",
+            "macos-13",
+            "python-version: \"3.11\"",
+            "python -m unittest discover",
+            "python tests/validate_repository.py",
+            "python -m PyInstaller socratic-learn.spec",
+            "socratic --version",
+            "actions/download-artifact@v4",
+            "hashlib.sha256",
+            "release-manifest.schema.json",
+            "'  '",
+            "pypa/gh-action-pypi-publish@release/v1",
+            "environment: pypi",
+            "id-token: write",
+            "contents: write",
+            "scripts/install.ps1",
+            "scripts/install.sh",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, release)
+        self.assertLess(
+            release.index("python -m unittest discover"),
+            release.index("python -m PyInstaller socratic-learn.spec"),
+        )
+        self.assertIn(
+            "if: startsWith(github.ref, 'refs/tags/v')",
+            release,
+        )
+        self.assertIn("permissions:\n  contents: read", release)
+        self.assertEqual(1, release.count("contents: write"))
+        self.assertIn("github.ref_name", release)
+        self.assertIn("__version__", release)
+
+        normal = (root / ".github/workflows/native-python.yml").read_text(
+            encoding="utf-8"
+        )
+        install = 'python -m pip install -e ".[build]"'
+        wheel = "python -m build --wheel"
+        tests = "python -m unittest discover"
+        self.assertIn(install, normal)
+        self.assertIn(wheel, normal)
+        self.assertIn("socratic --version", normal)
+        self.assertLess(normal.index(install), normal.index(tests))
+        self.assertNotIn("PyInstaller", normal)
+
+    def test_release_paths_are_required_by_validator(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        for relative in RELEASE_REQUIRED_PATHS:
+            (root / relative).unlink()
+
+        errors = validate(root)
+
+        for relative in RELEASE_REQUIRED_PATHS:
+            with self.subTest(path=relative):
+                self.assertIn(f"Missing required path: {relative}", errors)
+
+    def test_release_workflow_safety_is_validated(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        release.write_text(
+            release.read_text(encoding="utf-8").replace(
+                "permissions:\n  contents: read",
+                "permissions:\n  contents: write",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        normal = root / ".github/workflows/native-python.yml"
+        normal.write_text(
+            normal.read_text(encoding="utf-8").replace(
+                'python -m pip install -e ".[build]"',
+                "python -m pip install -e .",
+            ),
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+
+        self.assertIn("Release workflow must default to contents: read", errors)
+        self.assertIn(
+            "Native safety matrix must install .[build] before tests",
+            errors,
+        )
 
     def test_native_ci_workflow_covers_required_platforms_and_checks(self) -> None:
         workflow = Path(__file__).resolve().parents[1] / (

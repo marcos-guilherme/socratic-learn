@@ -4,3 +4,12 @@ workspace/*
 __pycache__/
 *.py[cod]
 .pytest_cache/
+*.egg-info/
+
+/build/
+/build-native/
+/dist-native/
+/.dist-backup-*/
+/.dist-staging-*/
+/dist/*.whl
+/dist/*.tar.gz

@@ -67,6 +67,12 @@ REQUIRED_PATHS = (
     "docs/superpowers/specs/2026-11-05-socratic-learn-rename-design.md",
     "docs/superpowers/plans/2026-11-05-socratic-learn-rename.md",
     ".github/workflows/native-python.yml",
+    "pyproject.toml",
+    "release-manifest.schema.json",
+    "socratic-learn.spec",
+    "scripts/install.ps1",
+    "scripts/install.sh",
+    ".github/workflows/release.yml",
 )
 SKILL_PATHS = (
     ".cursor/skills/socratic-learn/SKILL.md",
@@ -243,6 +249,141 @@ def validate_distribution(root: Path) -> list[str]:
     return errors
 
 
+def workflow_job(text: str, name: str) -> str:
+    match = re.search(
+        rf"^  {re.escape(name)}:\n(?P<body>.*?)(?=^  [a-z0-9-]+:\n|\Z)",
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+    return match.group(0) if match else ""
+
+
+def validate_release_automation(root: Path) -> list[str]:
+    errors: list[str] = []
+    pyproject = root / "pyproject.toml"
+    if pyproject.is_file() and (
+        'socratic = "socratic_learn.cli:entry_point"'
+        not in pyproject.read_text(encoding="utf-8")
+    ):
+        errors.append("pyproject.toml must map the socratic console entry point")
+
+    spec = root / "socratic-learn.spec"
+    if spec.is_file():
+        spec_text = spec.read_text(encoding="utf-8")
+        required_spec_terms = (
+            "socratic_learn",
+            "learning_tutor",
+            "socratic_learn/data",
+            "manifest.json",
+            "socratic-learn.prompt.md",
+            "learner-profile.md",
+            "learning-goal.md",
+            "progress.md",
+            "session-log.md",
+            'name="socratic"',
+            "console=True",
+            '"git", "diff", "--exit-code"',
+            '"git", "status", "--porcelain"',
+        )
+        if not all(term in spec_text for term in required_spec_terms):
+            errors.append("PyInstaller spec does not preserve the native build contract")
+
+    release_path = root / ".github/workflows/release.yml"
+    if release_path.is_file():
+        release = release_path.read_text(encoding="utf-8")
+        if "permissions:\n  contents: read" not in release:
+            errors.append("Release workflow must default to contents: read")
+        if release.count("contents: write") != 1:
+            errors.append(
+                "Release workflow must grant contents: write only to GitHub publishing"
+            )
+        required_release_terms = (
+            'tags: ["v*"]',
+            "workflow_dispatch:",
+            "windows-latest",
+            "ubuntu-latest",
+            "macos-13",
+            "actions/download-artifact@v4",
+            "hashlib.sha256",
+            "release-manifest.schema.json",
+            "scripts/install.ps1",
+            "scripts/install.sh",
+        )
+        if not all(term in release for term in required_release_terms):
+            errors.append("Release workflow is missing required triggers or artifacts")
+
+        native = workflow_job(release, "native")
+        suite = "python -m unittest discover"
+        pyinstaller = "python -m PyInstaller socratic-learn.spec"
+        if (
+            not native
+            or suite not in native
+            or pyinstaller not in native
+            or native.index(suite) > native.index(pyinstaller)
+            or "python tests/validate_repository.py" not in native
+            or "--version" not in native
+        ):
+            errors.append(
+                "Every native release build must test and validate before PyInstaller"
+            )
+
+        manifest = workflow_job(release, "manifest")
+        if (
+            "actions/download-artifact@v4" not in manifest
+            or "hashlib.sha256" not in manifest
+            or manifest.index("actions/download-artifact@v4")
+            > manifest.index("hashlib.sha256")
+            or "path.stat().st_size" not in manifest
+            or "separator = '  '" not in manifest
+        ):
+            errors.append(
+                "Release manifest must hash downloaded native artifacts and use two spaces"
+            )
+
+        github_publish = workflow_job(release, "publish-github")
+        if (
+            "if: startsWith(github.ref, 'refs/tags/v')" not in github_publish
+            or "contents: write" not in github_publish
+        ):
+            errors.append("GitHub publishing must be tag-only with contents: write")
+
+        pypi_publish = workflow_job(release, "publish-pypi")
+        if (
+            "if: startsWith(github.ref, 'refs/tags/v')" not in pypi_publish
+            or "id-token: write" not in pypi_publish
+            or "environment: pypi" not in pypi_publish
+            or "pypa/gh-action-pypi-publish@release/v1" not in pypi_publish
+        ):
+            errors.append("PyPI publishing must use tag-only trusted publishing")
+
+        version_job = workflow_job(release, "verify-version")
+        if (
+            "github.ref_name" not in release
+            or "__version__" not in version_job
+            or "refs/tags/v" not in version_job
+        ):
+            errors.append("Release tags must exactly match the package version")
+
+    normal_path = root / ".github/workflows/native-python.yml"
+    if normal_path.is_file():
+        normal = normal_path.read_text(encoding="utf-8")
+        install = 'python -m pip install -e ".[build]"'
+        suite = "python -m unittest discover"
+        if (
+            install not in normal
+            or suite not in normal
+            or normal.index(install) > normal.index(suite)
+        ):
+            errors.append("Native safety matrix must install .[build] before tests")
+        if "python -m build --wheel" not in normal or "--version" not in normal:
+            errors.append(
+                "Native safety matrix must build and smoke-test an installed wheel"
+            )
+        if "PyInstaller" in normal:
+            errors.append("Native safety matrix must not run PyInstaller")
+    return errors
+
+
 def validate(root: Path) -> list[str]:
     errors: list[str] = []
 
@@ -413,6 +554,7 @@ def validate(root: Path) -> list[str]:
         errors.append("Tracked private learner files: " + ", ".join(tracked_private))
 
     errors.extend(validate_distribution(root))
+    errors.extend(validate_release_automation(root))
     return errors
 
 

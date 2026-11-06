@@ -6,12 +6,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
 
-from . import __version__
-from .__main__ import main as administrative_main
-from .errors import LearningTutorError, UsageError
-from .launcher import LaunchOptions, run_learning
-from .self_manage import uninstall, update_installation
-from .workspace import launcher_home
+from socratic_learn import __version__
+from socratic_learn.__main__ import main as administrative_main
+from socratic_learn.errors import LearningTutorError, UsageError
+from socratic_learn.launcher import LaunchOptions, run_learning
+from socratic_learn.self_manage import uninstall, update_installation
+from socratic_learn.workspace import launcher_home
 
 _ADMIN_COMMANDS = {"build", "export", "install", "doctor"}
 _SELF_COMMANDS = {"update", "uninstall"}

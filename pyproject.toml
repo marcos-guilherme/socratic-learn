@@ -46,6 +46,10 @@ include = [
   "/learning_tutor",
 ]
 
+[tool.hatch.build.targets.sdist.force-include]
+"dist/manifest.json" = "dist/manifest.json"
+"dist/socratic-learn.prompt.md" = "dist/socratic-learn.prompt.md"
+
 [tool.hatch.build.targets.wheel]
 packages = ["socratic_learn", "learning_tutor"]
 
