@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import sys
 import tempfile
 import uuid
@@ -25,6 +24,13 @@ from .manifest import (
     serialize_json,
     sha256_bytes,
     validate_manifest,
+)
+from .safe_fs import (
+    TrackedDirectory,
+    identity_bound_replace,
+    path_identity,
+    remove_tracked_tree,
+    track_directory,
 )
 
 
@@ -334,25 +340,56 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
     repository = _resolve_repository_root(root)
     dist = _dist_path(repository)
     stage: Path | None = None
+    stage_directory: TrackedDirectory | None = None
     backup = repository / f".dist-backup-{uuid.uuid4().hex}"
+    backup_directory: TrackedDirectory | None = None
     old_moved = False
     committed = False
     try:
         stage = Path(tempfile.mkdtemp(prefix=".dist-stage-", dir=repository))
+        stage_directory = track_directory(stage)
         _atomic_write(stage / "learning-tutor.prompt.md", result.bundle)
         _atomic_write(stage / "manifest.json", result.manifest)
         _validate_staged_distribution(stage, result)
 
         if dist.exists():
-            os.replace(dist, backup)
+            dist_identity = path_identity(dist)
+            identity_bound_replace(
+                dist,
+                backup,
+                root=repository,
+                expected_source=dist_identity,
+            )
             old_moved = True
-        os.replace(stage, dist)
+            backup_directory = track_directory(backup)
+        assert stage_directory is not None
+        identity_bound_replace(
+            stage,
+            dist,
+            root=repository,
+            expected_source=stage_directory.identity,
+        )
         committed = True
         stage = None
     except OSError as error:
         if old_moved:
+            if dist.exists() or dist.is_symlink():
+                raise FilesystemError(
+                    "distribution swap failed with an ambiguous destination; recovery state was preserved",
+                    path=dist,
+                    remediation=(
+                        f"preserve and inspect {dist} and {backup}; restore the old "
+                        "distribution only after establishing ownership"
+                    ),
+                ) from error
             try:
-                os.replace(backup, dist)
+                assert backup_directory is not None
+                identity_bound_replace(
+                    backup,
+                    dist,
+                    root=repository,
+                    expected_source=backup_directory.identity,
+                )
                 old_moved = False
             except OSError as rollback_error:
                 raise FilesystemError(
@@ -361,15 +398,33 @@ def write_distribution(root: Path, result: BuildResult) -> tuple[Path, Path]:
                     remediation=f"restore the old distribution from {backup.name}",
                 ) from rollback_error
         raise FilesystemError(
-            "distribution swap or staged artifact write failed; old distribution restored",
+            "distribution swap or staged artifact write failed; old distribution restored or recovery state preserved",
             path=dist,
-            remediation="check repository permissions and rebuild",
+            remediation=(
+                "check repository permissions and rebuild; preserve any reported "
+                "staging or backup path for recovery"
+            ),
         ) from error
     finally:
-        if stage is not None and stage.exists():
-            shutil.rmtree(stage, ignore_errors=True)
-        if committed and backup.exists():
-            shutil.rmtree(backup, ignore_errors=True)
+        cleanup_targets: list[TrackedDirectory] = []
+        if stage is not None and stage_directory is not None:
+            cleanup_targets.append(stage_directory)
+        if committed and backup_directory is not None:
+            cleanup_targets.append(backup_directory)
+        for directory in cleanup_targets:
+            if not directory.path.exists() and not directory.path.is_symlink():
+                continue
+            try:
+                remove_tracked_tree(directory)
+            except OSError as cleanup_error:
+                raise FilesystemError(
+                    "distribution state committed or preserved, but temporary cleanup was unsafe",
+                    path=directory.path,
+                    remediation=(
+                        f"preserve and inspect {directory.path}; remove it only after "
+                        "confirming its recorded operation ownership"
+                    ),
+                ) from cleanup_error
 
     bundle_path = dist / "learning-tutor.prompt.md"
     manifest_path = dist / "manifest.json"

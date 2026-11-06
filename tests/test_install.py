@@ -1095,6 +1095,40 @@ class InstallTests(unittest.TestCase):
         self.assertFalse((self.project / ".learning-tutor").exists())
         self.assertFalse(any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir()))
 
+    def test_staging_cleanup_preserves_raced_directory_replacement(self) -> None:
+        plan = plan_install(self.source, self.project, "generic", False)
+        detached = self.project / "detached-stage"
+        replacement: Path | None = None
+
+        def replace_stage_before_cleanup(directory):
+            nonlocal replacement
+            stage = directory.path
+            stage.rename(detached)
+            stage.mkdir()
+            replacement = stage
+            (stage / "external.txt").write_bytes(b"external stage replacement")
+
+        with (
+            mock.patch(
+                "learning_tutor.install._write_staged_file",
+                side_effect=OSError("injected staging failure"),
+            ),
+            mock.patch(
+                "learning_tutor.safe_fs._before_identity_cleanup",
+                side_effect=replace_stage_before_cleanup,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        assert replacement is not None
+        self.assertEqual(
+            b"external stage replacement",
+            (replacement / "external.txt").read_bytes(),
+        )
+        self.assertTrue(detached.is_dir())
+        self.assertIn(str(replacement), str(raised.exception))
+
     def test_staged_hash_mismatch_cleans_actual_stage_tree(self) -> None:
         plan = plan_install(self.source, self.project, "generic", False)
         bad_file = replace(plan.files[0], sha256="0" * 64)
@@ -1229,6 +1263,70 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(first_bytes, preserved.read_bytes())
         self.assertFalse(first_source.exists())
         self.assertIn(str(backups[0]), str(raised.exception))
+
+    def test_update_backup_move_binds_original_source_parent(self) -> None:
+        self._install()
+        plan = plan_install(self.source, self.project, "generic", True)
+        managed = self.project / ".learning-tutor"
+        detached = self.project / "detached-install"
+        manifest = managed / "manifest.json"
+        original = manifest.read_bytes()
+        injected = False
+
+        def replace_parent_before_backup(source, destination):
+            nonlocal injected
+            if (
+                not injected
+                and source == manifest
+                and ".learning-tutor-backup-" in str(destination)
+            ):
+                injected = True
+                managed.rename(detached)
+                managed.mkdir()
+                manifest.write_bytes(b"external backup race winner")
+
+        with (
+            mock.patch(
+                "learning_tutor.safe_fs._before_bound_replace",
+                side_effect=replace_parent_before_backup,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        self.assertEqual(b"external backup race winner", manifest.read_bytes())
+        self.assertEqual(original, (detached / "manifest.json").read_bytes())
+        self.assertIn("preserv", str(raised.exception).lower())
+
+    def test_parent_mkdir_binds_original_ancestor(self) -> None:
+        plan = plan_install(self.source, self.project, "cursor", False)
+        cursor = self.project / ".cursor"
+        detached = self.project / "detached-cursor"
+        injected = False
+
+        def replace_ancestor_before_mkdir(path: Path):
+            nonlocal injected
+            if not injected and path == cursor / "skills":
+                injected = True
+                cursor.rename(detached)
+                cursor.mkdir()
+                (cursor / "external.txt").write_bytes(b"external ancestor winner")
+
+        with (
+            mock.patch(
+                "learning_tutor.safe_fs._before_bound_mkdir",
+                side_effect=replace_ancestor_before_mkdir,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        self.assertEqual(
+            b"external ancestor winner",
+            (cursor / "external.txt").read_bytes(),
+        )
+        self.assertFalse((cursor / "skills").exists())
+        self.assertIn("preserv", str(raised.exception).lower())
 
     def test_update_commit_failure_preserves_partial_recovery_state(self) -> None:
         self._install()

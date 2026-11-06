@@ -499,6 +499,74 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(old_bytes[0], bundle_path.read_bytes())
         self.assertEqual(old_bytes[1], manifest_path.read_bytes())
 
+    def test_dist_swap_preserves_raced_directory_replacement(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        old_result = build_distribution(root)
+        write_distribution(root, old_result)
+        dist = root / "dist"
+        detached = root / "detached-dist"
+        injected = False
+
+        def replace_dist_before_backup(source, destination):
+            nonlocal injected
+            if (
+                not injected
+                and source == dist
+                and Path(destination).name.startswith(".dist-backup-")
+            ):
+                injected = True
+                dist.rename(detached)
+                dist.mkdir()
+                (dist / "external.txt").write_bytes(b"external dist winner")
+
+        with (
+            mock.patch(
+                "learning_tutor.safe_fs._before_bound_replace",
+                side_effect=replace_dist_before_backup,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            write_distribution(root, old_result)
+
+        self.assertEqual(b"external dist winner", (dist / "external.txt").read_bytes())
+        self.assertTrue((detached / "manifest.json").is_file())
+        self.assertIn("preserv", str(raised.exception).lower())
+
+    def test_dist_backup_cleanup_preserves_raced_replacement(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        result = build_distribution(root)
+        write_distribution(root, result)
+        detached = root / "detached-backup"
+        replacement: Path | None = None
+
+        def replace_backup_before_cleanup(directory):
+            nonlocal replacement
+            backup = directory.path
+            if backup.name.startswith(".dist-backup-"):
+                backup.rename(detached)
+                backup.mkdir()
+                replacement = backup
+                (backup / "external.txt").write_bytes(b"external backup winner")
+
+        with (
+            mock.patch(
+                "learning_tutor.safe_fs._before_identity_cleanup",
+                side_effect=replace_backup_before_cleanup,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            write_distribution(root, result)
+
+        assert replacement is not None
+        self.assertEqual(
+            b"external backup winner",
+            (replacement / "external.txt").read_bytes(),
+        )
+        self.assertTrue(detached.is_dir())
+        self.assertIn(str(replacement), str(raised.exception))
+
     def test_export_prompt_writes_exact_validated_bundle(self) -> None:
         temporary, root = self.make_repository()
         self.addCleanup(temporary.cleanup)

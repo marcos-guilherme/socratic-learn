@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import stat
 import sys
 import tempfile
@@ -21,6 +20,17 @@ from .errors import (
     UsageError,
 )
 from .manifest import serialize_json, sha256_bytes, validate_manifest
+from .safe_fs import (
+    ParentIdentity,
+    PathIdentity,
+    TrackedDirectory,
+    identity_bound_mkdir,
+    identity_bound_replace,
+    path_identity,
+    remove_tracked_tree,
+    status_identity,
+    track_directory,
+)
 
 
 INSTALL_ROOT = ".learning-tutor"
@@ -90,16 +100,7 @@ class InstallPlan:
     emitted_snippet: str | None = None
 
 
-@dataclass(frozen=True)
-class PathIdentity:
-    device: int
-    inode: int
-
-
-@dataclass(frozen=True)
-class CreatedDirectory:
-    path: Path
-    identity: PathIdentity
+CreatedDirectory = TrackedDirectory
 
 
 @dataclass(frozen=True)
@@ -108,12 +109,6 @@ class LinkedFile:
     identity: PathIdentity
     project: Path
     parent_chain: tuple[ParentIdentity, ...]
-
-
-@dataclass(frozen=True)
-class ParentIdentity:
-    path: Path
-    identity: PathIdentity
 
 
 @dataclass(frozen=True)
@@ -589,20 +584,22 @@ def _write_staged_file(path: Path, content: bytes) -> None:
         os.fsync(stream.fileno())
 
 
-def _remove_created_tree(path: Path) -> None:
+def _remove_created_tree(directory: TrackedDirectory) -> None:
     """Remove one operation-created tree, surfacing Windows lock failures."""
 
-    shutil.rmtree(path)
+    remove_tracked_tree(directory)
 
 
-def _cleanup_created_trees(paths: list[Path]) -> list[tuple[Path, OSError]]:
+def _cleanup_created_trees(
+    directories: list[TrackedDirectory],
+) -> list[tuple[Path, OSError]]:
     failures: list[tuple[Path, OSError]] = []
-    for path in paths:
+    for directory in directories:
         try:
-            if path.exists() or path.is_symlink():
-                _remove_created_tree(path)
+            if directory.path.exists() or directory.path.is_symlink():
+                _remove_created_tree(directory)
         except OSError as error:
-            failures.append((path, error))
+            failures.append((directory.path, error))
     return failures
 
 
@@ -657,7 +654,7 @@ def _ensure_parent_directories(
         )
     for directory in reversed(missing):
         try:
-            directory.mkdir()
+            created_directory = identity_bound_mkdir(directory, root=stop)
         except FileExistsError as error:
             if directory.is_symlink() or not directory.is_dir():
                 raise IntegrityError(
@@ -666,14 +663,11 @@ def _ensure_parent_directories(
                     remediation="remove the conflicting path and retry",
                 ) from error
         else:
-            created.append(
-                CreatedDirectory(directory, _path_identity(directory))
-            )
+            created.append(created_directory)
 
 
 def _path_identity(path: Path) -> PathIdentity:
-    status = path.stat(follow_symlinks=False)
-    return PathIdentity(status.st_dev, status.st_ino)
+    return path_identity(path)
 
 
 def _has_identity(path: Path, identity: PathIdentity) -> bool:
@@ -684,7 +678,7 @@ def _has_identity(path: Path, identity: PathIdentity) -> bool:
 
 
 def _status_identity(status: os.stat_result) -> PathIdentity:
-    return PathIdentity(status.st_dev, status.st_ino)
+    return status_identity(status)
 
 
 def _is_reparse_or_symlink(status: os.stat_result) -> bool:
@@ -911,19 +905,17 @@ def _prepare_destination_parent(
             created=created_directories,
         )
         try:
-            native_directory.mkdir()
+            created_directory = identity_bound_mkdir(
+                native_directory,
+                root=plan.project,
+            )
         except FileExistsError as error:
             raise CollisionError(
                 "native skill destination directory appeared after planning",
                 path=native_directory,
                 remediation="preserve the new directory and create a new plan",
             ) from error
-        created_directories.append(
-            CreatedDirectory(
-                native_directory,
-                _path_identity(native_directory),
-            )
-        )
+        created_directories.append(created_directory)
     else:
         _ensure_parent_directories(
             destination,
@@ -1041,12 +1033,14 @@ def _verify_plan_still_safe(plan: InstallPlan) -> None:
             )
 
 
-def _stage(plan: InstallPlan) -> tuple[Path, Path]:
+def _stage(plan: InstallPlan) -> tuple[Path, Path, TrackedDirectory]:
     stage: Path | None = None
+    stage_directory: TrackedDirectory | None = None
     try:
         stage = Path(
             tempfile.mkdtemp(prefix=".learning-tutor-stage-", dir=plan.project)
         )
+        stage_directory = track_directory(stage)
         staged_install = stage / INSTALL_ROOT
         for planned in plan.files:
             staged_path = stage.joinpath(*PurePosixPath(planned.path).parts)
@@ -1059,10 +1053,12 @@ def _stage(plan: InstallPlan) -> tuple[Path, Path]:
                     path=planned.path,
                     remediation="check the filesystem and retry",
                 )
-        return stage, staged_install
+        return stage, staged_install, stage_directory
     except (LearningTutorError, OSError) as error:
         cleanup_failures = (
-            _cleanup_created_trees([stage]) if stage is not None else []
+            _cleanup_created_trees([stage_directory])
+            if stage_directory is not None
+            else []
         )
         if cleanup_failures:
             raise _combined_cleanup_error(
@@ -1079,7 +1075,12 @@ def _stage(plan: InstallPlan) -> tuple[Path, Path]:
         ) from error
 
 
-def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
+def _apply_initial(
+    plan: InstallPlan,
+    stage: Path,
+    staged_install: Path,
+    stage_directory: TrackedDirectory,
+) -> None:
     target = plan.project / INSTALL_ROOT
     linked_files: list[LinkedFile] = []
     created_directories: list[CreatedDirectory] = []
@@ -1091,7 +1092,10 @@ def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None
             )
             if destination.is_relative_to(target) and not target_recorded:
                 try:
-                    target.mkdir()
+                    target_directory = identity_bound_mkdir(
+                        target,
+                        root=plan.project,
+                    )
                 except FileExistsError as error:
                     raise CollisionError(
                         "installation path appeared after staging",
@@ -1100,9 +1104,7 @@ def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None
                             "preserve the new path and create a new installation plan"
                         ),
                     ) from error
-                created_directories.append(
-                    CreatedDirectory(target, _path_identity(target))
-                )
+                created_directories.append(target_directory)
             _prepare_destination_parent(
                 plan,
                 planned,
@@ -1128,7 +1130,7 @@ def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None
                 published=published,
                 stage=stage,
             ) from error
-        cleanup_failures = _cleanup_created_trees([stage])
+        cleanup_failures = _cleanup_created_trees([stage_directory])
         if cleanup_failures:
             raise _combined_cleanup_error(
                 "pre-publication installation and staging cleanup failed",
@@ -1142,7 +1144,7 @@ def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None
             path=target,
             remediation="check for a new path or permission problem and retry",
         ) from error
-    cleanup_failures = _cleanup_created_trees([stage])
+    cleanup_failures = _cleanup_created_trees([stage_directory])
     if cleanup_failures:
         raise _combined_cleanup_error(
             "installation committed but staging cleanup failed",
@@ -1150,8 +1152,14 @@ def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None
         )
 
 
-def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
+def _apply_update(
+    plan: InstallPlan,
+    stage: Path,
+    staged_install: Path,
+    stage_directory: TrackedDirectory,
+) -> None:
     backup: Path | None = None
+    backup_directory: TrackedDirectory | None = None
     backup_may_contain_unrecorded_data = False
     uncertain_source: Path | None = None
     uncertain_backup: Path | None = None
@@ -1162,6 +1170,7 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
         backup = Path(
             tempfile.mkdtemp(prefix=".learning-tutor-backup-", dir=plan.project)
         )
+        backup_directory = track_directory(backup)
         assert plan.previous_receipt is not None
         replacement_paths = {planned.path for planned in plan.files}
         expected_hashes = _expected_existing_hashes(plan)
@@ -1170,11 +1179,21 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
                 continue
             source = _project_path(plan.project, relative)
             destination = backup.joinpath(*PurePosixPath(relative).parts)
-            destination.parent.mkdir(parents=True, exist_ok=True)
+            _ensure_parent_directories(
+                destination,
+                stop=backup,
+                created=[],
+            )
+            source_identity = _path_identity(source)
             backup_may_contain_unrecorded_data = True
             uncertain_source = source
             uncertain_backup = destination
-            os.replace(source, destination)
+            identity_bound_replace(
+                source,
+                destination,
+                root=plan.project,
+                expected_source=source_identity,
+            )
             backed = BackupFile(
                 relative,
                 destination,
@@ -1201,7 +1220,7 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
             linked_files.append(_link_staged_file(source, destination))
     except (LearningTutorError, OSError) as error:
         if backup is None:
-            cleanup_failures = _cleanup_created_trees([stage])
+            cleanup_failures = _cleanup_created_trees([stage_directory])
             if cleanup_failures:
                 raise _combined_cleanup_error(
                     "update backup creation and staging cleanup failed",
@@ -1251,7 +1270,10 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
                 backup=backup,
                 conflicts=conflicts,
             ) from error
-        cleanup_failures = _cleanup_created_trees([backup, stage])
+        assert backup_directory is not None
+        cleanup_failures = _cleanup_created_trees(
+            [backup_directory, stage_directory]
+        )
         if cleanup_failures:
             raise _combined_cleanup_error(
                 "pre-publication update restoration and cleanup failed",
@@ -1268,7 +1290,10 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
             path=plan.project / INSTALL_ROOT,
             remediation="check project permissions and retry",
         ) from error
-    cleanup_failures = _cleanup_created_trees([backup, stage])
+    assert backup_directory is not None
+    cleanup_failures = _cleanup_created_trees(
+        [backup_directory, stage_directory]
+    )
     if cleanup_failures:
         raise _combined_cleanup_error(
             "update committed but temporary cleanup failed",
@@ -1280,11 +1305,11 @@ def apply_install(plan: InstallPlan) -> None:
     """Apply a validated plan transactionally."""
 
     _verify_plan_still_safe(plan)
-    stage, staged_install = _stage(plan)
+    stage, staged_install, stage_directory = _stage(plan)
     if plan.update:
-        _apply_update(plan, stage, staged_install)
+        _apply_update(plan, stage, staged_install, stage_directory)
     else:
-        _apply_initial(plan, stage, staged_install)
+        _apply_initial(plan, stage, staged_install, stage_directory)
 
 
 def install(
