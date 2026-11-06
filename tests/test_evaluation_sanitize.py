@@ -176,10 +176,16 @@ class EvaluationSanitizeTests(unittest.TestCase):
                 dest = root / "out.bin"
                 with self.assertRaises(OSError):
                     write_private(dest, b"data", private_root=root)
-        mk_fd = captured["fd"]
-        tmp_path = str(captured["path"])
-        self.assertIn(mk_fd, close_calls)
-        self.assertFalse(os.path.lexists(tmp_path))
+                tmp_path = str(captured["path"])
+                mk_fd = captured["fd"]
+                self.assertIn(mk_fd, close_calls)
+                self.assertFalse(os.path.lexists(tmp_path))
+                parent = Path(tmp_path).parent.resolve()
+                self.assertEqual(parent, root)
+                self.assertFalse(
+                    any(n.name.startswith(".private_write_") for n in parent.iterdir()),
+                    f"unexpected temp in {parent}: {list(parent.iterdir())}",
+                )
 
     @patch("evaluation.sanitize.os.replace")
     def test_write_private_cleans_temp_on_replace_failure(self, mock_replace: object) -> None:
@@ -201,9 +207,16 @@ class EvaluationSanitizeTests(unittest.TestCase):
             with patch.object(sanitize_module.tempfile, "mkstemp", side_effect=capture_mkstemp):
                 with self.assertRaises(OSError):
                     write_private(dest, b"payload", private_root=root)
-        self.assertEqual(1, len(tmp_paths))
-        self.assertFalse(os.path.lexists(tmp_paths[0]))
-        self.assertFalse(dest.exists())
+            self.assertEqual(1, len(tmp_paths))
+            tmp_path = Path(tmp_paths[0]).resolve()
+            self.assertFalse(os.path.lexists(tmp_path))
+            self.assertEqual(tmp_path.parent, root)
+            self.assertFalse(
+                any(n.name.startswith(".private_write_") for n in root.iterdir()),
+                f"unexpected temp in {root}: {list(root.iterdir())}",
+            )
+            self.assertFalse(dest.exists())
+            self.assertEqual(list(root.iterdir()), [])
 
     @unittest.skipUnless(_symlinks_supported(), "symlinks unavailable")
     def test_resolves_symlink_escape_rejected(self) -> None:
