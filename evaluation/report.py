@@ -49,6 +49,19 @@ _FINDING_CLASSES = {
 }
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 _EVIDENCE_REFERENCE = re.compile(r"^([a-z][a-z0-9]*(?:-[a-z0-9]+)*):([1-9][0-9]*)$")
+_TOTAL_LINE = re.compile(r"^- Total: ([0-9]+)/([1-9][0-9]*)$")
+_CATEGORY_LINE = re.compile(
+    r"^  - ([a-z][a-z0-9]*(?:-[a-z0-9]+)*): ([0-2])/2$"
+)
+_TURN_LIST = re.compile(r"^[1-9][0-9]*(?:, [1-9][0-9]*)*$")
+_EVIDENCE_HEADING = re.compile(r"^### Evidence turn ([1-9][0-9]*)$")
+_LIMITATION_LINE = re.compile(
+    r"^- ([a-z][a-z0-9]*(?:-[a-z0-9]+)*): user-home rule paths: (.+); "
+    r"above-home markers: (.+)$"
+)
+_ABOVE_HOME_MARKER = re.compile(
+    r"^([^,]+) \(([1-9][0-9]*) (level|levels) above home\)$"
+)
 _APPROVED_RESEARCH_PATHS = {
     "/papers/details/0adf25e68b4d552aa18c5d2ea631170e/",
     "/papers/details/779761ae76575793a1f13ff9502ee816/",
@@ -384,6 +397,212 @@ def render_baseline_report(
     return text
 
 
+def _require_prefixed(line: str, prefix: str, label: str, *, allow_empty: bool = False) -> str:
+    if not line.startswith(prefix):
+        raise ValueError(f"baseline report {label} is malformed")
+    value = line.removeprefix(prefix)
+    if not allow_empty and not value:
+        raise ValueError(f"baseline report {label} is empty")
+    return value
+
+
+def _validate_identity_section(lines: list[str]) -> None:
+    if lines == ["- No run records.", ""]:
+        return
+    prefixes = (
+        "- Suite ID: ",
+        "- Repository commit: ",
+        "- Protocol version: ",
+        "- Protocol SHA-256: ",
+        "- Runtime: ",
+        "- Runtime version: ",
+        "- Model: ",
+    )
+    if len(lines) != len(prefixes) + 1 or lines[-1] != "":
+        raise ValueError("baseline report evaluation identity is malformed")
+    for line, prefix in zip(lines[:-1], prefixes, strict=True):
+        _require_prefixed(line, prefix, "evaluation identity")
+
+
+def _validate_scenario_section(lines: list[str]) -> None:
+    if lines == [""]:
+        return
+    index = 0
+    while index < len(lines):
+        scenario_id = _require_prefixed(lines[index], "### ", "scenario heading")
+        if _IDENTIFIER.fullmatch(scenario_id) is None or scenario_id.startswith("Evidence turn "):
+            raise ValueError("baseline report scenario heading is malformed")
+        index += 1
+        if index + 2 >= len(lines):
+            raise ValueError("baseline report scenario result is incomplete")
+        _require_prefixed(lines[index], "- Run ID: ", "run ID")
+        index += 1
+        _require_prefixed(lines[index], "- Stop reason: ", "stop reason")
+        index += 1
+
+        if lines[index].startswith("- Infrastructure failure: "):
+            _require_prefixed(
+                lines[index],
+                "- Infrastructure failure: ",
+                "infrastructure failure",
+            )
+            index += 1
+            if index >= len(lines) or lines[index] != "- Score: not assigned":
+                raise ValueError("baseline report infrastructure score is malformed")
+            index += 1
+            if index >= len(lines) or lines[index] != "":
+                raise ValueError("baseline report infrastructure result is malformed")
+            index += 1
+            continue
+
+        total_match = _TOTAL_LINE.fullmatch(lines[index])
+        if total_match is None:
+            raise ValueError("baseline report scenario total is malformed")
+        total = int(total_match.group(1))
+        maximum = int(total_match.group(2))
+        index += 1
+        if index >= len(lines) or lines[index] != "- Category scores:":
+            raise ValueError("baseline report category scores are malformed")
+        index += 1
+
+        category_count = 0
+        category_total = 0
+        referenced_turns: set[int] = set()
+        category_ids: set[str] = set()
+        while index < len(lines):
+            category_match = _CATEGORY_LINE.fullmatch(lines[index])
+            if category_match is None:
+                break
+            category_id = category_match.group(1)
+            if category_id in category_ids:
+                raise ValueError("baseline report repeats a category")
+            category_ids.add(category_id)
+            category_count += 1
+            category_total += int(category_match.group(2))
+            index += 1
+            if index + 1 >= len(lines):
+                raise ValueError("baseline report category is incomplete")
+            _require_prefixed(lines[index], "    - Rationale: ", "category rationale")
+            index += 1
+            evidence = _require_prefixed(
+                lines[index],
+                "    - Evidence turns: ",
+                "category evidence",
+            )
+            if _TURN_LIST.fullmatch(evidence) is None:
+                raise ValueError("baseline report category evidence is malformed")
+            referenced_turns.update(int(turn) for turn in evidence.split(", "))
+            index += 1
+        if category_count == 0 or total != category_total or maximum != category_count * 2:
+            raise ValueError("baseline report scenario score is inconsistent")
+        if index >= len(lines):
+            raise ValueError("baseline report scenario result is incomplete")
+        _require_prefixed(
+            lines[index],
+            "- Critical failures: ",
+            "critical failures",
+        )
+        index += 1
+        if index >= len(lines) or lines[index] != "":
+            raise ValueError("baseline report scenario score is malformed")
+        index += 1
+
+        quoted_turns: set[int] = set()
+        while index < len(lines):
+            evidence_match = _EVIDENCE_HEADING.fullmatch(lines[index])
+            if evidence_match is None:
+                break
+            turn = int(evidence_match.group(1))
+            if turn in quoted_turns:
+                raise ValueError("baseline report repeats an evidence quotation")
+            quoted_turns.add(turn)
+            index += 1
+            if index + 2 >= len(lines):
+                raise ValueError("baseline report evidence quotation is incomplete")
+            _require_prefixed(lines[index], "> Learner: ", "learner quotation")
+            index += 1
+            _require_prefixed(lines[index], "> Tutor: ", "tutor quotation")
+            index += 1
+            if lines[index] != "":
+                raise ValueError("baseline report evidence quotation is malformed")
+            index += 1
+        if quoted_turns != referenced_turns:
+            raise ValueError("baseline report quotations do not match score evidence")
+
+
+def _validate_findings_section(lines: list[str]) -> None:
+    if lines == ["- None.", ""]:
+        return
+    index = 0
+    while index < len(lines):
+        identifier = _require_prefixed(lines[index], "### ", "finding heading")
+        if _IDENTIFIER.fullmatch(identifier) is None:
+            raise ValueError("baseline report finding heading is malformed")
+        index += 1
+        if index + 5 >= len(lines):
+            raise ValueError("baseline report finding is incomplete")
+        classification = _require_prefixed(
+            lines[index],
+            "- Classification: ",
+            "finding classification",
+        )
+        if classification not in _FINDING_CLASSES:
+            raise ValueError("baseline report finding classification is invalid")
+        index += 1
+        _require_prefixed(lines[index], "- Scenarios: ", "finding scenarios")
+        index += 1
+        _require_prefixed(
+            lines[index],
+            "- Evidence: ",
+            "finding evidence",
+            allow_empty=classification != "pedagogy",
+        )
+        index += 1
+        _require_prefixed(lines[index], "- Summary: ", "finding summary")
+        index += 1
+        _require_prefixed(lines[index], "- Research: ", "finding research")
+        index += 1
+        if lines[index] != "":
+            raise ValueError("baseline report finding is malformed")
+        index += 1
+
+
+def _validate_infrastructure_section(lines: list[str]) -> None:
+    if lines == ["- None.", ""]:
+        return
+    if not lines or lines[-1] != "":
+        raise ValueError("baseline report infrastructure section is malformed")
+    for line in lines[:-1]:
+        value = _require_prefixed(line, "- ", "infrastructure result")
+        if ": " not in value or not all(value.split(": ", 1)):
+            raise ValueError("baseline report infrastructure result is malformed")
+
+
+def _validate_limitations_section(lines: list[str]) -> None:
+    if not lines or lines[-1] != LIMITATIONS_STATEMENT:
+        raise ValueError("baseline report limitations statement is invalid")
+    for line in lines[:-1]:
+        match = _LIMITATION_LINE.fullmatch(line)
+        if match is None:
+            raise ValueError("baseline report limitation is malformed")
+        user_rules = match.group(2)
+        if user_rules != "none" and any(
+            rule not in USER_HOME_RULE_PATHS for rule in user_rules.split(", ")
+        ):
+            raise ValueError("baseline report limitation has an invalid user-home rule")
+        markers = match.group(3)
+        if markers == "none":
+            continue
+        for marker_text in markers.split(", "):
+            marker_match = _ABOVE_HOME_MARKER.fullmatch(marker_text)
+            if marker_match is None or marker_match.group(1) not in RULE_MARKERS:
+                raise ValueError("baseline report limitation has an invalid marker")
+            levels = int(marker_match.group(2))
+            expected_word = "level" if levels == 1 else "levels"
+            if marker_match.group(3) != expected_word:
+                raise ValueError("baseline report limitation has invalid level grammar")
+
+
 def validate_baseline_report(text: str) -> None:
     """Reject malformed or unsafe tracked semantic baseline report text."""
     if not isinstance(text, str) or not text.endswith("\n"):
@@ -398,12 +617,20 @@ def validate_baseline_report(text: str) -> None:
         positions.append(lines.index(heading))
     if positions != sorted(positions):
         raise ValueError("baseline report audit sections are out of order")
-    privacy_index = lines.index(HEADINGS[5])
-    if privacy_index + 1 >= len(lines) or lines[privacy_index + 1] != PRIVACY_STATEMENT:
+    sections = [
+        lines[position + 1 : positions[index + 1]]
+        if index + 1 < len(positions)
+        else lines[position + 1 :]
+        for index, position in enumerate(positions)
+    ]
+    _validate_identity_section(sections[0])
+    _validate_scenario_section(sections[1])
+    _validate_findings_section(sections[2])
+    _validate_findings_section(sections[3])
+    _validate_infrastructure_section(sections[4])
+    if sections[5] != [PRIVACY_STATEMENT, ""]:
         raise ValueError("baseline report privacy statement is invalid")
-    limitations_index = lines.index(HEADINGS[6])
-    if LIMITATIONS_STATEMENT not in lines[limitations_index + 1 :]:
-        raise ValueError("baseline report limitations statement is invalid")
+    _validate_limitations_section(sections[6])
     for line in lines:
         if line.startswith("> Learner: ") and len(line.removeprefix("> Learner: ")) > 600:
             raise ValueError("baseline report contains an overlong learner quotation")

@@ -11,6 +11,8 @@ from unittest import mock
 
 from evaluation.isolation import AboveHomeMarker, RuleDisclosure
 from evaluation.report import (
+    LIMITATIONS_STATEMENT,
+    PRIVACY_STATEMENT,
     ScenarioRuntimeDisclosure,
     render_baseline_report,
     validate_baseline_report,
@@ -279,6 +281,45 @@ class EvaluationReportTests(unittest.TestCase):
             self.assertEqual(report, destination.read_text(encoding="utf-8"))
         with self.assertRaises(ValueError):
             validate_baseline_report(report + "\n/home/private/raw.txt\n")
+
+    def test_validator_requires_exact_privacy_and_limitations_sections(self) -> None:
+        report = self.render(disclosure())
+        cases = {
+            "altered privacy": report.replace(
+                PRIVACY_STATEMENT,
+                PRIVACY_STATEMENT.replace("Raw Antigravity streams", "Raw provider streams"),
+            ),
+            "extra privacy content": report.replace(
+                f"{PRIVACY_STATEMENT}\n\n## Baseline limitations",
+                f"{PRIVACY_STATEMENT}\nExtra privacy claim.\n\n## Baseline limitations",
+            ),
+            "extra limitations content": report.replace(
+                LIMITATIONS_STATEMENT,
+                f"Additional limitation.\n{LIMITATIONS_STATEMENT}",
+            ),
+        }
+        for label, malformed in cases.items():
+            with self.subTest(label), self.assertRaises(ValueError):
+                validate_baseline_report(malformed)
+
+    def test_validator_rejects_structurally_incomplete_scenario_results(self) -> None:
+        report = self.render(disclosure())
+        cases = {
+            "missing stop reason": report.replace(
+                "- Stop reason: observable_outcome\n",
+                "",
+                1,
+            ),
+            "missing total": report.replace("- Total: 16/16\n", "", 1),
+            "missing tutor quotation": report.replace(
+                "> Tutor: Good. If force and mass both double, what happens to force divided by mass?\n",
+                "",
+                1,
+            ),
+        }
+        for label, malformed in cases.items():
+            with self.subTest(label), self.assertRaises(ValueError):
+                validate_baseline_report(malformed)
 
     def test_private_cli_scores_renders_and_validates_report(self) -> None:
         from evaluation import cli
