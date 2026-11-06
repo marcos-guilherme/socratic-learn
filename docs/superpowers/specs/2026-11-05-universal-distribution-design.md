@@ -248,13 +248,17 @@ diagnostics.
 Installation has two phases:
 
 1. calculate and validate the complete operation in memory;
-2. stage artifacts in a temporary directory on the target filesystem and
-   rename them into place.
+2. stage artifacts in a private adjacent directory and atomically publish them
+   without overwriting existing paths.
 
-No target file is changed until all preconditions pass. If commit-time
-filesystem failure occurs, the installer removes files created by the current
-operation and reports any path it could not restore. It never removes
-pre-existing paths.
+No target file is changed until all preconditions pass. Before publication,
+failures clean private staging normally. After any path is published, a
+failure never unlinks, removes, or renames published destinations: it preserves
+partial paths and required staging or backups, reports them, and states that
+no external data was deleted. Update backups are restored only by atomic
+no-overwrite publication into absent destinations; a competing destination
+and its backup are both preserved. The receipt is published last, so partial
+installs remain visibly unhealthy for `doctor`.
 
 Stable exit codes:
 

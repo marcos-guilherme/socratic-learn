@@ -129,6 +129,14 @@ class RecoveryConflict:
     backup: Path | None = None
 
 
+class _PublicationFailure(FilesystemError):
+    """A failure after a destination link may have been published."""
+
+    def __init__(self, *args: object, published_path: Path, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.published_path = published_path
+
+
 def _portable_relative_path(value: object) -> bool:
     if (
         type(value) is not str
@@ -770,18 +778,18 @@ def _parent_chain_publication_error(
     destination: Path,
     *,
     original_parent: ParentIdentity,
-    safely_removed: bool,
+    published: bool,
     original: BaseException,
 ) -> FilesystemError:
-    state = (
-        "installer link was safely removed from the bound original parent"
-        if safely_removed
-        else "path was preserved because the original parent chain cannot be proven"
-    )
-    return FilesystemError(
+    error_type = _PublicationFailure if published else FilesystemError
+    arguments: dict[str, object] = {}
+    if published:
+        arguments["published_path"] = destination
+    return error_type(
         (
             "publication parent chain changed before commit completed; "
-            f"{state}; original parent identity "
+            "published state was preserved and no external data was deleted; "
+            f"original parent identity "
             f"({original_parent.identity.device}, {original_parent.identity.inode}); "
             f"original failure: {type(original).__name__}: {original}"
         ),
@@ -791,6 +799,7 @@ def _parent_chain_publication_error(
             "unless its identity and ownership are established; if the original "
             "parent was renamed, locate the reported device/inode before cleanup"
         ),
+        **arguments,
     )
 
 
@@ -812,7 +821,7 @@ def _link_staged_file(source: Path, destination: Path) -> LinkedFile:
         raise _parent_chain_publication_error(
             destination,
             original_parent=parent_chain[-1],
-            safely_removed=False,
+            published=False,
             original=error,
         ) from error
     try:
@@ -867,33 +876,12 @@ def _link_staged_file(source: Path, destination: Path) -> LinkedFile:
                 remediation="preserve the destination and inspect it",
             )
     except (LearningTutorError, OSError) as error:
-        safely_removed = False
-        if parent_descriptor is not None:
-            try:
-                current = os.stat(
-                    destination.name,
-                    dir_fd=parent_descriptor,
-                    follow_symlinks=False,
-                )
-                if _status_identity(current) == identity:
-                    os.unlink(destination.name, dir_fd=parent_descriptor)
-                    safely_removed = True
-            except OSError:
-                pass
-        else:
-            try:
-                _verify_parent_chain(project, destination, parent_chain)
-                if _has_identity(destination, identity):
-                    destination.unlink()
-                    safely_removed = True
-            except (LearningTutorError, OSError):
-                pass
         if parent_descriptor is not None:
             os.close(parent_descriptor)
         raise _parent_chain_publication_error(
             destination,
             original_parent=parent_chain[-1],
-            safely_removed=safely_removed,
+            published=True,
             original=error,
         ) from error
     if parent_descriptor is not None:
@@ -948,122 +936,84 @@ def _expected_existing_hashes(plan: InstallPlan) -> dict[str, str]:
     return dict(plan.expected_existing)
 
 
-def _safe_unlink_linked(
+def _ordered_publication_files(plan: InstallPlan) -> tuple[PlannedFile, ...]:
+    target = plan.project / INSTALL_ROOT
+    external = [
+        planned
+        for planned in plan.files
+        if not _project_path(plan.project, planned.path).is_relative_to(target)
+    ]
+    internal = [
+        planned
+        for planned in plan.files
+        if _project_path(plan.project, planned.path).is_relative_to(target)
+        and planned.path != RECEIPT_PATH
+    ]
+    receipt = [planned for planned in plan.files if planned.path == RECEIPT_PATH]
+    return tuple((*external, *internal, *receipt))
+
+
+def _published_paths(
     linked_files: list[LinkedFile],
-) -> tuple[list[tuple[Path, OSError]], list[RecoveryConflict]]:
-    failures: list[tuple[Path, OSError]] = []
-    conflicts: list[RecoveryConflict] = []
-    for linked in reversed(linked_files):
-        if not linked.path.exists() and not linked.path.is_symlink():
-            continue
-        try:
-            _verify_parent_chain(
-                linked.project,
-                linked.path,
-                linked.parent_chain,
-            )
-        except LearningTutorError:
-            conflicts.append(RecoveryConflict(linked.path))
-            continue
-        if _supports_bound_parent_operations():
-            descriptor: int | None = None
-            try:
-                descriptor = _open_verified_parent(linked.parent_chain[-1])
-                current = os.stat(
-                    linked.path.name,
-                    dir_fd=descriptor,
-                    follow_symlinks=False,
-                )
-                if _status_identity(current) != linked.identity:
-                    conflicts.append(RecoveryConflict(linked.path))
-                    continue
-                os.unlink(linked.path.name, dir_fd=descriptor)
-            except LearningTutorError:
-                conflicts.append(RecoveryConflict(linked.path))
-            except OSError as error:
-                failures.append((linked.path, error))
-            finally:
-                if descriptor is not None:
-                    os.close(descriptor)
-        elif not _has_identity(linked.path, linked.identity):
-            conflicts.append(RecoveryConflict(linked.path))
-        else:
-            try:
-                linked.path.unlink()
-            except OSError as error:
-                failures.append((linked.path, error))
-    return failures, conflicts
-
-
-def _safe_remove_created_directories(
     created_directories: list[CreatedDirectory],
-) -> tuple[list[tuple[Path, OSError]], list[RecoveryConflict]]:
-    failures: list[tuple[Path, OSError]] = []
-    conflicts: list[RecoveryConflict] = []
-    for created in reversed(created_directories):
-        if not created.path.exists() and not created.path.is_symlink():
-            continue
-        if not _has_identity(created.path, created.identity):
-            conflicts.append(RecoveryConflict(created.path))
-            continue
-        try:
-            created.path.rmdir()
-        except OSError as error:
-            try:
-                nonempty = created.path.is_dir() and any(created.path.iterdir())
-            except OSError:
-                nonempty = False
-            if nonempty:
-                conflicts.append(RecoveryConflict(created.path))
-            else:
-                failures.append((created.path, error))
-    return failures, conflicts
+    *,
+    extra: Path | None = None,
+) -> list[Path]:
+    paths = [created.path for created in created_directories]
+    paths.extend(linked.path for linked in linked_files)
+    if extra is not None:
+        paths.append(extra)
+    return list(dict.fromkeys(paths))
 
 
-def _recovery_state_error(
+def _conservative_failure_error(
     context: str,
-    conflicts: list[RecoveryConflict],
-    failures: list[tuple[Path, OSError]],
     *,
     original: BaseException,
+    published: list[Path],
+    stage: Path,
+    backup: Path | None = None,
+    conflicts: list[RecoveryConflict] | None = None,
 ) -> FilesystemError:
-    conflict_details = "; ".join(
-        (
-            f"external path preserved at {conflict.path}"
-            if conflict.backup is None
-            else (
-                f"external path preserved at {conflict.path}; "
-                f"installer backup preserved at {conflict.backup}"
-            )
-        )
-        for conflict in conflicts
-    )
-    failure_details = "; ".join(
-        f"{path}: {type(error).__name__}: {error}"
-        for path, error in failures
-    )
-    details = "; ".join(
-        detail for detail in (conflict_details, failure_details) if detail
-    )
-    recovery_paths = [
-        str(conflict.path)
-        for conflict in conflicts
-    ] + [
-        str(conflict.backup)
-        for conflict in conflicts
-        if conflict.backup is not None
-    ] + [str(path) for path, _ in failures]
+    recovery_paths = [*published, stage]
+    if backup is not None:
+        recovery_paths.append(backup)
+    for conflict in conflicts or []:
+        recovery_paths.append(conflict.path)
+        if conflict.backup is not None:
+            recovery_paths.append(conflict.backup)
+    recovery_paths = list(dict.fromkeys(recovery_paths))
+    listed = ", ".join(str(path) for path in recovery_paths)
     return FilesystemError(
         (
-            f"{context}; original failure: {type(original).__name__}: "
-            f"{original}; recovery state: {details}"
+            f"{context}; no external data was deleted; partial published paths "
+            f"and private recovery artifacts were preserved: {listed}; "
+            f"original failure: {type(original).__name__}: {original}"
         ),
         path=recovery_paths[0],
         remediation=(
-            "preserve and inspect these paths before retrying: "
-            + ", ".join(recovery_paths)
+            "do not rerun installation; inspect the listed paths, preserve private "
+            "staging/backups, and run doctor after manual recovery"
         ),
     )
+
+
+def _restore_backups_no_overwrite(
+    plan: InstallPlan,
+    backed_up: list[BackupFile],
+) -> tuple[list[LinkedFile], list[RecoveryConflict]]:
+    restored: list[LinkedFile] = []
+    conflicts: list[RecoveryConflict] = []
+    for backed in reversed(backed_up):
+        target = _project_path(plan.project, backed.relative)
+        if target.exists() or target.is_symlink():
+            conflicts.append(RecoveryConflict(target, backed.path))
+            continue
+        try:
+            restored.append(_link_staged_file(backed.path, target))
+        except (LearningTutorError, OSError):
+            conflicts.append(RecoveryConflict(target, backed.path))
+    return restored, conflicts
 
 
 def _verify_plan_still_safe(plan: InstallPlan) -> None:
@@ -1134,29 +1084,25 @@ def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None
     linked_files: list[LinkedFile] = []
     created_directories: list[CreatedDirectory] = []
     try:
-        try:
-            target.mkdir()
-        except FileExistsError as error:
-            raise CollisionError(
-                "installation path appeared after staging",
-                path=target,
-                remediation="preserve the new path and create a new installation plan",
-            ) from error
-        created_directories.append(
-            CreatedDirectory(target, _path_identity(target))
-        )
-        external = [
-            planned
-            for planned in plan.files
-            if not _project_path(plan.project, planned.path).is_relative_to(target)
-        ]
-        internal = [
-            planned
-            for planned in plan.files
-            if _project_path(plan.project, planned.path).is_relative_to(target)
-        ]
-        for planned in (*external, *internal):
+        for planned in _ordered_publication_files(plan):
             destination = _project_path(plan.project, planned.path)
+            target_recorded = any(
+                created.path == target for created in created_directories
+            )
+            if destination.is_relative_to(target) and not target_recorded:
+                try:
+                    target.mkdir()
+                except FileExistsError as error:
+                    raise CollisionError(
+                        "installation path appeared after staging",
+                        path=target,
+                        remediation=(
+                            "preserve the new path and create a new installation plan"
+                        ),
+                    ) from error
+                created_directories.append(
+                    CreatedDirectory(target, _path_identity(target))
+                )
             _prepare_destination_parent(
                 plan,
                 planned,
@@ -1165,22 +1111,34 @@ def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None
             source = stage.joinpath(*PurePosixPath(planned.path).parts)
             linked_files.append(_link_staged_file(source, destination))
     except (LearningTutorError, OSError) as error:
-        cleanup_failures, conflicts = _rollback_initial(
+        extra = (
+            error.published_path
+            if isinstance(error, _PublicationFailure)
+            else None
+        )
+        published = _published_paths(
             linked_files,
             created_directories,
+            extra=extra,
         )
-        cleanup_failures.extend(_cleanup_created_trees([stage]))
-        if cleanup_failures or conflicts:
-            raise _recovery_state_error(
-                "initial installation failed with preserved recovery state",
-                conflicts,
+        if published:
+            raise _conservative_failure_error(
+                "initial installation failed after publication",
+                original=error,
+                published=published,
+                stage=stage,
+            ) from error
+        cleanup_failures = _cleanup_created_trees([stage])
+        if cleanup_failures:
+            raise _combined_cleanup_error(
+                "pre-publication installation and staging cleanup failed",
                 cleanup_failures,
                 original=error,
             ) from error
-        if isinstance(error, LearningTutorError) and not linked_files:
+        if isinstance(error, LearningTutorError):
             raise
         raise FilesystemError(
-            "installation commit failed",
+            "installation failed before publication",
             path=target,
             remediation="check for a new path or permission problem and retry",
         ) from error
@@ -1190,58 +1148,6 @@ def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None
             "installation committed but staging cleanup failed",
             cleanup_failures,
         )
-
-
-def _rollback_initial(
-    linked_files: list[LinkedFile],
-    created_directories: list[CreatedDirectory],
-) -> tuple[list[tuple[Path, OSError]], list[RecoveryConflict]]:
-    failures, conflicts = _safe_unlink_linked(linked_files)
-    directory_failures, directory_conflicts = _safe_remove_created_directories(
-        created_directories
-    )
-    failures.extend(directory_failures)
-    conflicts.extend(directory_conflicts)
-    return failures, conflicts
-
-
-def _rollback_update(
-    plan: InstallPlan,
-    backup: Path,
-    linked_files: list[LinkedFile],
-    backed_up: list[BackupFile],
-    created_directories: list[CreatedDirectory],
-) -> tuple[list[tuple[Path, OSError]], list[RecoveryConflict]]:
-    failures, conflicts = _safe_unlink_linked(linked_files)
-    for backed in reversed(backed_up):
-        target = _project_path(plan.project, backed.relative)
-        if target.exists() or target.is_symlink():
-            conflicts.append(RecoveryConflict(target, backed.path))
-            continue
-        try:
-            restored = _link_staged_file(backed.path, target)
-        except (LearningTutorError, OSError):
-            conflicts.append(RecoveryConflict(target, backed.path))
-            continue
-        if restored.identity != backed.identity:
-            conflicts.append(RecoveryConflict(target, backed.path))
-            continue
-        if not _has_identity(target, backed.identity):
-            conflicts.append(RecoveryConflict(target, backed.path))
-            continue
-        try:
-            if _has_identity(backed.path, backed.identity):
-                backed.path.unlink()
-            else:
-                conflicts.append(RecoveryConflict(target, backed.path))
-        except OSError as error:
-            failures.append((backed.path, error))
-    directory_failures, directory_conflicts = _safe_remove_created_directories(
-        created_directories
-    )
-    failures.extend(directory_failures)
-    conflicts.extend(directory_conflicts)
-    return failures, conflicts
 
 
 def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
@@ -1275,7 +1181,7 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
                     path=relative,
                     remediation="restore the preserved backup before retrying",
                 )
-        for planned in plan.files:
+        for planned in _ordered_publication_files(plan):
             source = stage.joinpath(*PurePosixPath(planned.path).parts)
             destination = _project_path(plan.project, planned.path)
             _prepare_destination_parent(
@@ -1298,34 +1204,42 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
                 path=plan.project,
                 remediation="check project permissions and retry",
             ) from error
-        rollback_failures, conflicts = _rollback_update(
-            plan,
-            backup,
-            linked_files,
-            backed_up,
-            created_directories,
+        extra = (
+            error.published_path
+            if isinstance(error, _PublicationFailure)
+            else None
         )
-        if rollback_failures or conflicts:
-            cleanup_failures = _cleanup_created_trees([stage])
-            rollback_failures.extend(cleanup_failures)
-            raise _recovery_state_error(
-                "update failed and rollback preserved recovery state",
-                conflicts,
-                rollback_failures,
+        published = _published_paths(
+            linked_files,
+            created_directories,
+            extra=extra,
+        )
+        restored, conflicts = _restore_backups_no_overwrite(
+            plan,
+            backed_up,
+        )
+        if published or conflicts:
+            published.extend(linked.path for linked in restored)
+            raise _conservative_failure_error(
+                "update failed with preserved recovery state",
                 original=error,
+                published=list(dict.fromkeys(published)),
+                stage=stage,
+                backup=backup,
+                conflicts=conflicts,
             ) from error
         cleanup_failures = _cleanup_created_trees([backup, stage])
         if cleanup_failures:
             raise _combined_cleanup_error(
-                "update failed, rollback completed, and cleanup failed",
+                "pre-publication update restoration and cleanup failed",
                 cleanup_failures,
                 original=error,
             ) from error
-        if isinstance(error, LearningTutorError) and not linked_files:
+        if isinstance(error, LearningTutorError):
             raise
         raise FilesystemError(
             (
-                "update failed; the previous installation was restored; "
+                "update failed before publication; the previous installation was restored; "
                 f"original failure: {type(error).__name__}: {error}"
             ),
             path=plan.project / INSTALL_ROOT,

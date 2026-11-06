@@ -432,14 +432,16 @@ workspace/*
 - [ ] **Step 5: Implement transactional application**
 
 Stage all content under a unique directory adjacent to `.learning-tutor`.
-Validate staged hashes, create only previously absent parent directories, then
-move owned files into place. Track every path created by this operation.
-On failure, remove only those newly created paths in reverse depth order.
-Wrap OS errors as `FilesystemError` with path and remediation.
+Validate staged hashes, create only previously absent parent directories, and
+publish files with atomic no-overwrite operations. Clean private staging after
+a pre-publication failure. Once any path is published, never remove, rename, or
+unlink published destinations during recovery; preserve partial paths and
+private recovery artifacts and report them in an actionable `FilesystemError`.
 
-For update, stage replacements, verify every old hash before the first move,
-and use same-filesystem temporary backups to restore replaced files if a later
-move fails.
+For update, atomically move each owned file to a same-filesystem private backup
+and verify the backup hash. Restore only by atomic no-overwrite publication
+into an absent destination; preserve both paths on a collision. Publish the
+receipt last so interrupted installs remain diagnosably unhealthy.
 
 - [ ] **Step 6: Connect generic CLI and test**
 
@@ -523,6 +525,13 @@ pi: .pi/skills/learning-tutor/SKILL.md
 Check complete destination directories before any mutation. A collision aborts
 the whole plan. Existing Claude loader is the sole exception: it is preserved,
 not owned, and produces a snippet.
+
+Publish absent native and Claude files by an adjacent hard link with complete
+parent-chain verification before and after publication. Publish target files
+before package state and the receipt last. Before the first publication,
+failures clean private staging; afterward, preserve all partial published
+paths and recovery artifacts without deleting or renaming them, and report the
+manual recovery state. Update backup restoration is no-overwrite only.
 
 - [ ] **Step 5: Test and commit**
 

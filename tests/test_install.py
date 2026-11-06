@@ -412,7 +412,125 @@ class InstallTests(unittest.TestCase):
 
         self.assertEqual(b"external replacement", claude.read_bytes())
         self.assertFalse((self.project / ".learning-tutor").exists())
+        self.assertTrue(
+            any(
+                path.name.startswith(".learning-tutor-stage-")
+                for path in self.project.iterdir()
+            )
+        )
         self.assertIn("CLAUDE.md", str(raised.exception))
+        self.assertIn("no external data was deleted", str(raised.exception).lower())
+
+    def test_failure_after_publication_preserves_partial_paths_and_stage(self) -> None:
+        plan = plan_install(self.source, self.project, "generic", False)
+        install_module = __import__(
+            "learning_tutor.install",
+            fromlist=["_link_staged_file"],
+        )
+        real_link = install_module._link_staged_file
+        publications = 0
+
+        def fail_second_publication(source: Path, destination: Path):
+            nonlocal publications
+            publications += 1
+            if publications == 2:
+                raise OSError("injected failure after publication")
+            return real_link(source, destination)
+
+        with (
+            mock.patch(
+                "learning_tutor.install._link_staged_file",
+                side_effect=fail_second_publication,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        manifest = self.project / ".learning-tutor/manifest.json"
+        receipt = self.project / ".learning-tutor/install.json"
+        stages = [
+            path
+            for path in self.project.iterdir()
+            if path.name.startswith(".learning-tutor-stage-")
+        ]
+        self.assertTrue(manifest.is_file())
+        self.assertFalse(receipt.exists())
+        self.assertEqual(1, len(stages))
+        self.assertIn(str(manifest), str(raised.exception))
+        self.assertIn(str(stages[0]), str(raised.exception))
+        self.assertIn("no external data was deleted", str(raised.exception).lower())
+
+    def test_update_failure_preserves_partial_paths_backups_and_stage(self) -> None:
+        self._install()
+        self._make_distribution(
+            b"# Universal Learning Tutor\nProtocol: 1.0.0\nUpdated.\n"
+        )
+        plan = plan_install(self.source, self.project, "generic", True)
+        install_module = __import__(
+            "learning_tutor.install",
+            fromlist=["_link_staged_file"],
+        )
+        real_link = install_module._link_staged_file
+        publications = 0
+
+        def fail_second_publication(source: Path, destination: Path):
+            nonlocal publications
+            publications += 1
+            if publications == 2:
+                raise OSError("injected update publication failure")
+            return real_link(source, destination)
+
+        with (
+            mock.patch(
+                "learning_tutor.install._link_staged_file",
+                side_effect=fail_second_publication,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        backups = [
+            path
+            for path in self.project.iterdir()
+            if path.name.startswith(".learning-tutor-backup-")
+        ]
+        stages = [
+            path
+            for path in self.project.iterdir()
+            if path.name.startswith(".learning-tutor-stage-")
+        ]
+        manifest = self.project / ".learning-tutor/manifest.json"
+        receipt = self.project / ".learning-tutor/install.json"
+        self.assertTrue(manifest.is_file())
+        self.assertTrue(receipt.is_file())
+        old_receipt = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertNotEqual(
+            old_receipt["hashes"][".learning-tutor/manifest.json"],
+            sha256_bytes(manifest.read_bytes()),
+        )
+        self.assertEqual(1, len(backups))
+        self.assertEqual(1, len(stages))
+        self.assertIn(str(manifest), str(raised.exception))
+        self.assertIn(str(backups[0]), str(raised.exception))
+        self.assertIn(str(stages[0]), str(raised.exception))
+        self.assertIn("no external data was deleted", str(raised.exception).lower())
+
+    def test_successful_installs_leave_no_private_transaction_artifacts(self) -> None:
+        for target in ("generic", "cursor", "claude-code", "pi"):
+            with self.subTest(target=target):
+                project = self.root / f"clean-{target}"
+                project.mkdir()
+                apply_install(plan_install(self.source, project, target, False))
+
+                self.assertTrue((project / ".learning-tutor/install.json").is_file())
+                self.assertFalse(
+                    any(
+                        path.name.startswith(
+                            (".learning-tutor-stage-", ".learning-tutor-backup-")
+                        )
+                        for path in project.iterdir()
+                    )
+                )
 
     def test_parent_replacement_before_link_preserves_external_tree(self) -> None:
         plan = plan_install(self.source, self.project, "cursor", False)
@@ -509,75 +627,66 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(b"outside pre-existing bytes", sentinel.read_bytes())
         self.assertFalse((outside / "SKILL.md").exists())
 
-    def test_initial_rollback_unlinks_only_matching_installer_identity(self) -> None:
+    def test_failure_never_deletes_external_replacement_of_published_file(self) -> None:
         plan = plan_install(self.source, self.project, "cursor", False)
         skill = self.project / ".cursor/skills/learning-tutor/SKILL.md"
         install_module = __import__(
             "learning_tutor.install",
-            fromlist=["_link_staged_file", "_rollback_initial"],
+            fromlist=["_link_staged_file"],
         )
         real_link_staged = install_module._link_staged_file
-        real_rollback = install_module._rollback_initial
+        publications = 0
 
         def fail_after_external_link(source: Path, destination: Path):
+            nonlocal publications
+            publications += 1
+            if publications == 2:
+                skill.unlink()
+                skill.write_bytes(b"external before former cleanup")
+                raise OSError("injected failure after external replacement")
             linked = real_link_staged(source, destination)
-            if destination != skill:
-                raise OSError("injected failure after native link")
             return linked
-
-        def replace_before_rollback(linked_files, created_directories):
-            skill.unlink()
-            skill.write_bytes(b"external before rollback")
-            return real_rollback(linked_files, created_directories)
 
         with (
             mock.patch(
                 "learning_tutor.install._link_staged_file",
                 side_effect=fail_after_external_link,
             ),
-            mock.patch(
-                "learning_tutor.install._rollback_initial",
-                side_effect=replace_before_rollback,
-            ),
             self.assertRaises(FilesystemError) as raised,
         ):
             apply_install(plan)
 
-        self.assertEqual(b"external before rollback", skill.read_bytes())
+        self.assertEqual(b"external before former cleanup", skill.read_bytes())
         self.assertIn(str(skill), str(raised.exception))
+        self.assertIn("no external data was deleted", str(raised.exception).lower())
 
-    def test_initial_rollback_preserves_replaced_created_directory(self) -> None:
+    def test_failure_never_deletes_replaced_published_directory(self) -> None:
         plan = plan_install(self.source, self.project, "cursor", False)
         native_directory = self.project / ".cursor/skills/learning-tutor"
         external = native_directory / "external.txt"
         install_module = __import__(
             "learning_tutor.install",
-            fromlist=["_link_staged_file", "_rollback_initial"],
+            fromlist=["_link_staged_file"],
         )
         real_link_staged = install_module._link_staged_file
-        real_rollback = install_module._rollback_initial
+        publications = 0
 
         def fail_after_native_link(source: Path, destination: Path):
+            nonlocal publications
+            publications += 1
+            if publications == 2:
+                (native_directory / "SKILL.md").unlink()
+                native_directory.rmdir()
+                native_directory.mkdir()
+                external.write_bytes(b"external directory replacement")
+                raise OSError("injected failure after directory replacement")
             linked = real_link_staged(source, destination)
-            if destination != native_directory / "SKILL.md":
-                raise OSError("injected failure after native link")
             return linked
-
-        def replace_directory_before_rollback(linked_files, created_directories):
-            (native_directory / "SKILL.md").unlink()
-            native_directory.rmdir()
-            native_directory.mkdir()
-            external.write_bytes(b"external directory replacement")
-            return real_rollback(linked_files, created_directories)
 
         with (
             mock.patch(
                 "learning_tutor.install._link_staged_file",
                 side_effect=fail_after_native_link,
-            ),
-            mock.patch(
-                "learning_tutor.install._rollback_initial",
-                side_effect=replace_directory_before_rollback,
             ),
             self.assertRaises(FilesystemError) as raised,
         ):
@@ -796,7 +905,7 @@ class InstallTests(unittest.TestCase):
         )
         self.assertFalse((self.project / ".pi").exists())
 
-    def test_native_initial_commit_failure_removes_created_target_directories(self) -> None:
+    def test_native_initial_commit_failure_preserves_published_directories(self) -> None:
         plan = plan_install(self.source, self.project, "cursor", False)
 
         def fail_native_move(
@@ -813,11 +922,13 @@ class InstallTests(unittest.TestCase):
             "learning_tutor.install._link_staged_file",
             side_effect=fail_native_move,
         ):
-            with self.assertRaises(FilesystemError):
+            with self.assertRaises(FilesystemError) as raised:
                 apply_install(plan)
 
         self.assertFalse((self.project / ".learning-tutor").exists())
-        self.assertFalse((self.project / ".cursor").exists())
+        self.assertTrue((self.project / ".cursor/skills/learning-tutor").is_dir())
+        self.assertIn(".cursor", str(raised.exception))
+        self.assertIn("no external data was deleted", str(raised.exception).lower())
 
     def test_unchanged_update_replaces_managed_files_and_preserves_private_state(self) -> None:
         self._install()
@@ -965,20 +1076,26 @@ class InstallTests(unittest.TestCase):
             "learning_tutor.install._link_staged_file",
             side_effect=OSError("injected commit failure"),
         ):
-            with self.assertRaises(FilesystemError):
+            with self.assertRaises(FilesystemError) as raised:
                 apply_install(plan)
 
         self.assertEqual("keep", sentinel.read_text(encoding="utf-8"))
-        self.assertFalse((self.project / ".learning-tutor").exists())
+        self.assertTrue((self.project / ".learning-tutor").is_dir())
+        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assertTrue(
+            any(
+                path.name.startswith(".learning-tutor-stage-")
+                for path in self.project.iterdir()
+            )
+        )
 
-    def test_initial_cleanup_failure_reports_locked_partial_tree(self) -> None:
+    def test_initial_failure_after_publication_never_attempts_cleanup(self) -> None:
         plan = plan_install(self.source, self.project, "generic", False)
         install_module = __import__(
             "learning_tutor.install",
             fromlist=["_link_staged_file"],
         )
         real_link = install_module._link_staged_file
-        real_rmdir = Path.rmdir
         links = 0
 
         def fail_second_link(source: Path, destination: Path):
@@ -988,11 +1105,6 @@ class InstallTests(unittest.TestCase):
                 raise OSError("injected initial commit failure")
             return real_link(source, destination)
 
-        def lock_install_root(path: Path) -> None:
-            if path == self.project / ".learning-tutor":
-                raise PermissionError("injected locked install path")
-            real_rmdir(path)
-
         with (
             mock.patch(
                 "learning_tutor.install._link_staged_file",
@@ -1000,7 +1112,7 @@ class InstallTests(unittest.TestCase):
             ),
             mock.patch(
                 "pathlib.Path.rmdir",
-                side_effect=lock_install_root,
+                side_effect=AssertionError("published cleanup must not run"),
                 autospec=True,
             ),
             self.assertRaises(FilesystemError) as raised,
@@ -1008,14 +1120,10 @@ class InstallTests(unittest.TestCase):
             apply_install(plan)
 
         self.assertIn("injected initial commit failure", str(raised.exception))
-        self.assertIn("injected locked install path", str(raised.exception))
-        self.assertEqual(self.project / ".learning-tutor", Path(raised.exception.path))
+        self.assertIn("no external data was deleted", str(raised.exception).lower())
         self.assertTrue((self.project / ".learning-tutor").is_dir())
-        self.assertFalse(
-            any(
-                path.name.startswith(".learning-tutor-stage-")
-                for path in self.project.iterdir()
-            )
+        self.assertTrue(
+            any(path.name.startswith(".learning-tutor-stage-") for path in self.project.iterdir())
         )
 
     def test_backup_failure_restores_every_old_file(self) -> None:
@@ -1039,7 +1147,7 @@ class InstallTests(unittest.TestCase):
 
         self.assertEqual(before, self._snapshot())
 
-    def test_update_commit_failure_rolls_back_every_old_file(self) -> None:
+    def test_update_commit_failure_preserves_partial_recovery_state(self) -> None:
         self._install()
         before = self._snapshot()
         self._make_distribution(b"# Universal Learning Tutor\nProtocol: 1.0.0\nNew.\n")
@@ -1062,12 +1170,19 @@ class InstallTests(unittest.TestCase):
             "learning_tutor.install._link_staged_file",
             side_effect=fail_commit,
         ):
-            with self.assertRaises(FilesystemError):
+            with self.assertRaises(FilesystemError) as raised:
                 apply_install(plan)
 
-        self.assertEqual(before, self._snapshot())
+        self.assertNotEqual(before, self._snapshot())
+        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assertTrue(
+            any(
+                path.name.startswith((".learning-tutor-stage-", ".learning-tutor-backup-"))
+                for path in self.project.iterdir()
+            )
+        )
 
-    def test_integrity_error_after_first_update_move_rolls_back(self) -> None:
+    def test_integrity_error_after_first_update_publication_preserves_state(self) -> None:
         self._install()
         before = self._snapshot()
         self._make_distribution(b"# Universal Learning Tutor\nProtocol: 1.0.0\nNew.\n")
@@ -1116,15 +1231,16 @@ class InstallTests(unittest.TestCase):
             apply_install(plan)
 
         self.assertIn("injected symlink race", str(raised.exception))
-        self.assertEqual(before, self._snapshot())
-        self.assertFalse(
+        self.assertNotEqual(before, self._snapshot())
+        self.assertIn("no external data was deleted", str(raised.exception).lower())
+        self.assertTrue(
             any(
                 path.name.startswith((".learning-tutor-stage-", ".learning-tutor-backup-"))
                 for path in self.project.iterdir()
             )
         )
 
-    def test_update_rollback_removes_only_operation_created_parent(self) -> None:
+    def test_update_failure_preserves_operation_created_parent(self) -> None:
         self._install()
         workspace = self.project / ".learning-tutor/workspace"
         (workspace / ".gitkeep").unlink()
@@ -1153,18 +1269,19 @@ class InstallTests(unittest.TestCase):
             "learning_tutor.install._link_staged_file",
             side_effect=fail_after_parent_creation,
         ):
-            with self.assertRaises(FilesystemError):
+            with self.assertRaises(FilesystemError) as raised:
                 apply_install(plan)
 
-        self.assertFalse(workspace.exists())
+        self.assertTrue(workspace.is_dir())
         self.assertTrue((self.project / ".learning-tutor/loader.md").is_file())
+        self.assertIn(str(workspace), str(raised.exception))
 
-    def test_rollback_failure_keeps_backup_and_reports_recovery_path(self) -> None:
+    def test_restore_failure_keeps_backup_and_reports_recovery_path(self) -> None:
         self._install()
         plan = plan_install(self.source, self.project, "generic", True)
         real_link = os.link
 
-        def fail_commit_and_rollback(
+        def fail_commit_and_restore(
             source: str | os.PathLike[str],
             destination: str | os.PathLike[str],
             *args,
@@ -1174,17 +1291,18 @@ class InstallTests(unittest.TestCase):
             if ".learning-tutor-stage-" in str(source_path):
                 raise OSError("injected commit failure")
             if ".learning-tutor-backup-" in str(source_path):
-                raise OSError("injected rollback failure")
+                raise OSError("injected restore failure")
             real_link(source, destination, *args, **kwargs)
 
         with mock.patch(
             "learning_tutor.install.os.link",
-            side_effect=fail_commit_and_rollback,
+            side_effect=fail_commit_and_restore,
         ):
-            with self.assertRaisesRegex(FilesystemError, "rollback") as raised:
+            with self.assertRaises(FilesystemError) as raised:
                 apply_install(plan)
 
-        self.assertIn(".learning-tutor-backup-", raised.exception.remediation or "")
+        self.assertIn(".learning-tutor-backup-", str(raised.exception))
+        self.assertIn("no external data was deleted", str(raised.exception).lower())
         self.assertTrue(any(path.name.startswith(".learning-tutor-backup-") for path in self.project.iterdir()))
 
     def test_cli_prints_loader_and_update_transition(self) -> None:

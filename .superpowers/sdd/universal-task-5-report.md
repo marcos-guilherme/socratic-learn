@@ -276,3 +276,50 @@ symlink-privilege skips. `python -m compileall -q learning_tutor tests` and
 Two consecutive CLI builds retained the deterministic hashes recorded above.
 No blocking concerns remain; the additional skip is the privileged
 parent-symlink race case.
+
+## Approved conservative recovery policy
+
+This section supersedes earlier automatic rollback and published-path cleanup
+language in this report.
+
+### RED evidence
+
+Four new policy tests initially produced 3 failures:
+
+```text
+python -m unittest tests.test_install.InstallTests.test_hard_link_identity_race_preserves_external_replacement tests.test_install.InstallTests.test_failure_after_publication_preserves_partial_paths_and_stage tests.test_install.InstallTests.test_update_failure_preserves_partial_paths_backups_and_stage tests.test_install.InstallTests.test_successful_installs_leave_no_private_transaction_artifacts -v
+```
+
+The old recovery path deleted partial publication or restored old state instead
+of preserving recovery artifacts.
+
+### Implementation and coverage
+
+- Pre-publication failures still clean private staging.
+- Native and Claude destinations are attempted before package publication, so
+  collision races that publish nothing retain normal cleanup.
+- After any file or directory publication, failures never unlink, remove, or
+  rename published destinations. Errors list partial paths and retained staging
+  or backups and state that no external data was deleted.
+- Update restoration uses atomic no-overwrite hard links only. Competing
+  destinations and private backups are preserved and reported.
+- The receipt is published last. Interrupted installs remain intentionally
+  unhealthy for later `doctor` diagnosis.
+- Race tests replace published files and directories before the former cleanup
+  boundary and prove that external bytes survive. Additional tests cover
+  partial initial/update publication, retained backups, pre-publication
+  cleanup, and artifact-free success.
+
+The design transaction section and Task 4/5 plan text now specify this approved
+policy instead of automatic deletion.
+
+### Final verification
+
+- Focused: 46 tests passed with 1 Windows parent-symlink privilege skip.
+- Full: 161 tests passed with 3 Windows symlink-privilege skips.
+- `python -m compileall -q learning_tutor tests` and `git diff --check` passed.
+- Two consecutive builds retained the deterministic hashes recorded above.
+
+No blocking concerns remain. Recovery after a post-publication failure is
+deliberately manual because cross-platform atomic conditional deletion is not
+available.
