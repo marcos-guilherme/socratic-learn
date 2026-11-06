@@ -414,6 +414,101 @@ class InstallTests(unittest.TestCase):
         self.assertFalse((self.project / ".learning-tutor").exists())
         self.assertIn("CLAUDE.md", str(raised.exception))
 
+    def test_parent_replacement_before_link_preserves_external_tree(self) -> None:
+        plan = plan_install(self.source, self.project, "cursor", False)
+        parent = self.project / ".cursor/skills/learning-tutor"
+        detached = self.project / "detached-before-link"
+        sentinel = parent / "external.txt"
+        injected = False
+
+        def replace_parent(source: Path, destination: Path) -> None:
+            nonlocal injected
+            if injected or destination.parent != parent:
+                return
+            injected = True
+            parent.rename(detached)
+            parent.mkdir()
+            sentinel.write_bytes(b"external parent before link")
+
+        with (
+            mock.patch(
+                "learning_tutor.install._before_link_publication",
+                side_effect=replace_parent,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        self.assertEqual(b"external parent before link", sentinel.read_bytes())
+        linked = detached / "SKILL.md"
+        if linked.exists():
+            self.assertIn("parent chain", str(raised.exception).lower())
+        self.assertFalse((self.project / ".learning-tutor").exists())
+
+    def test_parent_replacement_after_link_preserves_external_tree(self) -> None:
+        plan = plan_install(self.source, self.project, "cursor", False)
+        parent = self.project / ".cursor/skills/learning-tutor"
+        detached = self.project / "detached-after-link"
+        sentinel = parent / "external.txt"
+        injected = False
+
+        def replace_parent(source: Path, destination: Path) -> None:
+            nonlocal injected
+            if injected or destination.parent != parent:
+                return
+            injected = True
+            parent.rename(detached)
+            parent.mkdir()
+            sentinel.write_bytes(b"external parent after link")
+
+        with (
+            mock.patch(
+                "learning_tutor.install._after_link_publication",
+                side_effect=replace_parent,
+            ),
+            self.assertRaises(FilesystemError) as raised,
+        ):
+            apply_install(plan)
+
+        self.assertEqual(b"external parent after link", sentinel.read_bytes())
+        linked = detached / "SKILL.md"
+        if linked.exists():
+            self.assertIn("parent chain", str(raised.exception).lower())
+        self.assertFalse((self.project / ".learning-tutor").exists())
+
+    def test_parent_symlink_swap_preserves_external_directory(self) -> None:
+        plan = plan_install(self.source, self.project, "cursor", False)
+        parent = self.project / ".cursor/skills/learning-tutor"
+        detached = self.project / "detached-symlink-parent"
+        outside = self.root / "outside-parent"
+        outside.mkdir()
+        sentinel = outside / "external.txt"
+        sentinel.write_bytes(b"outside pre-existing bytes")
+        injected = False
+
+        def replace_parent_with_symlink(source: Path, destination: Path) -> None:
+            nonlocal injected
+            if injected or destination.parent != parent:
+                return
+            injected = True
+            parent.rename(detached)
+            try:
+                parent.symlink_to(outside, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlinks unavailable: {error}")
+
+        with (
+            mock.patch(
+                "learning_tutor.install._before_link_publication",
+                side_effect=replace_parent_with_symlink,
+            ),
+            self.assertRaises(FilesystemError),
+        ):
+            apply_install(plan)
+
+        self.assertEqual(b"outside pre-existing bytes", sentinel.read_bytes())
+        self.assertFalse((outside / "SKILL.md").exists())
+
     def test_initial_rollback_unlinks_only_matching_installer_identity(self) -> None:
         plan = plan_install(self.source, self.project, "cursor", False)
         skill = self.project / ".cursor/skills/learning-tutor/SKILL.md"

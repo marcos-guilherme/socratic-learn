@@ -209,3 +209,70 @@ completed with exit code 0.
 
 Two consecutive CLI builds again produced the deterministic hashes recorded
 above. No blocking concerns remain.
+
+## Final P1 fix — parent-chain-bound publication
+
+### RED evidence
+
+The parent-race command initially failed all 3 tests because neither
+publication-boundary hook nor parent-chain verification existed:
+
+```text
+python -m unittest tests.test_install.InstallTests.test_parent_replacement_before_link_preserves_external_tree tests.test_install.InstallTests.test_parent_replacement_after_link_preserves_external_tree tests.test_install.InstallTests.test_parent_symlink_swap_preserves_external_directory -v
+```
+
+Result: exit code 1 with 3 expected missing-hook errors.
+
+### Parent-chain safety
+
+- Every publication captures the complete existing directory chain from the
+  project root through the destination parent.
+- Each chain entry must be a real directory, not a symlink or Windows reparse
+  point, and records its stable device/inode identity.
+- The complete chain is verified immediately before and immediately after
+  every hard-link publication.
+- Where Python exposes directory-descriptor operations, the destination parent
+  is opened with no-follow semantics, its identity is verified, and link,
+  stat, and cleanup operations are bound to that descriptor.
+- Windows and other fallback platforms use the same complete before/after
+  identity checks. A post-link parent mismatch permits path-based cleanup only
+  when the full chain still matches and the destination is the exact staged
+  inode.
+- Linked-file rollback also validates its recorded complete parent chain
+  before unlinking. Directory-descriptor cleanup verifies the exact linked
+  inode in the bound original parent.
+- When the original parent was replaced or renamed, external paths are
+  preserved. Recovery errors report the destination, original parent
+  device/inode, and inspection action; an operation-created link is removed
+  only when its original parent and inode can be proven.
+
+### Race coverage
+
+Narrow pre-link and post-link hooks on real temporary filesystems verify parent
+replacement immediately before and after publication. A symlink-to-external
+directory case verifies no pre-existing external bytes are removed when
+symlink privilege is available.
+
+### Final verification
+
+Focused command:
+
+```text
+python -m unittest tests.test_install -v
+```
+
+Result: exit code 0; 43 tests ran successfully with 1 Windows symlink skip.
+
+Complete-suite command:
+
+```text
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+Result: exit code 0; 158 tests ran successfully with 3 Windows
+symlink-privilege skips. `python -m compileall -q learning_tutor tests` and
+`git diff --check` completed with exit code 0.
+
+Two consecutive CLI builds retained the deterministic hashes recorded above.
+No blocking concerns remain; the additional skip is the privileged
+parent-symlink race case.

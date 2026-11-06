@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 from collections.abc import Mapping
@@ -103,6 +104,14 @@ class CreatedDirectory:
 
 @dataclass(frozen=True)
 class LinkedFile:
+    path: Path
+    identity: PathIdentity
+    project: Path
+    parent_chain: tuple[ParentIdentity, ...]
+
+
+@dataclass(frozen=True)
+class ParentIdentity:
     path: Path
     identity: PathIdentity
 
@@ -666,39 +675,230 @@ def _has_identity(path: Path, identity: PathIdentity) -> bool:
         return False
 
 
+def _status_identity(status: os.stat_result) -> PathIdentity:
+    return PathIdentity(status.st_dev, status.st_ino)
+
+
+def _is_reparse_or_symlink(status: os.stat_result) -> bool:
+    attributes = getattr(status, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    return stat.S_ISLNK(status.st_mode) or bool(attributes & reparse_flag)
+
+
+def _capture_parent_chain(
+    project: Path,
+    destination: Path,
+) -> tuple[ParentIdentity, ...]:
+    try:
+        relative_parent = destination.parent.relative_to(project)
+    except ValueError as error:
+        raise IntegrityError(
+            "publication parent escapes the project",
+            path=destination.parent,
+            remediation="create a new installation plan",
+        ) from error
+    chain: list[ParentIdentity] = []
+    current = project
+    for part in (".", *relative_parent.parts):
+        if part != ".":
+            current = current / part
+        try:
+            status = current.stat(follow_symlinks=False)
+        except OSError as error:
+            raise IntegrityError(
+                "publication parent chain cannot be read",
+                path=current,
+                remediation="preserve the changed path and create a new plan",
+            ) from error
+        if _is_reparse_or_symlink(status) or not stat.S_ISDIR(status.st_mode):
+            raise IntegrityError(
+                "publication parent chain contains a symlink, reparse point, or non-directory",
+                path=current,
+                remediation="preserve the changed path and create a new plan",
+            )
+        chain.append(ParentIdentity(current, _status_identity(status)))
+    return tuple(chain)
+
+
+def _verify_parent_chain(
+    project: Path,
+    destination: Path,
+    expected: tuple[ParentIdentity, ...],
+) -> None:
+    if _capture_parent_chain(project, destination) != expected:
+        raise IntegrityError(
+            "publication parent chain identity changed",
+            path=destination.parent,
+            remediation="preserve the changed tree and create a new plan",
+        )
+
+
+def _before_link_publication(source: Path, destination: Path) -> None:
+    """Narrow transaction-boundary hook for race testing."""
+
+
+def _after_link_publication(source: Path, destination: Path) -> None:
+    """Narrow transaction-boundary hook for race testing."""
+
+
+def _supports_bound_parent_operations() -> bool:
+    return (
+        os.link in os.supports_dir_fd
+        and os.stat in os.supports_dir_fd
+        and os.unlink in os.supports_dir_fd
+        and os.link in os.supports_follow_symlinks
+        and os.stat in os.supports_follow_symlinks
+        and hasattr(os, "O_DIRECTORY")
+    )
+
+
+def _open_verified_parent(parent: ParentIdentity) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(parent.path, flags)
+    if _status_identity(os.fstat(descriptor)) != parent.identity:
+        os.close(descriptor)
+        raise IntegrityError(
+            "publication parent changed while opening its directory handle",
+            path=parent.path,
+            remediation="preserve the changed tree and create a new plan",
+        )
+    return descriptor
+
+
+def _parent_chain_publication_error(
+    destination: Path,
+    *,
+    original_parent: ParentIdentity,
+    safely_removed: bool,
+    original: BaseException,
+) -> FilesystemError:
+    state = (
+        "installer link was safely removed from the bound original parent"
+        if safely_removed
+        else "path was preserved because the original parent chain cannot be proven"
+    )
+    return FilesystemError(
+        (
+            "publication parent chain changed before commit completed; "
+            f"{state}; original parent identity "
+            f"({original_parent.identity.device}, {original_parent.identity.inode}); "
+            f"original failure: {type(original).__name__}: {original}"
+        ),
+        path=destination,
+        remediation=(
+            f"inspect {destination.parent} and {destination}; do not remove either "
+            "unless its identity and ownership are established; if the original "
+            "parent was renamed, locate the reported device/inode before cleanup"
+        ),
+    )
+
+
 def _link_staged_file(source: Path, destination: Path) -> LinkedFile:
     """Atomically publish a staged file without replacing any existing path."""
 
+    project = Path(os.path.commonpath((source, destination)))
+    parent_chain = _capture_parent_chain(project, destination)
+    identity = _path_identity(source)
+    parent_descriptor: int | None = None
+    if _supports_bound_parent_operations():
+        parent_descriptor = _open_verified_parent(parent_chain[-1])
     try:
-        os.link(source, destination)
+        _before_link_publication(source, destination)
+        _verify_parent_chain(project, destination, parent_chain)
+    except (LearningTutorError, OSError) as error:
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
+        raise _parent_chain_publication_error(
+            destination,
+            original_parent=parent_chain[-1],
+            safely_removed=False,
+            original=error,
+        ) from error
+    try:
+        if parent_descriptor is None:
+            os.link(source, destination)
+        else:
+            os.link(
+                source,
+                destination.name,
+                dst_dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
     except FileExistsError as error:
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
         raise CollisionError(
             "installation destination appeared after planning",
             path=destination,
             remediation="preserve the new path and create a new installation plan",
         ) from error
     except OSError as error:
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
         raise FilesystemError(
             "staged file could not be linked to its destination",
             path=destination,
             remediation="check destination permissions and retry",
         ) from error
     try:
-        linked = os.path.samefile(source, destination)
-        identity = _path_identity(source)
-    except OSError as error:
-        raise FilesystemError(
-            "linked destination identity could not be verified",
-            path=destination,
-            remediation="preserve the destination and inspect it before retrying",
+        _after_link_publication(source, destination)
+        _verify_parent_chain(project, destination, parent_chain)
+        if parent_descriptor is None:
+            linked = (
+                os.path.samefile(source, destination)
+                and _has_identity(destination, identity)
+            )
+        else:
+            linked = (
+                _status_identity(
+                    os.stat(
+                        destination.name,
+                        dir_fd=parent_descriptor,
+                        follow_symlinks=False,
+                    )
+                )
+                == identity
+            )
+        if not linked:
+            raise IntegrityError(
+                "linked destination identity changed",
+                path=destination,
+                remediation="preserve the destination and inspect it",
+            )
+    except (LearningTutorError, OSError) as error:
+        safely_removed = False
+        if parent_descriptor is not None:
+            try:
+                current = os.stat(
+                    destination.name,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+                if _status_identity(current) == identity:
+                    os.unlink(destination.name, dir_fd=parent_descriptor)
+                    safely_removed = True
+            except OSError:
+                pass
+        else:
+            try:
+                _verify_parent_chain(project, destination, parent_chain)
+                if _has_identity(destination, identity):
+                    destination.unlink()
+                    safely_removed = True
+            except (LearningTutorError, OSError):
+                pass
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
+        raise _parent_chain_publication_error(
+            destination,
+            original_parent=parent_chain[-1],
+            safely_removed=safely_removed,
+            original=error,
         ) from error
-    if not linked or not _has_identity(destination, identity):
-        raise FilesystemError(
-            "linked destination changed before identity verification",
-            path=destination,
-            remediation="preserve the destination and inspect it before retrying",
-        )
-    return LinkedFile(destination, identity)
+    if parent_descriptor is not None:
+        os.close(parent_descriptor)
+    return LinkedFile(destination, identity, project, parent_chain)
 
 
 def _prepare_destination_parent(
@@ -756,13 +956,42 @@ def _safe_unlink_linked(
     for linked in reversed(linked_files):
         if not linked.path.exists() and not linked.path.is_symlink():
             continue
-        if not _has_identity(linked.path, linked.identity):
+        try:
+            _verify_parent_chain(
+                linked.project,
+                linked.path,
+                linked.parent_chain,
+            )
+        except LearningTutorError:
             conflicts.append(RecoveryConflict(linked.path))
             continue
-        try:
-            linked.path.unlink()
-        except OSError as error:
-            failures.append((linked.path, error))
+        if _supports_bound_parent_operations():
+            descriptor: int | None = None
+            try:
+                descriptor = _open_verified_parent(linked.parent_chain[-1])
+                current = os.stat(
+                    linked.path.name,
+                    dir_fd=descriptor,
+                    follow_symlinks=False,
+                )
+                if _status_identity(current) != linked.identity:
+                    conflicts.append(RecoveryConflict(linked.path))
+                    continue
+                os.unlink(linked.path.name, dir_fd=descriptor)
+            except LearningTutorError:
+                conflicts.append(RecoveryConflict(linked.path))
+            except OSError as error:
+                failures.append((linked.path, error))
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+        elif not _has_identity(linked.path, linked.identity):
+            conflicts.append(RecoveryConflict(linked.path))
+        else:
+            try:
+                linked.path.unlink()
+            except OSError as error:
+                failures.append((linked.path, error))
     return failures, conflicts
 
 
