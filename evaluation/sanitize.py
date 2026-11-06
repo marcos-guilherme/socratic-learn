@@ -11,15 +11,34 @@ from pathlib import Path
 
 from evaluation.schema import JsonValue
 
+# Extension (6th pattern): uppercase env-style names with underscore segments where at least one
+# full segment is API, KEY, TOKEN, SECRET, ACCESS, or AUTH (e.g. OPENAI_API_KEY, AWS_SECRET_ACCESS_KEY,
+# MY_PROVIDER_TOKEN). Matches assignment `NAME=` / `NAME:` and JSON `"NAME":`. Does not match
+# bare words like "token" in prose (requires NAME[=:] or quoted NAME plus colon). Excludes `max_tokens`
+# / `MAX_TOKENS` because TOKEN must be an entire segment, not TOKENS.
+_CREDENTIAL_ENV_STYLE_NAME = (
+    r"(?:"  # one or more WORD_ prefixes ending at a credential segment
+    r"(?:[A-Z][A-Z0-9]*_)+(?:API|KEY|TOKEN|SECRET|ACCESS|AUTH)"
+    r"(?:_[A-Z][A-Z0-9]*)*"  # trailing segments (e.g. ..._ACCESS_KEY)
+    r")"
+)
+
 _TRACKED_FORBIDDEN = (
     re.compile(r"(?i)\b(?:authorization|api[_-]?key|access[_-]?token)\s*[:=]"),
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{6,}"),
     re.compile(r"(?i)\b[A-Z]:\\Users\\[^\\\r\n]+\\"),
     re.compile(r"/(?:Users|home)/[^/\r\n]+/"),
     re.compile(r"(?i)\b(?:conversation|session)[_-]?id\b.*[A-Za-z0-9_-]{12,}"),
-    # Prefixed credential names (OPENAI_API_KEY=...) without weakening other gates.
+    # Case-sensitive env-name matching so `max_tokens=` / `monkey=` / prose "token" stay allowed.
     re.compile(
-        r"(?i)\b[A-Z][A-Z0-9]*_*(?:API|ACCESS|SECRET|AUTH|TOKEN|KEY)_*[A-Z0-9]*\s*="
+        r"(?:"
+        r"(?<![A-Za-z0-9_])"
+        + _CREDENTIAL_ENV_STYLE_NAME
+        + r"\s*[=:]"
+        r'|[\'"]'
+        + _CREDENTIAL_ENV_STYLE_NAME
+        + r'[\'"]\s*:'
+        r")"
     ),
 )
 
@@ -115,6 +134,9 @@ def write_private(path: Path, data: bytes, *, private_root: Path) -> None:
         destination.relative_to(root.resolve(strict=False))
     except ValueError as exc:
         raise ValueError("destination outside private_root") from exc
+
+    if destination == root:
+        raise ValueError("destination must not equal private_root")
 
     destination.parent.mkdir(parents=True, exist_ok=True)
 

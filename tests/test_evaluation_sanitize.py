@@ -101,8 +101,47 @@ class EvaluationSanitizeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             assert_tracked_safe("export OPENAI_API_KEY=sk-test", forbidden_literals=())
 
+    def test_tracked_rejects_credential_assignment_and_json_key_shapes(self) -> None:
+        samples = (
+            "export OPENAI_API_KEY=sk-test",
+            "AWS_SECRET_ACCESS_KEY=ABCDEF",
+            "AZURE_OPENAI_API_KEY=secret",
+            "MY_PROVIDER_TOKEN=abc123",
+            "OPENAI_API_KEY: value",
+            '{"OPENAI_API_KEY": "value"}',
+        )
+        for line in samples:
+            with self.subTest(line=line):
+                with self.assertRaises(ValueError):
+                    assert_tracked_safe(line, forbidden_literals=())
+
+    def test_tracked_allows_benign_non_credentials(self) -> None:
+        benign = (
+            "max_tokens=100",
+            "monkey=1",
+            "We should discuss the token budget without any assignment syntax.",
+            "MAX_TOKENS=128",
+        )
+        for line in benign:
+            with self.subTest(line=line):
+                assert_tracked_safe(line, forbidden_literals=())
+
+    def test_write_private_rejects_destination_is_private_root(self) -> None:
+        import evaluation.sanitize as sanitize_module
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            with patch.object(sanitize_module.tempfile, "mkstemp") as mock_mkstemp:
+                with self.assertRaises(ValueError):
+                    write_private(root, b"x", private_root=root)
+                mock_mkstemp.assert_not_called()
+            with patch.object(sanitize_module.tempfile, "mkstemp") as mock_mkstemp:
+                with self.assertRaises(ValueError):
+                    write_private(Path("."), b"x", private_root=root)
+                mock_mkstemp.assert_not_called()
+
     def test_write_private_closes_fd_on_chmod_failure(self) -> None:
-        """chmod failure must close the mkstemp fd without leaking (os is shared: selective mock)."""
+        """chmod failure must close the mkstemp fd and remove the temp path."""
         real_chmod = os.chmod
         close_calls: list[int] = []
         real_close = os.close
@@ -118,16 +157,29 @@ class EvaluationSanitizeTests(unittest.TestCase):
 
         import evaluation.sanitize as sanitize_module
 
+        real_mkstemp = tempfile.mkstemp
+        captured: dict[str, int | str] = {}
+
+        def capture_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+            fd, path = real_mkstemp(*args, **kwargs)
+            captured["fd"] = fd
+            captured["path"] = path
+            return fd, path
+
         with (
             patch.object(sanitize_module.os, "chmod", side_effect=selective_chmod),
             patch.object(sanitize_module.os, "close", side_effect=tracking_close),
+            patch.object(sanitize_module.tempfile, "mkstemp", side_effect=capture_mkstemp),
         ):
             with tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary).resolve()
                 dest = root / "out.bin"
                 with self.assertRaises(OSError):
                     write_private(dest, b"data", private_root=root)
-        self.assertTrue(close_calls)
+        mk_fd = captured["fd"]
+        tmp_path = str(captured["path"])
+        self.assertIn(mk_fd, close_calls)
+        self.assertFalse(os.path.lexists(tmp_path))
 
     @patch("evaluation.sanitize.os.replace")
     def test_write_private_cleans_temp_on_replace_failure(self, mock_replace: object) -> None:
