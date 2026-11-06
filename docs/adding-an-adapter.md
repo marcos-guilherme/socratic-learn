@@ -6,7 +6,7 @@ session, evidence, or curriculum prose.
 
 ## Template boundary
 
-Keep adapter templates under `learning_tutor/templates/`. A template may:
+Keep adapter templates under `socratic_learn/templates/`. A template may:
 
 - identify the installed prompt and private workspace with relative POSIX
   paths;
@@ -19,12 +19,12 @@ changes belong in canonical sources and flow through the deterministic build.
 ## Registration and ownership
 
 Adding a target requires an intentional protocol change. Update the exact
-target sequence in `learning_tutor/__init__.py`, manifest validation, installer
+target sequence in `socratic_learn/__init__.py`, manifest validation, installer
 planning, doctor discovery mapping, CLI choices, documentation, and tests.
 
 All installed files must be project-local. Add every managed path to the
-schema-1 receipt and hash every owned file except
-`.learning-tutor/install.json`. Never claim ownership of a pre-existing host
+schema-2 receipt and hash every owned file except
+`.socratic-learn/install.json`. Never claim ownership of a pre-existing host
 file. If integration requires editing a user-owned file, preserve it and emit
 an exact manual snippet, as the Claude Code adapter does.
 
@@ -32,8 +32,8 @@ an exact manual snippet, as the Claude Code adapter does.
 
 Resolve links from the loader's installed directory, not from the repository
 root. A native loader must link to
-`.learning-tutor/learning-tutor.prompt.md` and, when it records state, to
-`.learning-tutor/workspace/`. Use `/` in templates and documentation. Doctor
+`.socratic-learn/socratic-learn.prompt.md` and, when it records state, to
+`.socratic-learn/workspace/`. Use `/` in templates and documentation. Doctor
 must verify the exact native discovery path and reject a loader moved to a
 different known path.
 

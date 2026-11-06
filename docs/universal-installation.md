@@ -1,4 +1,4 @@
-# Universal Installation
+# Socratic Learn Installation
 
 ## Requirements and scope
 
@@ -18,7 +18,7 @@ guidance, preserves managed content, and cleans pre-publication update staging
 when its identity remains provable.
 
 These controls protect against ordinary collisions, accidental concurrent
-changes, and cooperating Learning Tutor processes. Atomic no-replace moves,
+changes, and cooperating Socratic Learn processes. Atomic no-replace moves,
 parent-directory file descriptors, identity rechecks, exact-topology cleanup,
 recovery artifacts, and Windows handle-bound operations remain mandatory. On
 POSIX, malicious or noncooperating processes running as the same OS principal
@@ -30,7 +30,7 @@ not disable normal Linux or macOS build, install, update, or cleanup.
 Build the checked-in distribution before installing:
 
 ```powershell
-python -m learning_tutor build
+python -m socratic_learn build
 ```
 
 `export prompt --output PATH` is also no-force: every parent is created through
@@ -42,26 +42,26 @@ for recovery; it is never blindly unlinked after an identity ambiguity.
 ## Generic
 
 ```powershell
-python -m learning_tutor install generic C:/path/to/project
+python -m socratic_learn install generic C:/path/to/project
 ```
 
-The installer creates `.learning-tutor/loader.md`. Point an agent that accepts
+The installer creates `.socratic-learn/loader.md`. Point an agent that accepts
 project instructions to that loader. It links to the installed canonical
 prompt rather than copying the pedagogy.
 
 ## Cursor
 
 ```powershell
-python -m learning_tutor install cursor C:/path/to/project
+python -m socratic_learn install cursor C:/path/to/project
 ```
 
-Cursor receives `.cursor/skills/learning-tutor/SKILL.md`. The skill is a thin
-loader for `.learning-tutor/learning-tutor.prompt.md`.
+Cursor receives `.cursor/skills/socratic-learn/SKILL.md`. The skill is a thin
+loader for `.socratic-learn/socratic-learn.prompt.md`.
 
 ## Claude Code
 
 ```powershell
-python -m learning_tutor install claude-code C:/path/to/project
+python -m socratic_learn install claude-code C:/path/to/project
 ```
 
 If root `CLAUDE.md` does not exist, the installer creates and owns a thin
@@ -72,17 +72,18 @@ user-owned `CLAUDE.md`.
 ## Pi
 
 ```powershell
-python -m learning_tutor install pi C:/path/to/project
+python -m socratic_learn install pi C:/path/to/project
 ```
 
-Pi receives `.pi/skills/learning-tutor/SKILL.md`, which links to the same
+Pi receives `.pi/skills/socratic-learn/SKILL.md`, which links to the same
 project-local prompt and private workspace as the other targets.
 
 ## Collisions and ownership
 
-Every install records schema-1 ownership in
-`.learning-tutor/install.json`. A clean install refuses an existing
-`.learning-tutor/` path or native adapter destination. There is no `--force`
+Every install records schema-2 ownership with product identifier
+`socratic-learn` in
+`.socratic-learn/install.json`. A clean install refuses an existing
+`.socratic-learn/` path or native adapter destination. There is no `--force`
 option. The receipt lists managed files and hashes every managed file except
 the receipt itself. The installer also creates parent directories needed to
 publish those files, but parent directories, staging directories, backup
@@ -118,7 +119,7 @@ recover manually, and then run doctor.
 Update only an intact installation with the same target:
 
 ```powershell
-python -m learning_tutor install cursor C:/path/to/project --update
+python -m socratic_learn install cursor C:/path/to/project --update
 ```
 
 Before changing anything, update validates the receipt and every managed
@@ -126,20 +127,37 @@ file. An unchanged update is safe. If a managed file was edited, is missing,
 or no longer matches its recorded identity, update refuses before replacing
 other files. Preserve user changes and restore or reinstall only after review.
 
+## Migrating from Learning Tutor
+
+An intact schema-1 installation under `.learning-tutor/` can be migrated by
+running the canonical update command with the target recorded in its receipt:
+
+```powershell
+python -m socratic_learn install TARGET C:/path/to/project --update
+```
+
+Migration verifies every legacy managed hash before mutation, refuses when
+both old and new roots exist, and rejects unowned paths outside the private
+workspace. It renames the managed root and owned native skill without
+overwriting a destination, preserves private workspace content, replaces
+managed files, and publishes the schema-2 receipt last. Modified or ambiguous
+legacy installations remain untouched or are preserved with explicit recovery
+paths.
+
 ## Private learner state
 
-Private records belong under `.learning-tutor/workspace/`. The nested
-`.learning-tutor/.gitignore` ignores workspace content while retaining
+Private records belong under `.socratic-learn/workspace/`. The nested
+`.socratic-learn/.gitignore` ignores workspace content while retaining
 `workspace/.gitkeep`. Confirm repository behavior with:
 
 ```powershell
-git check-ignore C:/path/to/project/.learning-tutor/workspace/private.md
+git check-ignore C:/path/to/project/.socratic-learn/workspace/private.md
 ```
 
 ## Doctor
 
 ```powershell
-python -m learning_tutor doctor C:/path/to/project
+python -m socratic_learn doctor C:/path/to/project
 ```
 
 `Installation healthy.` with exit code 0 means the receipt, managed hashes,

@@ -16,6 +16,7 @@ from socratic_learn.manifest import validate_manifest
 
 REQUIRED_PATHS = (
     "README.md",
+    "LICENSE",
     "AGENTS.md",
     ".gitattributes",
     ".gitignore",
@@ -63,6 +64,8 @@ REQUIRED_PATHS = (
     "docs/adding-an-adapter.md",
     "docs/superpowers/specs/2026-11-05-universal-distribution-design.md",
     "docs/superpowers/plans/2026-11-05-universal-distribution.md",
+    "docs/superpowers/specs/2026-11-05-socratic-learn-rename-design.md",
+    "docs/superpowers/plans/2026-11-05-socratic-learn-rename.md",
     ".github/workflows/native-python.yml",
 )
 SKILL_PATHS = (
@@ -97,7 +100,7 @@ POSIX_THREAT_MODEL_PATHS = (
 POSIX_THREAT_MODEL_TERMS = (
     "ordinary collisions",
     "accidental concurrent changes",
-    "cooperating learning tutor processes",
+    "cooperating socratic learn processes",
     "same os principal",
     "leaf-entry toctou",
 )
@@ -263,7 +266,7 @@ def validate(root: Path) -> list[str]:
     claim_paths = [
         root / "README.md",
         *(root / "docs").rglob("*.md"),
-        *(root / "learning_tutor").rglob("*.py"),
+        *(root / "socratic_learn").rglob("*.py"),
     ]
     for path in claim_paths:
         if (

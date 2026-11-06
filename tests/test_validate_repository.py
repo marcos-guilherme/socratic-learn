@@ -30,11 +30,14 @@ UNIVERSAL_REQUIRED_PATHS = (
     "socratic_learn/templates/pi-skill.md",
     "dist/socratic-learn.prompt.md",
     "dist/manifest.json",
+    "LICENSE",
     "docs/universal-installation.md",
     "docs/manifest-reference.md",
     "docs/adding-an-adapter.md",
     "docs/superpowers/specs/2026-11-05-universal-distribution-design.md",
     "docs/superpowers/plans/2026-11-05-universal-distribution.md",
+    "docs/superpowers/specs/2026-11-05-socratic-learn-rename-design.md",
+    "docs/superpowers/plans/2026-11-05-socratic-learn-rename.md",
     ".github/workflows/native-python.yml",
 )
 
@@ -85,13 +88,17 @@ SESSION_H2_HEADINGS = (
     "## Sources",
 )
 README_HEADINGS = (
-    "## What this is",
+    "## What Socratic Learn provides",
     "## Quick start",
     "## How a learning session works",
-    "## Supported agents",
+    "## Install for your agent",
+    "## Commands",
     "## Private learner state",
-    "## Validation",
+    "## Security and recovery",
+    "## Migrating from Learning Tutor",
+    "## Development",
     "## Limitations",
+    "## License",
 )
 README_WORKSPACE_COMMANDS = (
     "Copy-Item -Recurse workspace.example\\* workspace",
@@ -269,6 +276,11 @@ class RepositoryValidationTests(unittest.TestCase):
         readme = root / "README.md"
         self.assertTrue(readme.exists(), "README.md must exist")
         text = readme.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("# Socratic Learn\n"))
+        self.assertIn(
+            "A portable Socratic learning protocol for mathematics and AI.",
+            text,
+        )
         headings = tuple(
             line for line in text.splitlines() if line.startswith("## ")
         )
@@ -286,6 +298,13 @@ class RepositoryValidationTests(unittest.TestCase):
         for command in README_WORKSPACE_COMMANDS:
             with self.subTest(command=command):
                 self.assertIn(command, text)
+
+    def test_repository_uses_mit_license(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        license_text = (root / "LICENSE").read_text(encoding="utf-8")
+
+        self.assertTrue(license_text.startswith("MIT License\n"))
+        self.assertIn("Copyright (c) 2026 Marcos Guilherme", license_text)
 
     def test_readme_pi_onboarding_points_to_install_assets(self) -> None:
         root = Path(__file__).resolve().parents[1]

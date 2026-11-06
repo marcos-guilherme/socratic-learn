@@ -1,5 +1,8 @@
 # Portable AI Learning Environment Implementation Plan
 
+> Historical plan: the canonical product is now Socratic Learn. See the
+> [rename and public release design](../specs/2026-11-05-socratic-learn-rename-design.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a vendor-neutral, Markdown-first repository that lets Cursor, Claude Code, Pi, and generic agents conduct evidence-aware mathematics and AI learning sessions.

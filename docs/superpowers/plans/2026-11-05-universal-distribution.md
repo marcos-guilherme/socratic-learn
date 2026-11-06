@@ -1,5 +1,8 @@
 # Universal Learning Tutor Distribution Implementation Plan
 
+> Historical plan: the canonical product is now Socratic Learn. See the
+> [rename and public release design](../specs/2026-11-05-socratic-learn-rename-design.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a deterministic English prompt bundle and a Python 3.11 standard-library CLI that safely installs, updates, and diagnoses the Learning Tutor for generic agents, Cursor, Claude Code, and Pi.
@@ -446,8 +449,8 @@ into an absent destination; preserve both paths on a collision. Publish the
 receipt last so interrupted installs remain diagnosably unhealthy.
 
 Acceptance uses the following threat model: the controls protect against
-ordinary collisions, accidental concurrent changes, and cooperating Learning
-Tutor processes. Updates must not knowingly overwrite modified or unowned
+ordinary collisions, accidental concurrent changes, and cooperating Socratic
+Learn processes. Updates must not knowingly overwrite modified or unowned
 files, and detected ambiguity must be preserved. Malicious or noncooperating
 processes running as the same OS principal are out of scope on POSIX because
 `rename`, `unlink`, and `rmdir` retain an irreducible leaf-entry TOCTOU syscall

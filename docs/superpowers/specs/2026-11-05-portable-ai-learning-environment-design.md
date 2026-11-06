@@ -1,5 +1,8 @@
 # Ambiente Portátil de Aprendizado com IA — Design
 
+> Documento histórico: o produto canônico agora se chama Socratic Learn. Veja
+> o [design da renomeação e publicação](2026-11-05-socratic-learn-rename-design.md).
+
 ## Objetivo
 
 Criar um repositório local, independente de fornecedor, que transforme agentes

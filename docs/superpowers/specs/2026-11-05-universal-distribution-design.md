@@ -1,5 +1,8 @@
 # Universal Learning Tutor Distribution — Design
 
+> Historical design: the canonical product is now Socratic Learn. See the
+> [rename and public release design](2026-11-05-socratic-learn-rename-design.md).
+
 ## Objective
 
 Turn the existing portable learning protocol into a universal distribution
@@ -211,7 +214,7 @@ A missing, modified, unowned, or colliding path aborts the entire update before
 mutation. There is no `--force` option in version 1.
 
 The filesystem threat model covers ordinary collisions, accidental concurrent
-changes, and cooperating Learning Tutor processes. No-replace publication,
+changes, and cooperating Socratic Learn processes. No-replace publication,
 parent-directory bindings, identity rechecks, exact-topology cleanup, recovery
 artifacts, and Windows handle-bound operations remain required. On POSIX,
 malicious or noncooperating processes running as the same OS principal are out

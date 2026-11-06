@@ -1,60 +1,58 @@
-# Portable AI Learning Environment
+# Socratic Learn
 
-## What this is
+[![Native Python safety matrix](https://github.com/marcos-guilherme/socratic-learn/actions/workflows/native-python.yml/badge.svg)](https://github.com/marcos-guilherme/socratic-learn/actions/workflows/native-python.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-This repository is a portable tutor protocol, not an AI application. It defines shared behavior for conducting evidence-aware mathematics and AI learning sessions across compatible agents. The canonical core consists of the [pedagogy](core/pedagogy.md), [session protocol](core/session-protocol.md), [assessment](core/assessment.md), and [evidence policy](core/evidence-policy.md).
+**A portable Socratic learning protocol for mathematics and AI.**
 
-The core includes responsive Socratic dialogue: when a next step is discoverable from the learner's demonstrated knowledge, each question responds to the learner's previous reasoning rather than following a fixed script. The tutor uses direct explanation when information is not reasonably discoverable, then returns control through a question or application.
+Socratic Learn gives compatible AI agents one evidence-aware method for
+teaching mathematics, machine learning, neural networks, transformers, and
+their prerequisites. It is a protocol and distribution toolkit—not an AI
+model or a separate chat application.
 
-## Universal distribution
+## What Socratic Learn provides
 
-“Universal” means that one deterministic protocol and bundle can be installed
-through the four supported project-local adapters: Generic, Cursor, Claude
-Code, and Pi. It does not mean that every model, model version, or host is
-certified. Host capabilities still vary, and the manifest defines fallbacks
-when a capability is unavailable.
+The canonical behavior lives in four small documents:
 
-The distribution tools require Python 3.11 or newer and use no third-party
-dependencies. From the repository root, the five primary commands are:
+- [pedagogy](core/pedagogy.md), including responsive Socratic dialogue;
+- [session protocol](core/session-protocol.md), including approval gates;
+- [assessment](core/assessment.md), based on observable evidence; and
+- [evidence policy](core/evidence-policy.md), including sourcing rules.
 
-```powershell
-python -m learning_tutor build
-python -m learning_tutor export prompt --output tutor.prompt.md
-python -m learning_tutor install cursor C:/path/to/project
-python -m learning_tutor install cursor C:/path/to/project --update
-python -m learning_tutor doctor C:/path/to/project
-```
+One deterministic prompt bundle installs through four project-local adapters:
+Generic, Cursor, Claude Code, and Pi. Capability fallbacks keep the method
+usable when an agent lacks web search, structured quizzes, rendering,
+subagents, persistent memory, or filesystem access.
 
-Installations live under `.learning-tutor/`; Cursor and Pi also receive thin
-native skills, while Claude Code receives an owned thin loader only when root
-`CLAUDE.md` is absent. Every install has a schema-1 ownership receipt. Existing
-agent paths are never merged or overwritten automatically, and there is no
-`--force` option. Export output follows the same rule: an existing or raced
-output is preserved and rejected. If publication fails after paths may have appeared, partial
-paths, private staging directories, and backups are preserved and reported for
-manual recovery rather than deleted.
-
-### Filesystem security model
-
-The filesystem controls protect against ordinary collisions, accidental
-concurrent changes, and cooperating Learning Tutor processes. They include
-atomic no-replace publication, parent-directory bindings, identity rechecks,
-exact-topology cleanup, recovery artifacts, and Windows handle-bound
-operations. On POSIX, malicious or noncooperating processes running as the
-same OS principal are out of scope: `rename`, `unlink`, and `rmdir` cannot bind
-the leaf-entry mutation to an already-open inode, leaving an irreducible
-leaf-entry TOCTOU window. Detected ambiguity is preserved for manual recovery;
-normal Linux and macOS build, install, update, and cleanup remain supported.
-
-Start with the [universal installation guide](docs/universal-installation.md).
-The [manifest reference](docs/manifest-reference.md) defines artifact and hash
-semantics, and [adding an adapter](docs/adding-an-adapter.md) defines extension
-boundaries.
+Socratic Learn asks a question only when the next step is reasonably
+discoverable from the learner's demonstrated knowledge. When it is not, the
+tutor explains directly and returns control through an application or
+prediction.
 
 ## Quick start
 
-1. Clone or download this repository.
-2. Create the private working area from the fictitious examples. The tracked `workspace/.gitkeep` means the destination directory already exists.
+Requirements: Git and Python 3.11 or newer. Socratic Learn has no third-party
+runtime dependencies.
+
+Clone the repository and build the checked-in distribution:
+
+```powershell
+git clone https://github.com/marcos-guilherme/socratic-learn.git
+cd socratic-learn
+python -m socratic_learn build
+```
+
+To try it without changing an existing project, create an empty directory:
+
+```powershell
+New-Item -ItemType Directory C:\temp\socratic-learn-demo
+python -m socratic_learn install generic C:\temp\socratic-learn-demo
+python -m socratic_learn doctor C:\temp\socratic-learn-demo
+```
+
+To use this repository itself as a learning workspace, copy the fictitious
+starter profile into the ignored private area.
 
 PowerShell:
 
@@ -68,67 +66,160 @@ POSIX shell:
 cp -R workspace.example/. workspace/
 ```
 
-3. Open the repository with a supported agent and ask to start a learning session with an observable goal. For example:
+Then ask your agent for an observable learning outcome, for example:
 
 ```text
-Quero entender self-attention o suficiente para implementá-la com operações
-tensoriais. Faça primeiro um diagnóstico curto dos pré-requisitos.
+I want to understand self-attention well enough to implement it with tensor
+operations. First diagnose only the prerequisites needed for that outcome.
 ```
-
-Do not add files under `workspace/` to version control. The repository's ignore rules exclude them while retaining `workspace/.gitkeep`.
 
 ## How a learning session works
 
-The tutor first turns the objective into an observable outcome and asks the learner to confirm it. It then diagnoses only relevant prerequisites, proposes the smallest dependency path with explicit edges, and waits for approval before teaching.
+1. The tutor turns the objective into an observable outcome and asks the
+   learner to confirm it.
+2. It diagnoses only relevant prerequisites.
+3. It proposes the smallest dependency path, identifies demonstrated
+   foundations and gaps, and waits for approval.
+4. It teaches one approved node at a time.
+5. The learner produces evidence through derivation, explanation, prediction,
+   implementation, or error diagnosis.
+6. The tutor records established concepts, remaining gaps, sources, and one
+   next step.
 
-The approved path is taught one node at a time. Each node requires observable evidence such as a derivation, explanation, prediction, implementation, or error diagnosis. Questions adapt to the learner's actual answers; direct exposition is used when discovery would be impossible or impose inappropriate cognitive load. At the end, when filesystem access is available, the tutor records evidence, remaining gaps, sources, and one next step under the private workspace. Without filesystem access, the tutor returns the complete Markdown record for the learner to save.
+Real learner profiles and session records stay private. Confidence and
+self-report do not count as mastery without observable application.
 
-## Supported agents
+## Install for your agent
 
-- **Generic agents:** begin with [AGENTS.md](AGENTS.md), which points to the complete canonical protocol.
-- **Cursor:** opening this repository makes the project [Socratic Learn skill](.cursor/skills/socratic-learn/SKILL.md) available automatically. See the [Cursor adapter](adapters/cursor/README.md).
-- **Claude Code:** use the provided [Claude Code loader](adapters/claude-code/CLAUDE.md). Its relative links are adapter-local, so follow the [installation instructions](adapters/claude-code/README.md) when creating a root `CLAUDE.md`.
-- **Pi:** follow the non-destructive [Pi installation instructions](adapters/pi/README.md), which install the [root-ready skill template](adapters/pi/skills/socratic-learn/SKILL.project.md.template) against a namespaced canonical package. Pi extensions are optional.
+Choose one project-local target:
+
+| Target | Command | Discovery path |
+| --- | --- | --- |
+| Generic | `python -m socratic_learn install generic PROJECT` | `.socratic-learn/loader.md` |
+| Cursor | `python -m socratic_learn install cursor PROJECT` | `.cursor/skills/socratic-learn/SKILL.md` |
+| Claude Code | `python -m socratic_learn install claude-code PROJECT` | owned `CLAUDE.md` or an emitted snippet |
+| Pi | `python -m socratic_learn install pi PROJECT` | `.pi/skills/socratic-learn/SKILL.md` |
+
+The repository-native adapters are documented separately:
+
+- [Cursor adapter](adapters/cursor/README.md)
+- [Claude Code adapter](adapters/claude-code/README.md)
+- [Pi adapter](adapters/pi/README.md)
+- [Pi root-ready skill template](adapters/pi/skills/socratic-learn/SKILL.project.md.template)
+
+Installations are namespaced under `.socratic-learn/`. Existing agent paths
+are never merged or overwritten automatically.
+
+## Commands
+
+Run commands from the repository root:
+
+```powershell
+python -m socratic_learn build
+python -m socratic_learn export prompt --output socratic-learn.prompt.md
+python -m socratic_learn install cursor C:/path/to/project
+python -m socratic_learn install cursor C:/path/to/project --update
+python -m socratic_learn doctor C:/path/to/project
+```
+
+`build` produces deterministic checked-in artifacts. `export prompt` validates
+the manifest before writing exact bundle bytes. `install` and `--update` use
+ownership receipts. `doctor` is read-only and reports tampering, missing
+files, invalid discovery links, and private-state mistakes.
+
+There is no `--force` option.
+
+See the [installation guide](docs/universal-installation.md), [manifest
+reference](docs/manifest-reference.md), and [adapter extension
+guide](docs/adding-an-adapter.md).
 
 ## Private learner state
 
-Real learner profiles, goals, progress, and session records belong only in `workspace/`, which is ignored except for `.gitkeep`. Content in [workspace.example](workspace.example/) is fictitious starter material. Copy it into `workspace/`, edit only the private copies, and verify that Git does not track them:
+In this repository, real goals, profiles, progress, and session records belong
+under `workspace/`. In distributed installations they belong under
+`.socratic-learn/workspace/`. Both locations are ignored by version control
+except for their tracked `.gitkeep` placeholders.
+
+Verify the repository workspace before publishing:
 
 ```powershell
 git ls-files workspace
 ```
 
-The output should contain only `workspace/.gitkeep`.
+The output must contain only `workspace/.gitkeep`. Content under
+[workspace.example](workspace.example/) is fictitious and safe to copy.
 
-For a distributed installation, the corresponding private location is
-`.learning-tutor/workspace/`. Its nested `.gitignore` keeps records private
-even when the host project does not use this repository's root ignore rules.
+## Security and recovery
 
-## Validation
+Socratic Learn protects against ordinary collisions, accidental concurrent
+changes, and cooperating Socratic Learn processes. Controls include atomic
+no-replace publication, parent-directory bindings, identity rechecks,
+exact-topology cleanup, recovery artifacts, and Windows handle-bound
+operations.
 
-Run the complete unit-test suite and repository validator from the repository root:
+If publication becomes ambiguous, the tool preserves partial paths, staging,
+and backups and reports manual recovery steps. It does not knowingly overwrite
+modified or unowned files.
+
+On POSIX systems, malicious or noncooperating processes running as the same OS
+principal are outside the threat model. `rename`, `unlink`, and `rmdir` cannot
+bind a leaf-entry mutation to an already-open inode, leaving an irreducible
+leaf-entry TOCTOU window.
+
+## Migrating from Learning Tutor
+
+Socratic Learn recognizes an intact managed Learning Tutor installation under
+`.learning-tutor/`. Use the same target recorded by that installation:
 
 ```powershell
-python -m unittest discover -s tests -p "test_*.py" -v
-python tests/validate_repository.py
+python -m socratic_learn install TARGET PROJECT --update
 ```
 
-The validator checks required files, internal Markdown links, adapter metadata,
-canonical-content boundaries, workspace ignore rules, tracked private files,
-manifest validity, the generated header, and byte-for-byte agreement between
-an in-memory build and checked-in `dist/`. It does not write generated files.
+Migration proceeds only when the legacy receipt proves ownership and every
+managed hash still matches. Private workspace content moves with the managed
+root. Modified, ambiguous, or unowned paths are preserved and migration stops
+with an actionable diagnostic.
 
-The native CI workflow runs these checks plus build and
-install/update/doctor smoke tests on Python 3.11 for Windows, Ubuntu, and
-macOS. Native Linux and macOS execution remains pending until hosted CI runs;
-local verification does not substitute for those backends.
+The old command remains temporarily available:
+
+```powershell
+python -m learning_tutor --help
+```
+
+It forwards to Socratic Learn and prints a deprecation warning. New
+installations use only Socratic Learn names.
+
+## Development
+
+Run the complete local checks:
+
+```powershell
+python -m socratic_learn build
+python -m unittest discover -s tests -p "test_*.py" -v
+python tests/validate_repository.py
+git diff --check
+```
+
+The validator checks required files, Markdown links, adapter metadata,
+canonical-content boundaries, workspace privacy, manifests, generated
+artifacts, README contracts, and deterministic rebuilds.
+
+The [native CI workflow](.github/workflows/native-python.yml) runs build,
+tests, validation, and install/update/doctor smoke checks on Python 3.11 for
+Windows, Ubuntu, and macOS.
 
 ## Limitations
 
-This repository supplies instructions, curriculum maps, templates, examples, and adapter entry points. It does not provide an AI model, chat interface, quiz engine, web search, rendering service, persistent memory service, or extension runtime. Those capabilities depend on the agent in use. When a capability is absent, the protocol specifies conversational or filesystem-based fallbacks; it does not claim to add the missing tool.
+Socratic Learn does not provide an AI model, chat interface, quiz engine,
+search provider, rendering service, persistent memory service, or agent
+runtime. Those capabilities belong to the selected host. The protocol defines
+fallbacks; it does not manufacture missing tools.
 
-The included curriculum maps cover selected mathematics and AI paths. They are dependency guides rather than exhaustive courses, and learner mastery is not inferred from confidence or self-report.
+The curriculum maps are dependency guides, not exhaustive courses. Support
+means the four installation and discovery paths satisfy this repository's
+contract; it does not certify every model or guarantee identical
+interpretation.
 
-No claim is made that all models interpret the protocol identically or are
-certified. Support means the four discovery/install paths are tested against
-this repository's contract.
+## License
+
+Socratic Learn is available under the [MIT License](LICENSE).
