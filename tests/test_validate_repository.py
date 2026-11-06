@@ -107,17 +107,37 @@ SESSION_H2_HEADINGS = (
     "## Sources",
 )
 README_HEADINGS = (
-    "## What Socratic Learn provides",
+    "## Why I built this",
+    "## The method in 60 seconds",
+    "## A compact example",
+    "## How the system is structured",
+    "## Research foundations",
+    "## Engineering evidence",
+    "## Evaluation status",
     "## Quick start",
-    "## How a learning session works",
-    "## Install for your agent",
-    "## Commands",
-    "## Private learner state",
-    "## Security and recovery",
-    "## Migrating from Learning Tutor",
-    "## Development",
-    "## Limitations",
+    "## Supported hosts and project adapters",
+    "## Privacy, security, and limitations",
+    "## Development and documentation",
     "## License",
+)
+README_PORTFOLIO_REQUIREMENTS = (
+    "I built Socratic Learn out of a recurring need in my work as an AI researcher",
+    "objective → prerequisites → approved path → application → evidence",
+    "Mahoney et al. (2023)",
+    "Munshi et al. (2023)",
+    "Borchers et al. (2025)",
+    "van den Broek et al. (2025)",
+    "Stogniy et al. (2020)",
+    "Lee et al. (2025)",
+    "https://doi.org/10.1016/j.tsc.2023.101422",
+    "https://doi.org/10.1111/jcal.12761",
+    "https://doi.org/10.1016/j.compedu.2025.105364",
+    "https://doi.org/10.1016/j.learninstruc.2025.102196",
+    "https://doi.org/10.1096/fasebj.2020.34.s1.04148",
+    "https://doi.org/10.48550/arXiv.2509.16262",
+    "three unchanged-protocol Antigravity sessions",
+    "no pedagogy score was assigned",
+    "evaluation/reports/2026-11-06-antigravity-baseline.md",
 )
 README_WORKSPACE_COMMANDS = (
     "Copy-Item -Recurse workspace.example\\* workspace",
@@ -226,6 +246,7 @@ class RepositoryValidationTests(unittest.TestCase):
             "workspace.example/learning-goal.md",
             "workspace.example/progress.md",
             "workspace.example/sessions/2026-01-15-example.md",
+            "evaluation/reports/2026-11-06-antigravity-baseline.md",
             "workspace/.gitkeep",
             *UNIVERSAL_REQUIRED_PATHS,
             *RELEASE_REQUIRED_PATHS,
@@ -351,6 +372,11 @@ class RepositoryValidationTests(unittest.TestCase):
                     remaining_headings,
                     f"Missing or out-of-order README heading: {required_heading}",
                 )
+        for requirement in README_PORTFOLIO_REQUIREMENTS:
+            with self.subTest(portfolio_requirement=requirement):
+                self.assertIn(requirement, text)
+        self.assertIn("███████╗", text)
+        self.assertNotRegex(text, r"!\[[^\]]*\]\(https?://")
         for command in README_WORKSPACE_COMMANDS:
             with self.subTest(command=command):
                 self.assertIn(command, text)
@@ -380,7 +406,7 @@ class RepositoryValidationTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         text = (root / "README.md").read_text(encoding="utf-8")
         quick_start = text.split("## Quick start", 1)[1].split(
-            "## How a learning session works",
+            "## Supported hosts and project adapters",
             1,
         )[0]
         normalized_quick_start = " ".join(quick_start.split())
@@ -2328,7 +2354,7 @@ class RepositoryValidationTests(unittest.TestCase):
                 )
                 self.addCleanup(temp.cleanup)
                 guarded = root / "evaluation/reports/tracked-report.md"
-                guarded.parent.mkdir(parents=True)
+                guarded.parent.mkdir(parents=True, exist_ok=True)
                 guarded.write_text("# Sanitized report\n", encoding="utf-8")
                 subprocess.run(["git", "init", "-q"], cwd=root, check=True)
                 subprocess.run(
@@ -2376,7 +2402,7 @@ class RepositoryValidationTests(unittest.TestCase):
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
         report = root / "evaluation/reports/leak.md"
-        report.parent.mkdir(parents=True)
+        report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(
             "Authorization: Bearer provider-secret\n",
             encoding="utf-8",
