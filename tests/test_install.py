@@ -32,7 +32,7 @@ class InstallTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.source = self.root / "source"
         self.project = self.root / "project"
         self.source.mkdir()
@@ -1480,23 +1480,23 @@ class InstallTests(unittest.TestCase):
         first_relative = plan.previous_receipt.owned_paths[0]
         first_source = self.project.joinpath(*first_relative.split("/"))
         first_bytes = first_source.read_bytes()
-        safe_fs = __import__(
-            "socratic_learn.safe_fs",
-            fromlist=["_windows_handle_rename_no_replace"],
+        install_module = __import__(
+            "socratic_learn.install",
+            fromlist=["identity_bound_replace"],
         )
-        real_replace = safe_fs._windows_handle_rename_no_replace
+        real_replace = install_module.identity_bound_replace
         backup_moves = 0
 
-        def fail_backup(source_descriptor: int, destination: Path) -> None:
+        def fail_backup(source: Path, destination: Path, **kwargs: object) -> None:
             nonlocal backup_moves
             if ".socratic-learn-backup-" in str(destination):
                 backup_moves += 1
                 if backup_moves == 2:
                     raise OSError("injected backup failure")
-            real_replace(source_descriptor, destination)
+            real_replace(source, destination, **kwargs)
 
         with mock.patch(
-            "socratic_learn.safe_fs._windows_handle_rename_no_replace",
+            "socratic_learn.install.identity_bound_replace",
             side_effect=fail_backup,
         ):
             with self.assertRaises(FilesystemError) as raised:

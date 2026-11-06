@@ -24,7 +24,7 @@ from socratic_learn.manifest import sha256_bytes
 class BuildTests(unittest.TestCase):
     def make_repository(self, *, newline: str = "\n") -> tuple[TemporaryDirectory, Path]:
         temporary = TemporaryDirectory()
-        root = Path(temporary.name)
+        root = Path(temporary.name).resolve()
         contents = {
             "core/pedagogy.md": (
                 "# Pedagogy\n\n"
@@ -428,10 +428,8 @@ class BuildTests(unittest.TestCase):
             result = build_distribution(root)
             write_distribution(root, result)
             output = root / "out/prompt.md"
-            patcher = mock.patch.object(
-                Path,
-                "mkdir",
-                autospec=True,
+            patcher = mock.patch(
+                "socratic_learn.export.identity_bound_mkdir",
                 side_effect=OSError("output parent denied"),
             )
             return patcher, lambda: export_prompt(output, root=root), "out"

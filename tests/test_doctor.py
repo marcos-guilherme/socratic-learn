@@ -35,7 +35,7 @@ class DoctorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.source = Path(__file__).resolve().parents[1]
 
     def _installed(
