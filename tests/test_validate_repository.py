@@ -142,6 +142,10 @@ class RepositoryValidationTests(unittest.TestCase):
             "workspace/*\n!workspace/.gitkeep\n__pycache__/\n*.py[cod]\n",
             encoding="utf-8",
         )
+        (root / ".gitattributes").write_text(
+            "dist/* text eol=lf\n",
+            encoding="utf-8",
+        )
         for relative in (
             "README.md",
             "AGENTS.md",
@@ -932,6 +936,13 @@ class RepositoryValidationTests(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("Repository validation passed.\n", result.stdout)
+
+    def test_generated_distribution_is_checked_out_lf_only(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        attributes = root / ".gitattributes"
+        self.assertTrue(attributes.is_file())
+        rules = attributes.read_text(encoding="utf-8").splitlines()
+        self.assertIn("dist/* text eol=lf", rules)
 
 
 if __name__ == "__main__":

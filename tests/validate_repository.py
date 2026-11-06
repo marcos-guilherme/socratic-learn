@@ -17,6 +17,7 @@ from learning_tutor.manifest import validate_manifest
 REQUIRED_PATHS = (
     "README.md",
     "AGENTS.md",
+    ".gitattributes",
     ".gitignore",
     "core/pedagogy.md",
     "core/session-protocol.md",
@@ -278,6 +279,12 @@ def validate(root: Path) -> list[str]:
         rules = gitignore.read_text(encoding="utf-8").splitlines()
         if "workspace/*" not in rules or "!workspace/.gitkeep" not in rules:
             errors.append(".gitignore must ignore workspace except .gitkeep")
+
+    gitattributes = root / ".gitattributes"
+    if gitattributes.exists():
+        rules = gitattributes.read_text(encoding="utf-8").splitlines()
+        if "dist/* text eol=lf" not in rules:
+            errors.append(".gitattributes must enforce LF for dist/*")
 
     tracked, git_error = tracked_files(root)
     if git_error:
