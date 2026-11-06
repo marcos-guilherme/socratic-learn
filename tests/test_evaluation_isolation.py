@@ -174,6 +174,137 @@ class EvaluationIsolationTests(unittest.TestCase):
                         user_home=self.user_home,
                     )
 
+    def test_explicit_raw_root_rebases_like_macos_var_alias(self) -> None:
+        lexical_repository = self.outer / "var-alias" / "project" / "repo"
+        lexical_raw = lexical_repository / ".semantic-runs"
+
+        import evaluation.isolation as isolation
+
+        real_require = isolation._require_directory
+
+        def resolve_linked_boundary(path: Path, label: str) -> Path:
+            if label == "repository":
+                self.assertEqual(lexical_repository, Path(path))
+                return self.repository
+            return real_require(path, label)
+
+        with mock.patch(
+            "evaluation.isolation._require_directory",
+            side_effect=resolve_linked_boundary,
+        ):
+            layout = create_run_layout(
+                lexical_repository,
+                "suite",
+                "macos-var-style",
+                raw_root=lexical_raw,
+                runtime_base=self.runtime_base,
+                user_home=self.user_home,
+            )
+
+        self.assertEqual(
+            self.repository / ".semantic-runs" / "suite" / "macos-var-style",
+            layout.run_dir,
+        )
+        remove_runtime_root(layout, self.repository)
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction regression")
+    def test_explicit_raw_root_rebases_through_real_junction_ancestor(self) -> None:
+        physical_parent = self.outer / "physical-parent"
+        physical_repository = physical_parent / "repo"
+        physical_repository.mkdir(parents=True)
+        alias_parent = self.outer / "junction-parent"
+        self.make_directory_link(physical_parent, alias_parent)
+        lexical_repository = alias_parent / "repo"
+
+        layout = create_run_layout(
+            lexical_repository,
+            "suite",
+            "junction-repository",
+            raw_root=lexical_repository / ".semantic-runs",
+            runtime_base=self.runtime_base,
+            user_home=self.user_home,
+        )
+
+        self.assertEqual(
+            physical_repository
+            / ".semantic-runs"
+            / "suite"
+            / "junction-repository",
+            layout.run_dir,
+        )
+        remove_runtime_root(layout, physical_repository)
+
+    def test_explicit_raw_root_rejects_dotdot_escape_from_linked_repository(self) -> None:
+        lexical_repository = self.outer / "alias" / "repo"
+        escaping_raw = lexical_repository / ".semantic-runs" / ".." / ".." / "escape"
+
+        import evaluation.isolation as isolation
+
+        real_require = isolation._require_directory
+
+        def resolve_linked_boundary(path: Path, label: str) -> Path:
+            if label == "repository":
+                return self.repository
+            return real_require(path, label)
+
+        with mock.patch(
+            "evaluation.isolation._require_directory",
+            side_effect=resolve_linked_boundary,
+        ):
+            with self.assertRaisesRegex(ValueError, "raw_root"):
+                create_run_layout(
+                    lexical_repository,
+                    "suite",
+                    "dotdot-escape",
+                    raw_root=escaping_raw,
+                    runtime_base=self.runtime_base,
+                    user_home=self.user_home,
+                )
+
+        self.assertFalse((self.runtime_base / "suite" / "dotdot-escape").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows drive containment")
+    def test_explicit_raw_root_rejects_another_drive(self) -> None:
+        drive = "Z:" if self.repository.drive.upper() != "Z:" else "Y:"
+
+        with self.assertRaisesRegex(ValueError, "raw_root"):
+            self.layout("other-drive", raw_root=Path(f"{drive}/outside"))
+
+        self.assertFalse((self.runtime_base / "suite" / "other-drive").exists())
+
+    def test_explicit_raw_root_rejects_mocked_internal_reparse_escape(self) -> None:
+        linked_component = self.repository / "linked"
+        raw_root = linked_component / "raw"
+
+        import evaluation.isolation as isolation
+
+        real_check = isolation._is_link_or_reparse
+        with mock.patch(
+            "evaluation.isolation._is_link_or_reparse",
+            side_effect=lambda path: path == linked_component or real_check(path),
+        ):
+            with self.assertRaisesRegex(ValueError, "link|reparse"):
+                self.layout("mocked-link-escape", raw_root=raw_root)
+
+        self.assertFalse(
+            (self.runtime_base / "suite" / "mocked-link-escape").exists()
+        )
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction regression")
+    def test_explicit_raw_root_rejects_real_internal_junction_escape(self) -> None:
+        outside = self.outer / "outside-raw"
+        outside.mkdir()
+        linked_component = self.repository / "linked"
+        self.make_directory_link(outside, linked_component)
+
+        with self.assertRaisesRegex(ValueError, "link|reparse"):
+            self.layout(
+                "junction-link-escape",
+                raw_root=linked_component / "raw",
+            )
+
+        self.assertFalse((outside / "raw").exists())
+
     def test_existing_run_and_runtime_roots_are_rejected(self) -> None:
         first = self.layout("conceptual-physics")
         with self.assertRaises(ValueError):
