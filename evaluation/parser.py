@@ -203,11 +203,12 @@ def is_completion(event: dict[str, JsonValue], contract: StreamContract) -> bool
 
 
 def _merge_fragment(text: str, fragment: str) -> str:
-    """Merge losslessly unless content proves a strictly newer cumulative snapshot.
+    """Treat a strict extension as evidence of a newer cumulative snapshot.
 
     Equality and shorter-prefix relationships are ambiguous: they may be repeated
-    deltas, so they are appended. A strict extension is the only positive evidence
-    available in the captured contract that the fragment subsumes prior output.
+    deltas, so they are appended. The contract cannot distinguish a snapshot from
+    a genuine delta that itself starts with all accumulated text, so treating every
+    strict extension as cumulative remains an explicit ambiguity.
     """
     if not fragment:
         return text
