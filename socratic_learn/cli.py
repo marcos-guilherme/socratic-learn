@@ -10,6 +10,8 @@ from . import __version__
 from .__main__ import main as administrative_main
 from .errors import LearningTutorError, UsageError
 from .launcher import LaunchOptions, run_learning
+from .self_manage import uninstall, update_installation
+from .workspace import launcher_home
 
 _ADMIN_COMMANDS = {"build", "export", "install", "doctor"}
 _SELF_COMMANDS = {"update", "uninstall"}
@@ -34,6 +36,10 @@ def _build_parser() -> argparse.ArgumentParser:
             "  export\n"
             "  install\n"
             "  doctor\n"
+            "\n"
+            "Self-management commands:\n"
+            "  update\n"
+            "  uninstall [--delete-data [--yes]]\n"
             "\n"
             "Examples:\n"
             "  socratic linear algebra\n"
@@ -65,6 +71,37 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_self_command(arguments: list[str]) -> int:
+    command = arguments[0]
+    parser = _ArgumentParser(prog=f"socratic {command}", allow_abbrev=False)
+    if command == "update":
+        parser.parse_args(arguments[1:])
+        return update_installation(launcher_home(), Path(sys.executable))
+
+    parser.add_argument(
+        "--delete-data",
+        action="store_true",
+        help="also delete learner profiles, progress, and sessions",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="confirm deletion non-interactively (requires --delete-data)",
+    )
+    parsed = parser.parse_args(arguments[1:])
+    if parsed.yes and not parsed.delete_data:
+        raise UsageError(
+            "--yes requires --delete-data",
+            remediation="use 'socratic uninstall --delete-data --yes'",
+        )
+    return uninstall(
+        launcher_home(),
+        delete_data=parsed.delete_data,
+        confirm=input,
+        yes=parsed.yes,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] in _ADMIN_COMMANDS:
@@ -72,11 +109,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if arguments and arguments[0] in _SELF_COMMANDS:
-            command = arguments[0]
-            raise UsageError(
-                f"'{command}' is reserved for a future release",
-                remediation=f"use 'socratic learn {command}' to learn about it",
-            )
+            return _run_self_command(arguments)
 
         parsed = _build_parser().parse_intermixed_args(arguments)
         goal_words = parsed.goal
