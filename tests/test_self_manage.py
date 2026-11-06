@@ -136,6 +136,41 @@ class InstallChannelTests(unittest.TestCase):
             with self.assertRaises(IntegrityError):
                 load_install_channel(home)
 
+    def test_rejects_symlinked_executable_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            real_bin = root / "real-bin"
+            real_bin.mkdir()
+            executable = real_bin / "socratic"
+            executable.write_bytes(b"old")
+            linked_bin = root / "linked-bin"
+            try:
+                linked_bin.symlink_to(real_bin, target_is_directory=True)
+            except OSError:
+                self.skipTest("symbolic links are unavailable")
+            home = root / "home"
+            write_native_channel(home, linked_bin / "socratic")
+
+            with self.assertRaisesRegex(IntegrityError, "symbolic|reparse"):
+                load_install_channel(home)
+
+    def test_rejects_launcher_home_through_symlinked_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            executable = root / "socratic"
+            executable.write_bytes(b"old")
+            real_parent = root / "real-parent"
+            home = real_parent / "home"
+            write_native_channel(home, executable)
+            linked_parent = root / "linked-parent"
+            try:
+                linked_parent.symlink_to(real_parent, target_is_directory=True)
+            except OSError:
+                self.skipTest("symbolic links are unavailable")
+
+            with self.assertRaisesRegex(IntegrityError, "symbolic|reparse"):
+                load_install_channel(linked_parent / "home")
+
 
 class UpdateTests(unittest.TestCase):
     def test_python_install_reports_pipx_command_without_mutation(self) -> None:
@@ -329,7 +364,12 @@ class UninstallTests(unittest.TestCase):
                 "socratic_learn.self_manage._is_windows",
                 return_value=False,
             ):
-                uninstall(home, delete_data=False, confirm=lambda prompt: True)
+                uninstall(
+                    home,
+                    executable=executable,
+                    delete_data=False,
+                    confirm=lambda prompt: True,
+                )
 
             self.assertFalse(executable.exists())
             self.assertFalse((home / "channel.json").exists())
@@ -353,6 +393,7 @@ class UninstallTests(unittest.TestCase):
                 ):
                     result = uninstall(
                         home,
+                        executable=executable,
                         delete_data=True,
                         confirm=lambda value: prompts.append(value) or answer,
                     )
@@ -380,12 +421,46 @@ class UninstallTests(unittest.TestCase):
                 ):
                     uninstall(
                         home,
+                        executable=executable,
                         delete_data=True,
                         confirm=lambda prompt: answer,
                     )
 
                 self.assertFalse(executable.exists())
                 self.assertFalse(home.exists())
+
+    def test_uninstall_rejects_unrelated_metadata_before_any_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = root / "home"
+            home.mkdir()
+            running = root / "running-socratic.exe"
+            running.write_bytes(b"running")
+            unrelated = root / "unrelated.exe"
+            unrelated.write_bytes(b"unrelated")
+            record = home / "workspace/progress.md"
+            record.parent.mkdir()
+            record.write_text("private", encoding="utf-8")
+            write_native_channel(home, unrelated)
+            confirm = mock.Mock(return_value="yes")
+
+            with (
+                mock.patch("socratic_learn.self_manage._remove_native") as remove,
+                self.assertRaisesRegex(IntegrityError, "running program"),
+            ):
+                uninstall(
+                    home,
+                    executable=running,
+                    delete_data=True,
+                    confirm=confirm,
+                )
+
+            remove.assert_not_called()
+            confirm.assert_not_called()
+            self.assertEqual(b"running", running.read_bytes())
+            self.assertEqual(b"unrelated", unrelated.read_bytes())
+            self.assertEqual("private", record.read_text(encoding="utf-8"))
+            self.assertTrue((home / "channel.json").exists())
 
     def test_yes_without_delete_data_is_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

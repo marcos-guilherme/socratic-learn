@@ -100,6 +100,7 @@ class ConsoleCliTests(unittest.TestCase):
 
         remove.assert_called_once_with(
             home,
+            executable=mock.ANY,
             delete_data=True,
             confirm=mock.ANY,
             yes=True,

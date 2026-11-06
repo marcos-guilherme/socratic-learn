@@ -96,6 +96,7 @@ def _run_self_command(arguments: list[str]) -> int:
         )
     return uninstall(
         launcher_home(),
+        executable=Path(sys.executable),
         delete_data=parsed.delete_data,
         confirm=input,
         yes=parsed.yes,

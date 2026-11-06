@@ -6,7 +6,9 @@ import base64
 import json
 import os
 import shutil
+import stat
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -63,14 +65,65 @@ def _object_without_duplicate_keys(
     return result
 
 
+def _strict_unlinked_path(
+    path: Path,
+    *,
+    metadata_path: Path,
+    label: str,
+) -> Path:
+    absolute = Path(os.path.abspath(path))
+    for component in (*reversed(absolute.parents), absolute):
+        try:
+            status = os.lstat(component)
+        except OSError as error:
+            raise _channel_error(
+                f"{label} path must exist and be inspectable",
+                metadata_path,
+            ) from error
+        attributes = getattr(status, "st_file_attributes", 0)
+        reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        if stat.S_ISLNK(status.st_mode) or attributes & reparse_flag:
+            raise _channel_error(
+                f"{label} path must not traverse a symbolic link or reparse point",
+                metadata_path,
+            )
+    try:
+        return absolute.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise _channel_error(
+            f"{label} path could not be resolved safely",
+            metadata_path,
+        ) from error
+
+
 def load_install_channel(home: Path) -> InstallChannel | None:
     """Load strict native-channel metadata; absence denotes a pipx install."""
 
     metadata_path = home / "channel.json"
-    if not metadata_path.exists() and not metadata_path.is_symlink():
+    if not os.path.lexists(metadata_path):
         return None
-    if home.is_symlink() or metadata_path.is_symlink():
-        raise _channel_error("must not use symbolic links", metadata_path)
+    resolved_home = _strict_unlinked_path(
+        home,
+        metadata_path=metadata_path,
+        label="launcher home",
+    )
+    resolved_metadata = _strict_unlinked_path(
+        metadata_path,
+        metadata_path=metadata_path,
+        label="metadata",
+    )
+    try:
+        metadata_is_in_home = os.path.samefile(
+            resolved_metadata.parent,
+            resolved_home,
+        )
+    except OSError as error:
+        raise _channel_error(
+            "location could not be verified safely",
+            metadata_path,
+        ) from error
+    if not metadata_is_in_home:
+        raise _channel_error("must remain inside launcher home", metadata_path)
     try:
         document = json.loads(
             metadata_path.read_text(encoding="utf-8"),
@@ -90,11 +143,16 @@ def load_install_channel(home: Path) -> InstallChannel | None:
     if type(executable_value) is not str or not executable_value:
         raise _channel_error("executable must be a non-empty string", metadata_path)
     executable = Path(executable_value)
-    if not executable.is_absolute() or executable.is_symlink():
+    if not executable.is_absolute():
         raise _channel_error(
             "executable must be an absolute non-symbolic path",
             metadata_path,
         )
+    _strict_unlinked_path(
+        executable,
+        metadata_path=metadata_path,
+        label="executable",
+    )
     manifest_url = document["manifest_url"]
     if type(manifest_url) is not str or not manifest_url:
         raise _channel_error("manifest_url must be a non-empty string", metadata_path)
@@ -106,10 +164,43 @@ def _fetch_manifest(url: str) -> bytes:
         return response.read()
 
 
-def _same_path(left: Path, right: Path) -> bool:
-    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(
-        os.path.abspath(right)
+def _bind_executable(
+    running: Path,
+    installed: Path,
+    metadata_path: Path,
+) -> None:
+    resolved_running = _strict_unlinked_path(
+        running,
+        metadata_path=metadata_path,
+        label="running executable",
     )
+    resolved_installed = _strict_unlinked_path(
+        installed,
+        metadata_path=metadata_path,
+        label="installed executable",
+    )
+    try:
+        matches = os.path.samefile(resolved_running, resolved_installed)
+    except OSError as error:
+        raise _channel_error(
+            "executable identity could not be verified safely",
+            metadata_path,
+        ) from error
+    if not matches:
+        raise _channel_error(
+            "executable does not match the running program",
+            metadata_path,
+        )
+
+
+def _same_existing_file(left: Path, right: Path) -> bool:
+    try:
+        return os.path.samefile(
+            left.resolve(strict=True),
+            right.resolve(strict=True),
+        )
+    except (OSError, RuntimeError):
+        return False
 
 
 def _encode_path(path: Path) -> str:
@@ -199,11 +290,7 @@ def update_installation(
     if channel is None:
         output("Run: pipx upgrade socratic-learn")
         return 0
-    if executable.is_symlink() or not _same_path(executable, channel.executable):
-        raise _channel_error(
-            "executable does not match the running program",
-            home / "channel.json",
-        )
+    _bind_executable(executable, channel.executable, home / "channel.json")
 
     manifest = fetch_manifest(channel.manifest_url)
     artifacts = parse_release_manifest(
@@ -221,7 +308,7 @@ def update_installation(
     staged.unlink()
     try:
         published = fetch_artifact(artifact, staged)
-        if not _same_path(published, staged):
+        if not _same_existing_file(published, staged):
             raise IntegrityError(
                 "verified artifact was published to an unexpected path",
                 path=published,
@@ -303,6 +390,7 @@ def _remove_native(
 def uninstall(
     home: Path,
     *,
+    executable: Path | None = None,
     delete_data: bool,
     confirm: Callable[[str], object],
     yes: bool = False,
@@ -316,6 +404,12 @@ def uninstall(
     if channel is None:
         output("Run: pipx uninstall socratic-learn")
         return 0
+    running_executable = Path(sys.executable) if executable is None else executable
+    _bind_executable(
+        running_executable,
+        channel.executable,
+        home / "channel.json",
+    )
     if delete_data and not yes:
         answer = confirm(_DELETE_PROMPT)
         if type(answer) is not str or answer.strip().lower() not in {"y", "yes"}:
