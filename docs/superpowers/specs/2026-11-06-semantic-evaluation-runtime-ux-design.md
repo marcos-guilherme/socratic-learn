@@ -39,7 +39,7 @@ learning research.
    and model failures.
 3. Replace ambiguous agent terminology with runtime terminology in the public
    launcher experience.
-4. provide intuitive commands for starting a session, inspecting runtimes,
+4. Provide intuitive commands for starting a session, inspecting runtimes,
    changing the default, configuring the launcher, and diagnosing setup.
 5. Explain Pi thoroughly, including its relationship to providers, models,
    local inference, free tiers, and quota limits.
@@ -346,6 +346,7 @@ socratic runtimes
 socratic use RUNTIME
 socratic config
 socratic doctor
+socratic project doctor
 socratic update
 socratic uninstall
 ```
@@ -363,6 +364,8 @@ Behavior:
   manages only non-secret Socratic Learn preferences.
 - `socratic doctor` diagnoses launcher installation and configuration without
   invoking a model.
+- `socratic project doctor` runs the existing project-installation
+  diagnostics.
 - `--runtime RUNTIME` overrides the saved default for one session and does not
   mutate configuration.
 
@@ -401,9 +404,9 @@ to `default_runtime` in memory. The next explicit configuration write publishes
 schema two atomically. Unknown keys, invalid runtimes, malformed JSON, symlinks,
 and unsupported schemas remain fail-closed.
 
-Internal launcher names move from `AgentName` and host/agent wording to runtime
-terminology where practical. This is a source-level migration, not a new
-runtime abstraction over models.
+Internal launcher symbols and messages that represent Pi, Claude Code, or
+Antigravity move from agent or host wording to runtime terminology. This is a
+source-level naming migration, not a new runtime abstraction over models.
 
 ### Compatibility
 
@@ -414,7 +417,7 @@ runtime abstraction over models.
 - `python -m socratic_learn` administrative commands remain available.
 - `socratic doctor` becomes launcher diagnostics.
 - Project-installation diagnostics remain available through
-  `python -m socratic_learn doctor` and may also receive a namespaced
+  `python -m socratic_learn doctor` and receive a namespaced
   `socratic project doctor` alias.
 
 No compatibility alias may silently change the saved default.
@@ -463,7 +466,8 @@ Run 'socratic runtimes' to inspect detected runtimes or
 
 The launcher returns the child process exit status. It must not parse arbitrary
 provider output to guess billing state. Runtime-specific troubleshooting is
-documentation and optional static guidance, not credential introspection.
+documentation and static guidance for known error classes, not credential
+introspection.
 
 ## Documentation design
 
@@ -501,7 +505,7 @@ Ordinary automated tests cover:
 
 - command parsing and help text;
 - bare-start and explicit-start equivalence;
-- `runtimes`, `use`, `config`, and `doctor`;
+- `runtimes`, `use`, `config`, `doctor`, and `project doctor`;
 - one-shot runtime override without configuration mutation;
 - schema-one to schema-two migration;
 - deprecated `--agent` behavior;
