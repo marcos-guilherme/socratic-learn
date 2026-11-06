@@ -15,3 +15,5 @@ __pycache__/
 /.dist-staging-*/
 /dist/*.whl
 /dist/*.tar.gz
+
+/.semantic-runs/
