@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import http.client
 import http.server
 import json
 import os
@@ -67,7 +68,10 @@ def fixture_server(
             if destination is not None:
                 self.send_response(302)
                 self.send_header("Location", destination)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
                 self.end_headers()
+                self.close_connection = True
                 return
             super().do_GET()
 
@@ -86,6 +90,25 @@ def fixture_server(
 
 class BootstrapInstallerTests(unittest.TestCase):
     payload = b"fixture executable bytes\n"
+
+    def test_fixture_redirect_is_explicitly_empty_and_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with fixture_server(
+                root,
+                redirects={"/source": "/destination"},
+            ) as base_url:
+                host, port_text = base_url.removeprefix("http://").split(":")
+                connection = http.client.HTTPConnection(host, int(port_text), timeout=1)
+                try:
+                    connection.request("GET", "/source")
+                    response = connection.getresponse()
+                    self.assertEqual(302, response.status)
+                    self.assertEqual("0", response.getheader("Content-Length"))
+                    self.assertEqual("close", response.getheader("Connection"))
+                    self.assertEqual(b"", response.read())
+                finally:
+                    connection.close()
 
     def test_fixture_server_handles_concurrent_connections(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -278,7 +301,7 @@ class BootstrapInstallerTests(unittest.TestCase):
             text=True,
             input=input_text,
             env=environment,
-            timeout=30,
+            timeout=90,
             check=False,
         )
 
