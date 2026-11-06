@@ -100,6 +100,13 @@ class BootstrapInstallerTests(unittest.TestCase):
             shell.index('mv "$staged" "$target"'),
         )
 
+    def test_posix_channel_backup_is_random_private_and_exclusive(self) -> None:
+        shell = POSIX_INSTALLER.read_text(encoding="utf-8")
+
+        self.assertIn('mktemp -d "$channel_home/.channel-backup.XXXXXX"', shell)
+        self.assertIn('chmod 700 "$channel_backup_dir"', shell)
+        self.assertNotIn('channel.json.previous', shell)
+
     def test_installers_are_user_local_and_do_not_elevate(self) -> None:
         combined = (
             POWERSHELL_INSTALLER.read_text(encoding="utf-8")
@@ -165,6 +172,7 @@ class BootstrapInstallerTests(unittest.TestCase):
             "cat",
             "chmod",
             "mv",
+            "mktemp",
             "sha256sum",
             "shasum",
             "touch",
@@ -856,9 +864,14 @@ printf '302'
                 target = install_dir / "socratic"
                 channel = home / ".socratic-learn" / "channel.json"
                 previous_channel = b'{"previous":"exact bytes"}\n'
+                channel.parent.mkdir()
+                sentinel = root / "external-sentinel"
+                sentinel_bytes = b"must remain unchanged\n"
+                sentinel.write_bytes(sentinel_bytes)
+                predictable_backup = channel.parent / "channel.json.previous"
+                predictable_backup.symlink_to(sentinel)
                 if reinstall:
                     target.write_bytes(b"existing")
-                    channel.parent.mkdir()
                     channel.write_bytes(previous_channel)
                 system = {"Linux": "linux", "Darwin": "macos"}.get(platform.system())
                 if system is None or platform.machine().lower() not in (
@@ -912,6 +925,7 @@ printf '302'
                 else:
                     self.assertFalse(target.exists())
                     self.assertFalse(channel.exists())
+                self.assertEqual(sentinel_bytes, sentinel.read_bytes())
 
 
 if __name__ == "__main__":

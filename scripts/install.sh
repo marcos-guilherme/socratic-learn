@@ -108,11 +108,12 @@ staged="$install_dir/socratic.new"
 checksums="$install_dir/SHA256SUMS.new"
 channel_target="$channel_home/channel.json"
 channel_staged="$channel_home/channel.json.new"
-channel_backup="$channel_home/channel.json.previous"
+channel_backup_dir=
+channel_backup=
 
 cleanup() {
     rm -f \
-        "$staged" "$checksums" "$channel_staged" "$channel_backup" \
+        "$staged" "$checksums" "$channel_staged" \
         "$staged.part" "$staged.headers" \
         "$checksums.part" "$checksums.headers"
 }
@@ -272,16 +273,29 @@ EOF
 chmod 755 "$staged"
 channel_existed=0
 if [ -e "$channel_target" ] || [ -L "$channel_target" ]; then
+    channel_backup_dir=$(mktemp -d "$channel_home/.channel-backup.XXXXXX")
+    chmod 700 "$channel_backup_dir"
+    channel_backup="$channel_backup_dir/channel.json"
     cat "$channel_target" >"$channel_backup"
     channel_existed=1
 fi
 mv "$channel_staged" "$channel_target"
 if mv "$staged" "$target"; then
-    rm -f "$channel_backup"
+    if [ "$channel_existed" -eq 1 ]; then
+        rm -f "$channel_backup"
+        rmdir "$channel_backup_dir"
+        channel_backup_dir=
+    fi
 else
     publication_status=$?
     if [ "$channel_existed" -eq 1 ]; then
-        mv "$channel_backup" "$channel_target"
+        if mv "$channel_backup" "$channel_target"; then
+            rmdir "$channel_backup_dir"
+            channel_backup_dir=
+        else
+            printf '%s\n' \
+                "Executable publication and channel rollback failed; recovery copy: $channel_backup" >&2
+        fi
     else
         rm -f "$channel_target"
     fi

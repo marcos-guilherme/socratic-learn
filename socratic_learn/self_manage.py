@@ -25,6 +25,7 @@ from .release import (
     parse_release_manifest,
     select_artifact,
 )
+from .windows_security import trusted_windows_powershell
 
 
 _CHANNEL_KEYS = {
@@ -223,10 +224,12 @@ def _write_helper(script: str) -> Path:
     return helper
 
 
-def _spawn_helper(helper: Path) -> None:
+def _spawn_helper(helper: Path, *, powershell: Path | None = None) -> None:
+    if powershell is None:
+        powershell = trusted_windows_powershell()
     subprocess.Popen(
         [
-            "powershell.exe",
+            str(powershell),
             "-NoProfile",
             "-NonInteractive",
             "-File",
@@ -292,7 +295,12 @@ def _replacement_script(staged: Path, destination: Path) -> str:
     )
 
 
-def _replace_native(staged: Path, executable: Path) -> None:
+def _replace_native(
+    staged: Path,
+    executable: Path,
+    *,
+    powershell: Path | None = None,
+) -> None:
     if not _is_windows():
         staged.chmod(0o755)
         os.replace(staged, executable)
@@ -300,8 +308,10 @@ def _replace_native(staged: Path, executable: Path) -> None:
 
     helper: Path | None = None
     try:
+        if powershell is None:
+            powershell = trusted_windows_powershell()
         helper = _write_helper(_replacement_script(staged, executable))
-        _spawn_helper(helper)
+        _spawn_helper(helper, powershell=powershell)
     except BaseException:
         staged.unlink(missing_ok=True)
         if helper is not None:
@@ -324,6 +334,7 @@ def update_installation(
         output("Run: pipx upgrade socratic-learn")
         return 0
     _bind_executable(executable, channel.executable, home / "channel.json")
+    powershell = trusted_windows_powershell() if _is_windows() else None
 
     manifest = fetch_manifest(channel.manifest_url)
     artifacts = parse_release_manifest(
@@ -346,7 +357,11 @@ def update_installation(
                 "verified artifact was published to an unexpected path",
                 path=published,
             )
-        _replace_native(staged, channel.executable)
+        _replace_native(
+            staged,
+            channel.executable,
+            powershell=powershell,
+        )
     except BaseException:
         staged.unlink(missing_ok=True)
         raise
@@ -400,6 +415,7 @@ def _remove_native(
     if _is_windows():
         helper: Path | None = None
         try:
+            powershell = trusted_windows_powershell()
             helper = _write_helper(
                 _uninstall_script(
                     executable,
@@ -407,7 +423,7 @@ def _remove_native(
                     home if delete_data else None,
                 )
             )
-            _spawn_helper(helper)
+            _spawn_helper(helper, powershell=powershell)
         except BaseException:
             if helper is not None:
                 helper.unlink(missing_ok=True)

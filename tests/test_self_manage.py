@@ -16,6 +16,7 @@ from socratic_learn.release import ReleaseArtifact
 from socratic_learn.self_manage import (
     InstallChannel,
     _replacement_script,
+    _spawn_helper,
     load_install_channel,
     uninstall,
     update_installation,
@@ -177,6 +178,127 @@ class InstallChannelTests(unittest.TestCase):
 
 
 class UpdateTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows helper policy runs on Windows")
+    def test_windows_helper_ignores_hostile_cwd_and_path_powershell(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            hostile = root / "powershell.exe"
+            hostile.write_bytes(b"hostile executable")
+            helper = root / "helper.ps1"
+            helper.write_text("exit 0\n", encoding="utf-8")
+            marker = root / "hostile-ran"
+            commands: list[list[str]] = []
+
+            def capture(command: list[str], **kwargs: object) -> mock.Mock:
+                commands.append(command)
+                if Path(command[0]) == hostile:
+                    marker.write_text("executed", encoding="utf-8")
+                return mock.Mock()
+
+            with (
+                mock.patch(
+                    "socratic_learn.self_manage.subprocess.Popen",
+                    side_effect=capture,
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "PATH": str(root),
+                        "SYSTEMROOT": os.environ["SYSTEMROOT"],
+                    },
+                ),
+            ):
+                _spawn_helper(helper)
+
+            expected = (
+                Path(os.environ["SYSTEMROOT"])
+                / "System32"
+                / "WindowsPowerShell"
+                / "v1.0"
+                / "powershell.exe"
+            )
+            self.assertEqual(expected, Path(commands[0][0]))
+            self.assertNotEqual(hostile, Path(commands[0][0]))
+            self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows helper policy runs on Windows")
+    def test_windows_helper_rejects_missing_trusted_powershell_before_spawn(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            helper = root / "helper.ps1"
+            helper.write_text("must remain", encoding="utf-8")
+            popen = mock.Mock()
+
+            with (
+                mock.patch(
+                    "socratic_learn.self_manage.subprocess.Popen",
+                    popen,
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "PATH": str(root),
+                        "SYSTEMROOT": str(root / "missing-windows"),
+                    },
+                ),
+                self.assertRaisesRegex(UsageError, "trusted Windows PowerShell"),
+            ):
+                _spawn_helper(helper)
+
+            popen.assert_not_called()
+            self.assertEqual("must remain", helper.read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(os.name == "nt", "Windows helper policy runs on Windows")
+    def test_windows_helper_rejects_reparse_point_in_trusted_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            real_root = root / "real-windows"
+            powershell = (
+                real_root
+                / "System32"
+                / "WindowsPowerShell"
+                / "v1.0"
+                / "powershell.exe"
+            )
+            powershell.parent.mkdir(parents=True)
+            powershell.write_bytes(b"not executed")
+            linked_root = root / "linked-windows"
+            junction = subprocess.run(
+                [
+                    os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe"),
+                    "/d",
+                    "/c",
+                    "mklink",
+                    "/J",
+                    str(linked_root),
+                    str(real_root),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if junction.returncode != 0:
+                self.skipTest("directory junctions are unavailable")
+            helper = root / "helper.ps1"
+            helper.write_text("must remain", encoding="utf-8")
+            popen = mock.Mock()
+
+            with (
+                mock.patch(
+                    "socratic_learn.self_manage.subprocess.Popen",
+                    popen,
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {"SYSTEMROOT": str(linked_root)},
+                ),
+                self.assertRaisesRegex(UsageError, "without links"),
+            ):
+                _spawn_helper(helper)
+
+            popen.assert_not_called()
+            self.assertEqual("must remain", helper.read_text(encoding="utf-8"))
+
     def test_python_install_reports_pipx_command_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
@@ -201,6 +323,37 @@ class UpdateTests(unittest.TestCase):
 
             with self.assertRaises(IntegrityError):
                 update_installation(home, home / "other")
+
+    @unittest.skipUnless(os.name == "nt", "Windows helper policy runs on Windows")
+    def test_windows_update_rejects_missing_trusted_powershell_before_fetch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            executable = home / "bin/socratic.exe"
+            executable.parent.mkdir()
+            executable.write_bytes(b"old")
+            write_native_channel(home, executable)
+            fetch_manifest = mock.Mock(return_value=fake_manifest(MANIFEST_URL))
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"SYSTEMROOT": str(home / "missing-windows")},
+                ),
+                self.assertRaisesRegex(UsageError, "trusted Windows PowerShell"),
+            ):
+                update_installation(
+                    home,
+                    executable,
+                    fetch_manifest=fetch_manifest,
+                    fetch_artifact=fake_artifact,
+                )
+
+            fetch_manifest.assert_not_called()
+            self.assertEqual(b"old", executable.read_bytes())
+            self.assertEqual(
+                {"socratic.exe"},
+                {path.name for path in executable.parent.iterdir()},
+            )
 
     def test_posix_update_replaces_verified_artifact_and_sets_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -438,6 +591,40 @@ class UpdateTests(unittest.TestCase):
 
 
 class UninstallTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows helper policy runs on Windows")
+    def test_windows_uninstall_rejects_missing_trusted_powershell_without_mutation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "home"
+            executable = Path(temporary) / "bin/socratic.exe"
+            executable.parent.mkdir()
+            executable.write_bytes(b"old")
+            write_native_channel(home, executable)
+            popen = mock.Mock()
+
+            with (
+                mock.patch(
+                    "socratic_learn.self_manage.subprocess.Popen",
+                    popen,
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {"SYSTEMROOT": str(Path(temporary) / "missing-windows")},
+                ),
+                self.assertRaisesRegex(UsageError, "trusted Windows PowerShell"),
+            ):
+                uninstall(
+                    home,
+                    executable=executable,
+                    delete_data=False,
+                    confirm=lambda prompt: self.fail("must not prompt"),
+                )
+
+            popen.assert_not_called()
+            self.assertEqual(b"old", executable.read_bytes())
+            self.assertTrue((home / "channel.json").exists())
+
     def test_python_install_reports_pipx_command_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
