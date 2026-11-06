@@ -117,12 +117,15 @@ README_PORTFOLIO_REQUIREMENTS = (
 )
 README_UNSUPPORTED_EFFECTIVENESS_PATTERNS = (
     re.compile(
-        r"\bSocratic Learn (?:is )?(?:proven|scientifically validated)\b",
+        r"\bSocratic[ \t\r\n]+Learn[ \t\r\n]+"
+        r"(?:is[ \t\r\n]+)?"
+        r"(?:proven|scientifically[ \t\r\n]+validated)\b",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:research|studies|literature) "
-        r"(?:proves?|validates?) (?:that )?Socratic Learn\b",
+        r"\b(?:research|studies|literature)[ \t\r\n]+"
+        r"(?:proves?|validates?)[ \t\r\n]+"
+        r"(?:that[ \t\r\n]+)?Socratic[ \t\r\n]+Learn\b",
         re.IGNORECASE,
     ),
 )

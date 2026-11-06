@@ -535,17 +535,58 @@ class RepositoryValidationTests(unittest.TestCase):
                     validate(root),
                 )
 
+    def test_validator_rejects_each_missing_portfolio_requirement(self) -> None:
+        for requirement in README_PORTFOLIO_REQUIREMENTS:
+            with self.subTest(requirement=requirement):
+                temp, root = self.make_root()
+                self.addCleanup(temp.cleanup)
+                readme = root / "README.md"
+                text = readme.read_text(encoding="utf-8")
+                self.assertIn(requirement, text)
+                readme.write_text(
+                    text.replace(requirement, "removed portfolio requirement"),
+                    encoding="utf-8",
+                )
+                self.assertIn(
+                    "README.md is missing portfolio narrative",
+                    validate(root),
+                )
+
     def test_validator_rejects_unsupported_effectiveness_claim(self) -> None:
+        claims = (
+            "Socratic Learn is proven to improve learning.",
+            "Socratic Learn is scientifically\nvalidated to improve learning.",
+            "Research\nproves that Socratic Learn improves learning.",
+            "Studies validate\nSocratic Learn.",
+            "Literature validates that\nSocratic Learn.",
+        )
+        for claim in claims:
+            with self.subTest(claim=claim):
+                temp, root = self.make_root()
+                self.addCleanup(temp.cleanup)
+                readme = root / "README.md"
+                readme.write_text(
+                    readme.read_text(encoding="utf-8") + f"\n{claim}\n",
+                    encoding="utf-8",
+                )
+
+                self.assertIn(
+                    "README.md contains an unsupported effectiveness claim",
+                    validate(root),
+                )
+
+    def test_validator_allows_negated_effectiveness_wording(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
         readme = root / "README.md"
         readme.write_text(
             readme.read_text(encoding="utf-8")
-            + "\nSocratic Learn is scientifically validated to improve learning.\n",
+            + "\nSocratic Learn is not proven to improve learning.\n"
+            + "Research does not prove that Socratic Learn improves learning.\n",
             encoding="utf-8",
         )
 
-        self.assertIn(
+        self.assertNotIn(
             "README.md contains an unsupported effectiveness claim",
             validate(root),
         )
