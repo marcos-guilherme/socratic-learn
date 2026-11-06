@@ -44,6 +44,7 @@ _MANUAL_STOP_REASONS = frozenset(
         "critical_pedagogical_failure",
     }
 )
+_EMPTY_TUTOR_TURN_DETAIL = "Tutor completed without response text."
 
 
 class TutorSession(Protocol):
@@ -223,11 +224,17 @@ def run_session(
     tutor_turns: list[TutorTurn] = []
     learner_responses: list[str] = []
     pending = initial_request
+    pending_is_learner_response = False
     suite_id = _suite_id(destination, run_id)
 
     while True:
         try:
             tutor_turn = tutor.send(pending)
+            if tutor_turn.completed and not tutor_turn.text.strip():
+                raise InfrastructureFailure(
+                    "runtime",
+                    _EMPTY_TUTOR_TURN_DETAIL,
+                )
         except InfrastructureFailure as failure:
             record = _run_record(
                 scenario=scenario,
@@ -252,6 +259,9 @@ def run_session(
                 tutor=tutor_turn.text,
             )
         )
+        if pending_is_learner_response:
+            learner_responses.append(pending)
+            collector.learner_response_count = len(learner_responses)
 
         decision = evaluator.decide(
             EvaluatorContext(
@@ -304,8 +314,7 @@ def run_session(
             return record
 
         pending = decision.response
-        learner_responses.append(pending)
-        collector.learner_response_count = len(learner_responses)
+        pending_is_learner_response = True
 
 
 def infrastructure_record(
@@ -442,6 +451,8 @@ def execute_isolated_run(
         raise
     finally:
         failed_steps: list[str] = []
+        cleanup_primary: BaseException | None = None
+        cleanup_failures: list[tuple[str, str]] = []
         steps: tuple[tuple[str, Callable[[], object]], ...] = (
             (
                 "close",
@@ -458,11 +469,25 @@ def execute_isolated_run(
                 step()
             except BaseException as cleanup_error:
                 failed_steps.append(name)
+                cleanup_failures.append((name, type(cleanup_error).__name__))
                 if primary is not None:
                     primary.add_note(
                         f"cleanup step {name} failed: "
                         f"{type(cleanup_error).__name__}"
                     )
+                elif cleanup_primary is not None:
+                    cleanup_primary.add_note(
+                        f"cleanup step {name} failed: "
+                        f"{type(cleanup_error).__name__}"
+                    )
+                elif not isinstance(cleanup_error, Exception):
+                    cleanup_primary = cleanup_error
+                    for failed_name, failure_type in cleanup_failures:
+                        cleanup_primary.add_note(
+                            f"cleanup step {failed_name} failed: {failure_type}"
+                        )
+        if cleanup_primary is not None:
+            raise cleanup_primary
         if failed_steps and primary is None:
             raise RuntimeCleanupError(failed_steps) from None
 

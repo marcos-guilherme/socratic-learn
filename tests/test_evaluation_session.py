@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -72,6 +73,7 @@ class FakeTutor:
         failure: BaseException | None = None,
         close_failure: BaseException | None = None,
         start_failure: BaseException | None = None,
+        turn_texts: list[str] | None = None,
     ) -> None:
         self.messages: list[str] = []
         self.events: list[str] = []
@@ -79,6 +81,7 @@ class FakeTutor:
         self.failure = failure
         self.close_failure = close_failure
         self.start_failure = start_failure
+        self.turn_texts = list(turn_texts or [])
         self.close_calls = 0
 
     def start(self) -> None:
@@ -91,8 +94,13 @@ class FakeTutor:
         self.events.append(f"send-{len(self.messages)}")
         if self.failure_at == len(self.messages) and self.failure is not None:
             raise self.failure
+        text = (
+            self.turn_texts[len(self.messages) - 1]
+            if len(self.messages) <= len(self.turn_texts)
+            else f"tutor-{len(self.messages)}"
+        )
         return TutorTurn(
-            text=f"tutor-{len(self.messages)}",
+            text=text,
             event_count=1,
             completed=True,
         )
@@ -149,6 +157,7 @@ class EvaluationSessionLoopTests(unittest.TestCase):
         self.assertEqual(16, len(tutor.messages))
         self.assertEqual("Synthetic public-launcher bootstrap.", tutor.messages[0])
         self.assertEqual(16, len(record.turns))
+        self.assertEqual(len(record.turns) - 1, record.learner_response_count)
 
     def test_evaluator_stop_precedes_cap_after_fifteenth_response(self) -> None:
         evaluator = ScriptedEvaluator(
@@ -244,9 +253,45 @@ class EvaluationSessionLoopTests(unittest.TestCase):
             progress=progress,
         )
 
-        self.assertEqual(2, record.learner_response_count)
+        self.assertEqual(1, record.learner_response_count)
         self.assertEqual(2, len(record.turns))
         self.assertEqual("network", record.infrastructure_failure)
+        self.assertEqual(len(record.turns) - 1, record.learner_response_count)
+
+    def test_empty_completed_tutor_turn_is_runtime_infrastructure(self) -> None:
+        record = run_session(
+            scenario(),
+            FakeTutor(turn_texts=[" \t\r\n"]),
+            ExplodingEvaluator(),  # type: ignore[arg-type]
+            identity(),
+            "bootstrap",
+            "empty-turn",
+        )
+
+        self.assertEqual("infrastructure_failure", record.stop_reason)
+        self.assertEqual("runtime", record.infrastructure_failure)
+        self.assertEqual(0, record.learner_response_count)
+        self.assertEqual((), record.turns)
+
+    def test_empty_completed_turn_private_record_reloads(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / ".semantic-runs" / "suite-a" / "synthetic"
+            run_dir.mkdir(parents=True)
+            path = run_dir / "run-record.json"
+
+            record = run_session(
+                scenario(),
+                FakeTutor(turn_texts=[""]),
+                ExplodingEvaluator(),  # type: ignore[arg-type]
+                identity(),
+                "bootstrap",
+                "empty-record",
+                record_path=path,
+            )
+
+            self.assertEqual(record, load_run_record(path))
+            self.assertEqual("runtime", record.infrastructure_failure)
+            self.assertEqual((), record.turns)
 
     def test_record_path_must_be_private_and_must_not_exist(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -499,6 +544,7 @@ class IsolatedRunTests(unittest.TestCase):
         record = load_run_record(layout.run_dir / "run-record.json")
         self.assertEqual("runtime", record.infrastructure_failure)
         self.assertEqual(2, len(record.turns))
+        self.assertEqual(1, record.learner_response_count)
         failure = json.loads((layout.run_dir / "failure.json").read_text("utf-8"))
         self.assertEqual(
             {"exception_type": "RuntimeError", "phase": "session"},
@@ -606,13 +652,57 @@ class IsolatedRunTests(unittest.TestCase):
 
     def test_base_exception_cleanup_failure_still_runs_later_steps(self) -> None:
         layout = self.layout()
-        tutor = FakeTutor(close_failure=KeyboardInterrupt())
+        interrupt = KeyboardInterrupt()
+        tutor = FakeTutor(close_failure=interrupt)
+        events: list[str] = []
+        real_remove = remove_runtime_root
 
-        with self.assertRaises(RuntimeCleanupError) as raised:
-            self.execute(layout, tutor)
+        def fail_snapshot(value):
+            events.append("snapshot")
+            raise RuntimeError("private snapshot detail")
 
-        self.assertEqual(("close",), raised.exception.failed_steps)
-        self.assertTrue((layout.run_dir / "learner-records").is_dir())
+        def remove(value, repository):
+            events.append("remove-runtime")
+            real_remove(value, repository)
+
+        with (
+            mock.patch("evaluation.session.snapshot_learner_records", fail_snapshot),
+            mock.patch("evaluation.session.remove_runtime_root", remove),
+        ):
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                self.execute(layout, tutor)
+
+        self.assertIs(interrupt, raised.exception)
+        self.assertEqual(["snapshot", "remove-runtime"], events)
+        self.assertIn(
+            "cleanup step snapshot failed: RuntimeError",
+            getattr(interrupt, "__notes__", ()),
+        )
+        self.assertFalse(layout.runtime_root.exists())
+
+    def test_system_exit_cleanup_failure_is_preserved_after_removal(self) -> None:
+        layout = self.layout()
+        interrupt = SystemExit(17)
+        events: list[str] = []
+        real_remove = remove_runtime_root
+
+        def fail_snapshot(value):
+            events.append("snapshot")
+            raise interrupt
+
+        def remove(value, repository):
+            events.append("remove-runtime")
+            real_remove(value, repository)
+
+        with (
+            mock.patch("evaluation.session.snapshot_learner_records", fail_snapshot),
+            mock.patch("evaluation.session.remove_runtime_root", remove),
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                self.execute(layout, FakeTutor())
+
+        self.assertIs(interrupt, raised.exception)
+        self.assertEqual(["snapshot", "remove-runtime"], events)
         self.assertFalse(layout.runtime_root.exists())
 
     def test_all_cleanup_steps_are_attempted_in_fixed_order(self) -> None:
@@ -844,6 +934,10 @@ class EvaluationCliTests(unittest.TestCase):
             )
         self.assertEqual(2, result)
         self.assertEqual(["remove"], events)
+        self.assertEqual(
+            "BLOCKED: Semantic evaluation run failed.\n",
+            error.getvalue(),
+        )
         self.assertNotIn("secret", error.getvalue())
         self.assertNotIn("Users", error.getvalue())
         self.assertNotIn("provider prose", error.getvalue())
@@ -916,6 +1010,10 @@ class EvaluationCliTests(unittest.TestCase):
 
         self.assertEqual(2, result)
         create.assert_not_called()
+        self.assertEqual(
+            "BLOCKED: Semantic evaluation precheck refused.\n",
+            error.getvalue(),
+        )
         self.assertNotIn("secret", error.getvalue())
         self.assertNotIn("Users", error.getvalue())
         self.assertNotIn("provider transcript", error.getvalue())
@@ -957,20 +1055,17 @@ class EvaluationCliTests(unittest.TestCase):
             repository = Path(temporary)
             existing = repository / ".semantic-runs" / "suite" / "synthetic"
             existing.mkdir(parents=True)
-            checked = type(
-                "Preflight",
-                (),
-                {
-                    "model": "validated-model",
-                    "runtime_version": "1.5.2",
-                    "contract": object(),
-                    "identity": identity(),
-                },
-            )()
+            process_calls = 0
+
+            def forbidden_process(argv, **kwargs):
+                nonlocal process_calls
+                process_calls += 1
+                raise AssertionError("existing run must refuse before subprocess")
+
+            error = io.StringIO()
             with (
                 mock.patch.object(cli, "REPOSITORY", repository),
                 mock.patch.object(cli, "load_scenario", return_value=scenario()),
-                mock.patch.object(cli, "_preflight", return_value=checked),
                 mock.patch.object(cli, "create_run_layout") as create,
             ):
                 result = cli.main(
@@ -984,11 +1079,112 @@ class EvaluationCliTests(unittest.TestCase):
                         ".semantic-runs/contract/model.txt",
                     ],
                     output=io.StringIO(),
-                    error=io.StringIO(),
+                    error=error,
+                    run_process=forbidden_process,
                 )
 
         self.assertEqual(2, result)
+        self.assertEqual(0, process_calls)
         create.assert_not_called()
+        self.assertEqual(
+            "BLOCKED: Semantic evaluation precheck refused.\n",
+            error.getvalue(),
+        )
+
+    def test_invoke_has_bounded_timeout_and_classifies_timeout(self) -> None:
+        from evaluation import cli
+
+        observed: dict[str, object] = {}
+
+        def time_out(argv, **kwargs):
+            observed.update(kwargs)
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+
+        with self.assertRaisesRegex(
+            cli.CliRefusal,
+            "^Required preflight command timed out[.]$",
+        ):
+            cli._invoke(time_out, ("agy", "models"), Path.cwd())
+
+        self.assertEqual(cli.PREFLIGHT_TIMEOUT_SECONDS, observed["timeout"])
+
+    def test_verify_command_uses_fixed_isolation_failure_message(self) -> None:
+        from evaluation import cli
+
+        error = io.StringIO()
+        with mock.patch.object(
+            cli,
+            "verify_run_isolation",
+            side_effect=ValueError("C:\\Users\\private runtime path"),
+        ):
+            result = cli.main(
+                [
+                    "verify-isolation",
+                    "--suite-id",
+                    "suite",
+                    "--scenario",
+                    "synthetic",
+                ],
+                output=io.StringIO(),
+                error=error,
+            )
+
+        self.assertEqual(2, result)
+        self.assertEqual(
+            "BLOCKED: Post-run isolation verification failed.\n",
+            error.getvalue(),
+        )
+        self.assertNotIn("Users", error.getvalue())
+
+    def test_run_uses_fixed_post_run_isolation_failure_message(self) -> None:
+        from evaluation import cli
+
+        preflight = type(
+            "Preflight",
+            (),
+            {
+                "model": "validated-model",
+                "runtime_version": "1.5.2",
+                "contract": object(),
+                "identity": identity(),
+            },
+        )()
+        fake_layout = type(
+            "Layout",
+            (),
+            {"run_dir": Path(".semantic-runs/suite/synthetic")},
+        )()
+        error = io.StringIO()
+        with (
+            mock.patch.object(cli, "_preflight", return_value=preflight),
+            mock.patch.object(cli, "load_scenario", return_value=scenario()),
+            mock.patch.object(cli, "create_run_layout", return_value=fake_layout),
+            mock.patch.object(cli, "execute_isolated_run"),
+            mock.patch.object(
+                cli,
+                "verify_run_isolation",
+                side_effect=ValueError("private isolation path"),
+            ),
+        ):
+            result = cli.main(
+                [
+                    "run",
+                    "--suite-id",
+                    "suite",
+                    "--scenario",
+                    "synthetic",
+                    "--model-file",
+                    ".semantic-runs/contract/model.txt",
+                ],
+                output=io.StringIO(),
+                error=error,
+            )
+
+        self.assertEqual(2, result)
+        self.assertEqual(
+            "BLOCKED: Post-run isolation verification failed.\n",
+            error.getvalue(),
+        )
 
     def test_usage_errors_do_not_echo_unsafe_arguments(self) -> None:
         from evaluation import cli
