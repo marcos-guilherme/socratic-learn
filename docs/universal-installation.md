@@ -58,14 +58,27 @@ project-local prompt and private workspace as the other targets.
 Every install records schema-1 ownership in
 `.learning-tutor/install.json`. A clean install refuses an existing
 `.learning-tutor/` path or native adapter destination. There is no `--force`
-option. The installer modifies only paths listed in its receipt and does not
-automatically merge, replace, or delete pre-existing agent files.
+option. The receipt lists managed files and hashes every managed file except
+the receipt itself. The installer also creates parent directories needed to
+publish those files, but parent directories, staging directories, backup
+directories, and recovery directories are not managed-file receipt entries
+and are not receipt-hashed. The installer does not automatically merge,
+replace, or delete pre-existing agent files.
 
-Publication is deliberately conservative. If a failure occurs after any path
-may have been published, the operation preserves partial published paths,
-private staging directories, and backups for manual recovery. The error lists
-those locations. Do not rerun installation or delete them blindly: inspect the
-listed paths, establish ownership, recover manually, and then run doctor.
+After a successful install or update, private staging and backup directories
+are removed; required installation and adapter parent directories remain as
+containers for managed files. Before publication, failed operations clean up
+operation-created temporary paths when their identity is known and cleanup is
+safe.
+
+Publication is deliberately conservative. If a failure occurs after a path
+may have been published, or if identity-safe restoration or cleanup cannot be
+proved, the operation preserves partial published paths, staging directories,
+backups, and any other reported recovery paths for manual recovery. Those
+preserved paths are recovery evidence, not newly adopted managed-file receipt
+entries. The error lists their locations. Do not rerun installation or delete
+them blindly: inspect the listed paths, establish identity and ownership,
+recover manually, and then run doctor.
 
 ## Updating
 

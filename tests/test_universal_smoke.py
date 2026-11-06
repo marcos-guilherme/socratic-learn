@@ -1,19 +1,17 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from learning_tutor import TARGETS
-from learning_tutor.build import build_distribution
-from learning_tutor.doctor import diagnose
-from learning_tutor.errors import IntegrityError
-from learning_tutor.install import apply_install, plan_install
-
 
 class UniversalSmokeTests(unittest.TestCase):
+    TARGETS = ("generic", "cursor", "claude-code", "pi")
+
     def _tracked_copy(self, destination: Path) -> None:
         root = Path(__file__).resolve().parents[1]
         result = subprocess.run(
@@ -32,6 +30,27 @@ class UniversalSmokeTests(unittest.TestCase):
             shutil.copy2(source, target)
 
     @staticmethod
+    def _isolated_environment() -> dict[str, str]:
+        environment = os.environ.copy()
+        environment.pop("PYTHONPATH", None)
+        return environment
+
+    def _run_cli(
+        self,
+        source: Path,
+        *arguments: str,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-m", "learning_tutor", *arguments],
+            cwd=source,
+            env=self._isolated_environment(),
+            check=check,
+            capture_output=True,
+            text=True,
+        )
+
+    @staticmethod
     def _snapshot(project: Path) -> dict[str, bytes]:
         return {
             path.relative_to(project).as_posix(): path.read_bytes()
@@ -46,28 +65,30 @@ class UniversalSmokeTests(unittest.TestCase):
             source.mkdir()
             self._tracked_copy(source)
 
-            first = build_distribution(source)
-            second = build_distribution(source)
-            self.assertEqual(first.bundle, second.bundle)
-            self.assertEqual(first.manifest, second.manifest)
-            self.assertEqual(
-                first.bundle,
-                (source / "dist/learning-tutor.prompt.md").read_bytes(),
-            )
-            self.assertEqual(
-                first.manifest,
-                (source / "dist/manifest.json").read_bytes(),
-            )
+            self._run_cli(source, "build")
+            first = {
+                path.name: path.read_bytes()
+                for path in (source / "dist").iterdir()
+                if path.is_file()
+            }
+            self._run_cli(source, "build")
+            second = {
+                path.name: path.read_bytes()
+                for path in (source / "dist").iterdir()
+                if path.is_file()
+            }
+            self.assertEqual(first, second)
 
             projects: dict[str, Path] = {}
-            for target in TARGETS:
+            for target in self.TARGETS:
                 with self.subTest(target=target):
                     project = root / f"project-{target}"
                     project.mkdir()
                     subprocess.run(["git", "init", "-q"], cwd=project, check=True)
 
-                    apply_install(plan_install(source, project, target, False))
-                    self.assertEqual([], diagnose(project))
+                    self._run_cli(source, "install", target, str(project))
+                    doctor = self._run_cli(source, "doctor", str(project))
+                    self.assertEqual("Installation healthy.\n", doctor.stdout)
 
                     private = project / ".learning-tutor/workspace/private.md"
                     private.write_text("PRIVATE_LEARNER_DATA\n", encoding="utf-8")
@@ -78,16 +99,53 @@ class UniversalSmokeTests(unittest.TestCase):
                     )
                     self.assertEqual(0, ignored.returncode)
 
-                    apply_install(plan_install(source, project, target, True))
-                    self.assertEqual([], diagnose(project))
+                    self._run_cli(
+                        source,
+                        "install",
+                        target,
+                        str(project),
+                        "--update",
+                    )
+                    doctor = self._run_cli(source, "doctor", str(project))
+                    self.assertEqual("Installation healthy.\n", doctor.stdout)
                     projects[target] = project
 
             tampered = projects["generic"] / ".learning-tutor/loader.md"
             tampered.write_text("user change\n", encoding="utf-8")
             before = self._snapshot(projects["generic"])
-            with self.assertRaises(IntegrityError):
-                plan_install(source, projects["generic"], "generic", True)
+            refused = self._run_cli(
+                source,
+                "install",
+                "generic",
+                str(projects["generic"]),
+                "--update",
+                check=False,
+            )
+            self.assertEqual(4, refused.returncode)
+            self.assertIn("owned installation file was modified", refused.stderr)
             self.assertEqual(before, self._snapshot(projects["generic"]))
+
+    def test_copied_runtime_removal_fails_without_live_checkout_fallback(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            project = root / "project"
+            source.mkdir()
+            project.mkdir()
+            self._tracked_copy(source)
+            (source / "learning_tutor/install.py").unlink()
+
+            result = self._run_cli(
+                source,
+                "install",
+                "generic",
+                str(project),
+                check=False,
+            )
+
+            self.assertEqual(4, result.returncode)
+            self.assertIn("install implementation is unavailable", result.stderr)
+            self.assertFalse((project / ".learning-tutor").exists())
 
 
 if __name__ == "__main__":

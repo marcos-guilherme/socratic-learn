@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -728,6 +729,22 @@ class RepositoryValidationTests(unittest.TestCase):
             with self.subTest(path=relative):
                 self.assertIn(f"Missing required path: {relative}", errors)
 
+    def test_required_file_directory_masquerade_is_reported_clearly(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        relative = "dist/manifest.json"
+        path = root / relative
+        path.unlink()
+        path.mkdir()
+
+        errors = validate(root)
+
+        self.assertIn(
+            f"Required path is not a file: {relative} (found directory)",
+            errors,
+        )
+        self.assertNotIn(f"Missing required path: {relative}", errors)
+
     def test_stale_distribution_is_detected_without_mutation(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -928,7 +945,7 @@ class RepositoryValidationTests(unittest.TestCase):
     def test_validator_script_runs_from_repository_root(self) -> None:
         root = Path(__file__).resolve().parents[1]
         result = subprocess.run(
-            ["python", "tests/validate_repository.py"],
+            [sys.executable, "tests/validate_repository.py"],
             cwd=root,
             check=False,
             capture_output=True,
@@ -943,6 +960,20 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertTrue(attributes.is_file())
         rules = attributes.read_text(encoding="utf-8").splitlines()
         self.assertIn("dist/* text eol=lf", rules)
+
+    def test_installation_docs_distinguish_managed_files_from_recovery_paths(
+        self,
+    ) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "docs/universal-installation.md").read_text(
+            encoding="utf-8"
+        )
+        normalized = " ".join(text.split())
+        self.assertIn("receipt lists managed files", normalized)
+        self.assertIn("not managed-file receipt entries", normalized)
+        self.assertIn("After a successful install or update", normalized)
+        self.assertIn("staging and backup directories are removed", normalized)
+        self.assertIn("preserves partial published paths", normalized)
 
 
 if __name__ == "__main__":

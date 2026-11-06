@@ -89,7 +89,8 @@ def markdown_files(root: Path) -> list[Path]:
     return [
         path
         for path in root.rglob("*.md")
-        if ".git" not in path.relative_to(root).parts
+        if path.is_file()
+        and ".git" not in path.relative_to(root).parts
         and "workspace" not in path.relative_to(root).parts
     ]
 
@@ -212,8 +213,19 @@ def validate(root: Path) -> list[str]:
     errors: list[str] = []
 
     for relative in REQUIRED_PATHS:
-        if not (root / relative).exists():
+        path = root / relative
+        if path.is_file():
+            continue
+        if not path.exists():
             errors.append(f"Missing required path: {relative}")
+        elif path.is_dir():
+            errors.append(
+                f"Required path is not a file: {relative} (found directory)"
+            )
+        else:
+            errors.append(
+                f"Required path is not a file: {relative} (found non-file)"
+            )
 
     for path in markdown_files(root):
         text = path.read_text(encoding="utf-8")
@@ -237,7 +249,7 @@ def validate(root: Path) -> list[str]:
 
     for relative in SKILL_PATHS:
         path = root / relative
-        if not path.exists():
+        if not path.is_file():
             continue
         frontmatter = parse_frontmatter(path.read_text(encoding="utf-8"))
         if (
@@ -253,6 +265,8 @@ def validate(root: Path) -> list[str]:
     core = root / "core"
     if core.exists():
         for path in core.glob("*.md"):
+            if not path.is_file():
+                continue
             canonical_blocks.extend(
                 normalize(block)
                 for block in CANONICAL_RE.findall(
@@ -266,6 +280,8 @@ def validate(root: Path) -> list[str]:
         if not base.exists():
             continue
         for path in base.rglob("*.md"):
+            if not path.is_file():
+                continue
             adapter_text = normalize(path.read_text(encoding="utf-8"))
             for block in canonical_blocks:
                 if block in adapter_text:
@@ -275,13 +291,13 @@ def validate(root: Path) -> list[str]:
                     break
 
     gitignore = root / ".gitignore"
-    if gitignore.exists():
+    if gitignore.is_file():
         rules = gitignore.read_text(encoding="utf-8").splitlines()
         if "workspace/*" not in rules or "!workspace/.gitkeep" not in rules:
             errors.append(".gitignore must ignore workspace except .gitkeep")
 
     gitattributes = root / ".gitattributes"
-    if gitattributes.exists():
+    if gitattributes.is_file():
         rules = gitattributes.read_text(encoding="utf-8").splitlines()
         if "dist/* text eol=lf" not in rules:
             errors.append(".gitattributes must enforce LF for dist/*")
