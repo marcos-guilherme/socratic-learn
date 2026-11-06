@@ -17,3 +17,6 @@ When no structured quiz is available, ask one conversational question at a time.
 If copying the adapter file instead, rewrite `../../AGENTS.md` to `AGENTS.md` and every `../../core/...` target to `core/...`. Keep `workspace/` relative to the project root.
 
 The loader delegates to the universal [agent entry](../../AGENTS.md) and canonical [pedagogy](../../core/pedagogy.md), [session protocol](../../core/session-protocol.md), [assessment](../../core/assessment.md), and [evidence policy](../../core/evidence-policy.md); it does not replace them.
+
+The adapter exposes the same subject-neutral protocol; mathematics and AI are
+included starter curricula rather than adapter limits.

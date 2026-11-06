@@ -72,6 +72,13 @@ SKILL_PATHS = (
     ".cursor/skills/socratic-learn/SKILL.md",
     "adapters/pi/skills/socratic-learn/SKILL.md",
 )
+POSITIONING_SKILL_PATHS = (
+    ".cursor/skills/socratic-learn/SKILL.md",
+    "adapters/pi/skills/socratic-learn/SKILL.md",
+    "adapters/pi/skills/socratic-learn/SKILL.project.md.template",
+    "socratic_learn/templates/cursor-skill.md",
+    "socratic_learn/templates/pi-skill.md",
+)
 README_POSITIONING_REQUIREMENTS = (
     "A portable, evidence-aware Socratic protocol for learning anything.",
     "any subject or skill",
@@ -340,6 +347,18 @@ def validate(root: Path) -> list[str]:
             or not frontmatter.get("description")
         ):
             errors.append(f"Invalid skill frontmatter: {relative}")
+
+    for relative in POSITIONING_SKILL_PATHS:
+        path = root / relative
+        if not path.is_file():
+            continue
+        frontmatter = parse_frontmatter(path.read_text(encoding="utf-8"))
+        if (
+            frontmatter is None
+            or "any subject or skill"
+            not in frontmatter.get("description", "").lower()
+        ):
+            errors.append(f"Narrow product positioning in {relative}")
 
     canonical_blocks: list[str] = []
     core = root / "core"

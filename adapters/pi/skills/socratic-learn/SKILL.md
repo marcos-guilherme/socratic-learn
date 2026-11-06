@@ -1,6 +1,6 @@
 ---
 name: socratic-learn
-description: Conducts diagnostic, evidence-aware mathematics and AI learning sessions. Use when the user wants to study, understand, practice, or build a learning plan for mathematics, machine learning, AI frameworks, neural networks, transformers, or related prerequisites.
+description: Conducts diagnostic, evidence-aware learning sessions for any subject or skill. Use when the user wants to study, understand, practice, or build a learning plan. Mathematics and AI are included starter curricula, not limits.
 ---
 
 # Socratic Learn
@@ -11,7 +11,7 @@ adapter directory. For installation at
 [Pi installation procedure](../../README.md) and copy the adjacent
 [project-install template](SKILL.project.md.template), not this file.
 
-Load the universal [agent entry](../../../../AGENTS.md) and canonical [pedagogy](../../../../core/pedagogy.md), [session protocol](../../../../core/session-protocol.md), [assessment](../../../../core/assessment.md), and [evidence policy](../../../../core/evidence-policy.md). Consult the [mathematics map](../../../../curricula/mathematics/map.md) and [AI map](../../../../curricula/ai/map.md) when relevant.
+Load the universal [agent entry](../../../../AGENTS.md) and canonical [pedagogy](../../../../core/pedagogy.md), [session protocol](../../../../core/session-protocol.md), [assessment](../../../../core/assessment.md), and [evidence policy](../../../../core/evidence-policy.md). The universal protocol applies to any subject or skill. Consult the [mathematics map](../../../../curricula/mathematics/map.md) and [AI map](../../../../curricula/ai/map.md) when relevant.
 
 ## Pi capability mapping
 

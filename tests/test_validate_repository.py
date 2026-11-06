@@ -68,6 +68,9 @@ ADAPTER_ENTRIES = (
 ADAPTER_SKILLS = (
     ".cursor/skills/socratic-learn/SKILL.md",
     "adapters/pi/skills/socratic-learn/SKILL.md",
+    "adapters/pi/skills/socratic-learn/SKILL.project.md.template",
+    "socratic_learn/templates/cursor-skill.md",
+    "socratic_learn/templates/pi-skill.md",
 )
 MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 ROOT_CLAUDE_LOADER_RE = re.compile(
@@ -204,15 +207,12 @@ class RepositoryValidationTests(unittest.TestCase):
         skill = (
             "---\n"
             "name: socratic-learn\n"
-            "description: Conducts structured learning sessions.\n"
+            "description: Conducts diagnostic, evidence-aware learning "
+            "sessions for any subject or skill.\n"
             "---\n\n# Socratic Learn\n"
         )
-        (root / ".cursor/skills/socratic-learn/SKILL.md").write_text(
-            skill, encoding="utf-8"
-        )
-        (root / "adapters/pi/skills/socratic-learn/SKILL.md").write_text(
-            skill, encoding="utf-8"
-        )
+        for relative in ADAPTER_SKILLS:
+            (root / relative).write_text(skill, encoding="utf-8")
         (root / "AGENTS.md").write_text(
             "# Agent Entry\n\n"
             "- [Pedagogy](core/pedagogy.md)\n"
@@ -348,15 +348,40 @@ class RepositoryValidationTests(unittest.TestCase):
             linked_targets,
         )
 
-    def test_adapter_skills_have_specific_learning_tutor_metadata(self) -> None:
+    def test_adapter_skills_advertise_universal_learning(self) -> None:
         root = Path(__file__).resolve().parents[1]
         for relative in ADAPTER_SKILLS:
             with self.subTest(skill=relative):
                 text = (root / relative).read_text(encoding="utf-8")
                 frontmatter = text.split("---\n", 2)[1].lower()
                 self.assertIn("name: socratic-learn", frontmatter)
-                for term in ("mathematics", "ai", "diagnos", "learning sessions"):
+                for term in (
+                    "any subject or skill",
+                    "diagnostic",
+                    "evidence-aware",
+                    "learning sessions",
+                ):
                     self.assertIn(term, frontmatter)
+                self.assertNotIn(
+                    "mathematics and ai learning sessions",
+                    frontmatter,
+                )
+
+    def test_validator_rejects_narrow_skill_positioning(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        path = root / ".cursor/skills/socratic-learn/SKILL.md"
+        text = path.read_text(encoding="utf-8").replace(
+            "for any subject or skill",
+            "for mathematics and AI",
+        )
+        path.write_text(text, encoding="utf-8")
+
+        self.assertIn(
+            "Narrow product positioning in "
+            ".cursor/skills/socratic-learn/SKILL.md",
+            validate(root),
+        )
 
     def test_every_adapter_entry_links_session_and_evidence_core(self) -> None:
         root = Path(__file__).resolve().parents[1]

@@ -1,6 +1,6 @@
 ---
 name: socratic-learn
-description: Run a project-local learning session with the universal tutor.
+description: Run diagnostic, evidence-aware learning sessions for any subject or skill.
 ---
 
 Before starting any learning session, read and follow `{{PATH_BASE}}.socratic-learn/socratic-learn.prompt.md`.
