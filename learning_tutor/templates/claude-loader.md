@@ -1,0 +1,1 @@
+Read and follow `{{PATH_BASE}}.learning-tutor/learning-tutor.prompt.md` before starting any learning session. Keep private learner state under `{{PATH_BASE}}.learning-tutor/workspace/` and out of version control.

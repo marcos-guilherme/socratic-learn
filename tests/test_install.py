@@ -149,11 +149,206 @@ class InstallTests(unittest.TestCase):
                 sha256_bytes((self.project / relative).read_bytes()),
             )
 
-    def test_only_generic_target_is_implemented(self) -> None:
-        for target in ("cursor", "claude-code", "pi", "unknown"):
+    def test_unknown_target_is_rejected(self) -> None:
+        with self.assertRaises(UsageError):
+            plan_install(self.source, self.project, "unknown", False)
+
+    def test_cursor_and_pi_clean_installs_own_thin_resolving_skills(self) -> None:
+        targets = {
+            "cursor": ".cursor/skills/learning-tutor/SKILL.md",
+            "pi": ".pi/skills/learning-tutor/SKILL.md",
+        }
+        for target, skill_path in targets.items():
             with self.subTest(target=target):
-                with self.assertRaises(UsageError):
-                    plan_install(self.source, self.project, target, False)
+                project = self.root / target
+                project.mkdir()
+
+                plan = plan_install(self.source, project, target, False)
+                apply_install(plan)
+
+                skill = project / skill_path
+                text = skill.read_text(encoding="utf-8")
+                self.assertIn("../../../.learning-tutor/learning-tutor.prompt.md", text)
+                self.assertIn("../../../.learning-tutor/workspace/", text)
+                self.assertNotIn("## Responsive Socratic dialogue", text)
+                self.assertNotIn("## Connected foundations", text)
+                self.assertEqual(
+                    project / ".learning-tutor/learning-tutor.prompt.md",
+                    (skill.parent / "../../../.learning-tutor/learning-tutor.prompt.md").resolve(),
+                )
+                receipt = load_receipt(project)
+                self.assertEqual(target, receipt["target"])
+                self.assertIn(skill_path, receipt["owned_paths"])
+
+    def test_native_skill_destination_collisions_abort_before_mutation(self) -> None:
+        for target, relative in (
+            ("cursor", ".cursor/skills/learning-tutor"),
+            ("pi", ".pi/skills/learning-tutor"),
+        ):
+            for kind in ("empty-directory", "file"):
+                with self.subTest(target=target, kind=kind):
+                    project = self.root / f"{target}-{kind}"
+                    project.mkdir()
+                    collision = project / relative
+                    collision.parent.mkdir(parents=True)
+                    if kind == "empty-directory":
+                        collision.mkdir()
+                    else:
+                        collision.write_bytes(b"user data")
+                    before = {
+                        path.relative_to(project).as_posix(): (
+                            None if path.is_dir() else path.read_bytes()
+                        )
+                        for path in project.rglob("*")
+                    }
+
+                    with self.assertRaises(CollisionError):
+                        plan_install(self.source, project, target, False)
+
+                    after = {
+                        path.relative_to(project).as_posix(): (
+                            None if path.is_dir() else path.read_bytes()
+                        )
+                        for path in project.rglob("*")
+                    }
+                    self.assertEqual(before, after)
+                    self.assertFalse((project / ".learning-tutor").exists())
+
+    def test_native_skill_ancestor_file_collision_aborts_before_mutation(self) -> None:
+        for target, relative in (("cursor", ".cursor"), ("pi", ".pi")):
+            with self.subTest(target=target):
+                project = self.root / f"{target}-ancestor"
+                project.mkdir()
+                collision = project / relative
+                collision.write_bytes(b"user data")
+
+                with self.assertRaises(CollisionError):
+                    plan_install(self.source, project, target, False)
+
+                self.assertEqual(b"user data", collision.read_bytes())
+                self.assertFalse((project / ".learning-tutor").exists())
+
+    def test_claude_absent_root_is_owned_thin_loader_and_updates(self) -> None:
+        plan = plan_install(self.source, self.project, "claude-code", False)
+        self.assertIsNone(plan.emitted_snippet)
+        apply_install(plan)
+
+        claude = self.project / "CLAUDE.md"
+        first = claude.read_bytes()
+        self.assertIn(b".learning-tutor/learning-tutor.prompt.md", first)
+        self.assertNotIn(b"## Responsive Socratic dialogue", first)
+        self.assertIn("CLAUDE.md", load_receipt(self.project)["owned_paths"])
+
+        self._make_distribution(b"# Universal Learning Tutor\nProtocol: 1.0.0\nChanged.\n")
+        update = plan_install(self.source, self.project, "claude-code", True)
+        self.assertIsNone(update.emitted_snippet)
+        apply_install(update)
+
+        self.assertEqual(first, claude.read_bytes())
+        self.assertIn("CLAUDE.md", load_receipt(self.project)["owned_paths"])
+
+    def test_claude_existing_root_is_preserved_and_never_owned(self) -> None:
+        original = b"# User instructions\r\nKeep this byte-exact.\r\n"
+        claude = self.project / "CLAUDE.md"
+        claude.write_bytes(original)
+
+        plan = plan_install(self.source, self.project, "claude-code", False)
+        self.assertEqual(
+            (
+                "Read and follow `.learning-tutor/learning-tutor.prompt.md` before "
+                "starting any learning session. Keep private learner state under "
+                "`.learning-tutor/workspace/` and out of version control.\n"
+            ),
+            plan.emitted_snippet,
+        )
+        self.assertNotIn("CLAUDE.md", tuple(file.path for file in plan.files))
+        apply_install(plan)
+
+        self.assertEqual(original, claude.read_bytes())
+        self.assertNotIn("CLAUDE.md", load_receipt(self.project)["owned_paths"])
+
+        update = plan_install(self.source, self.project, "claude-code", True)
+        self.assertEqual(plan.emitted_snippet, update.emitted_snippet)
+        apply_install(update)
+
+        self.assertEqual(original, claude.read_bytes())
+        self.assertNotIn("CLAUDE.md", load_receipt(self.project)["owned_paths"])
+
+    def test_claude_root_directory_collision_aborts_before_mutation(self) -> None:
+        (self.project / "CLAUDE.md").mkdir()
+
+        with self.assertRaises(CollisionError):
+            plan_install(self.source, self.project, "claude-code", False)
+
+        self.assertTrue((self.project / "CLAUDE.md").is_dir())
+        self.assertFalse((self.project / ".learning-tutor").exists())
+
+    def test_target_templates_never_enter_universal_prompt(self) -> None:
+        marker = "before starting any learning session"
+        prompt = (self.source / "dist/learning-tutor.prompt.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn(marker, prompt)
+        for target in ("cursor", "claude-code", "pi"):
+            plan = plan_install(self.source, self.project, target, False)
+            target_text = "\n".join(
+                file.content.decode("utf-8")
+                for file in plan.files
+                if file.path not in OWNED_PATHS
+            )
+            if plan.emitted_snippet is not None:
+                target_text += plan.emitted_snippet
+            self.assertIn(marker, target_text.lower())
+
+    def test_native_target_update_preserves_ownership_and_private_state(self) -> None:
+        for target, skill_path in (
+            ("cursor", ".cursor/skills/learning-tutor/SKILL.md"),
+            ("pi", ".pi/skills/learning-tutor/SKILL.md"),
+        ):
+            with self.subTest(target=target):
+                project = self.root / f"{target}-update"
+                project.mkdir()
+                apply_install(plan_install(self.source, project, target, False))
+                private = project / ".learning-tutor/workspace/private.md"
+                private.write_bytes(b"private")
+
+                apply_install(plan_install(self.source, project, target, True))
+
+                self.assertEqual(b"private", private.read_bytes())
+                self.assertIn(skill_path, load_receipt(project)["owned_paths"])
+
+    def test_update_rejects_a_different_requested_target(self) -> None:
+        apply_install(plan_install(self.source, self.project, "cursor", False))
+
+        with self.assertRaises(IntegrityError):
+            plan_install(self.source, self.project, "pi", True)
+
+        self.assertTrue(
+            (self.project / ".cursor/skills/learning-tutor/SKILL.md").is_file()
+        )
+        self.assertFalse((self.project / ".pi").exists())
+
+    def test_native_initial_commit_failure_removes_created_target_directories(self) -> None:
+        plan = plan_install(self.source, self.project, "cursor", False)
+        real_replace = os.replace
+
+        def fail_native_move(
+            source: str | os.PathLike[str],
+            destination: str | os.PathLike[str],
+        ) -> None:
+            if str(destination).endswith(
+                os.path.join(".cursor", "skills", "learning-tutor", "SKILL.md")
+            ):
+                raise OSError("injected native move failure")
+            real_replace(source, destination)
+
+        with mock.patch("learning_tutor.install.os.replace", side_effect=fail_native_move):
+            with self.assertRaises(FilesystemError):
+                apply_install(plan)
+
+        self.assertFalse((self.project / ".learning-tutor").exists())
+        self.assertFalse((self.project / ".cursor").exists())
 
     def test_unchanged_update_replaces_managed_files_and_preserves_private_state(self) -> None:
         self._install()

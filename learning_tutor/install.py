@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from . import MANIFEST_SCHEMA_VERSION, PROTOCOL_VERSION
+from . import MANIFEST_SCHEMA_VERSION, PROTOCOL_VERSION, TARGETS
 from .errors import (
     CollisionError,
     FilesystemError,
@@ -32,6 +32,10 @@ OWNED_PATHS = (
     f"{INSTALL_ROOT}/.gitignore",
     f"{INSTALL_ROOT}/workspace/.gitkeep",
 )
+_NATIVE_SKILL_PATHS = {
+    "cursor": ".cursor/skills/learning-tutor/SKILL.md",
+    "pi": ".pi/skills/learning-tutor/SKILL.md",
+}
 _RECEIPT_KEYS = {
     "schema_version",
     "protocol_version",
@@ -39,7 +43,6 @@ _RECEIPT_KEYS = {
     "owned_paths",
     "hashes",
 }
-_HASHED_PATHS = tuple(path for path in OWNED_PATHS if path != RECEIPT_PATH)
 _IGNORE_BYTES = b"workspace/*\n!workspace/.gitkeep\n"
 
 
@@ -83,6 +86,7 @@ class InstallPlan:
     files: tuple[PlannedFile, ...]
     previous_receipt: InstallReceipt | None = None
     expected_existing: tuple[tuple[str, str], ...] = ()
+    emitted_snippet: str | None = None
 
 
 def _portable_relative_path(value: object) -> bool:
@@ -230,9 +234,10 @@ def _parse_receipt(value: object, path: Path) -> InstallReceipt:
             path=path,
             remediation="remove the invalid installation and reinstall",
         )
-    if value["target"] != "generic":
+    target = value["target"]
+    if target not in TARGETS:
         raise IntegrityError(
-            "installation receipt target must be generic",
+            "installation receipt target is unsupported",
             path=path,
             remediation="use the installer matching the recorded target",
         )
@@ -282,7 +287,7 @@ def _parse_receipt(value: object, path: Path) -> InstallReceipt:
     return InstallReceipt(
         schema_version=MANIFEST_SCHEMA_VERSION,
         protocol_version=protocol,
-        target="generic",
+        target=target,
         owned_paths=tuple(owned_value),
         hashes=tuple(hashes),
     )
@@ -333,37 +338,57 @@ def _verify_owned_files(
     return tuple(expected)
 
 
-def _loader_bytes() -> bytes:
-    loader_path = Path(__file__).parent / "templates/generic-loader.md"
-    data = _read_bytes(loader_path, "generic loader template")
+def _template_bytes(name: str, path_base: str = "") -> bytes:
+    template_path = Path(__file__).parent / f"templates/{name}"
+    data = _read_bytes(template_path, f"{name} template")
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as error:
         raise IntegrityError(
-            "generic loader template is not valid UTF-8",
-            path=loader_path,
+            f"{name} template is not valid UTF-8",
+            path=template_path,
             remediation="reinstall the learning-tutor package",
         ) from error
-    return (text.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n").encode()
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    rendered = normalized.replace("{{PATH_BASE}}", path_base)
+    return (rendered.rstrip("\n") + "\n").encode()
 
 
-def _planned_files(manifest: bytes, bundle: bytes) -> tuple[PlannedFile, ...]:
+def _planned_files(
+    manifest: bytes,
+    bundle: bytes,
+    target: str,
+    *,
+    include_claude_loader: bool,
+) -> tuple[PlannedFile, ...]:
     content_by_path = {
         f"{INSTALL_ROOT}/manifest.json": manifest,
         f"{INSTALL_ROOT}/learning-tutor.prompt.md": bundle,
-        f"{INSTALL_ROOT}/loader.md": _loader_bytes(),
+        f"{INSTALL_ROOT}/loader.md": _template_bytes("generic-loader.md"),
         f"{INSTALL_ROOT}/.gitignore": _IGNORE_BYTES,
         f"{INSTALL_ROOT}/workspace/.gitkeep": b"",
     }
+    owned_paths = list(OWNED_PATHS)
+    if target in _NATIVE_SKILL_PATHS:
+        native_path = _NATIVE_SKILL_PATHS[target]
+        content_by_path[native_path] = _template_bytes(
+            f"{target}-skill.md",
+            "../../../",
+        )
+        owned_paths.append(native_path)
+    elif target == "claude-code" and include_claude_loader:
+        content_by_path["CLAUDE.md"] = _template_bytes("claude-loader.md")
+        owned_paths.append("CLAUDE.md")
+    hashed_paths = tuple(path for path in owned_paths if path != RECEIPT_PATH)
     hashes = {
         relative: sha256_bytes(content_by_path[relative])
-        for relative in _HASHED_PATHS
+        for relative in hashed_paths
     }
     receipt = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "protocol_version": PROTOCOL_VERSION,
-        "target": "generic",
-        "owned_paths": list(OWNED_PATHS),
+        "target": target,
+        "owned_paths": owned_paths,
         "hashes": hashes,
     }
     content_by_path[RECEIPT_PATH] = serialize_json(receipt)
@@ -373,8 +398,54 @@ def _planned_files(manifest: bytes, bundle: bytes) -> tuple[PlannedFile, ...]:
             content=content_by_path[relative],
             sha256=sha256_bytes(content_by_path[relative]),
         )
-        for relative in OWNED_PATHS
+        for relative in owned_paths
     )
+
+
+def _claude_snippet() -> str:
+    return _template_bytes("claude-loader.md").decode("utf-8")
+
+
+def _check_native_destination(project: Path, target: str) -> None:
+    skill_path = _NATIVE_SKILL_PATHS.get(target)
+    if skill_path is None:
+        return
+    parts = PurePosixPath(skill_path).parts
+    current = project
+    for index, part in enumerate(parts[:-1]):
+        current /= part
+        if current.exists() or current.is_symlink():
+            if current.is_symlink() or not current.is_dir():
+                raise CollisionError(
+                    "native skill destination is blocked by an existing path",
+                    path=current,
+                    remediation="move the existing path and retry",
+                )
+            if index == len(parts) - 2:
+                raise CollisionError(
+                    "native skill destination directory already exists",
+                    path=current,
+                    remediation="move the existing directory and retry",
+                )
+
+
+def _check_initial_destinations(project: Path, target: str, files: tuple[PlannedFile, ...]) -> None:
+    install_root = project / INSTALL_ROOT
+    if install_root.exists() or install_root.is_symlink():
+        raise CollisionError(
+            "installation path already exists",
+            path=install_root,
+            remediation="use --update for an intact managed installation",
+        )
+    _check_native_destination(project, target)
+    if target == "claude-code" and any(file.path == "CLAUDE.md" for file in files):
+        claude_path = project / "CLAUDE.md"
+        if claude_path.exists() or claude_path.is_symlink():
+            raise CollisionError(
+                "Claude loader path appeared during planning",
+                path=claude_path,
+                remediation="preserve the existing file and create a new plan",
+            )
 
 
 def plan_install(
@@ -385,21 +456,27 @@ def plan_install(
 ) -> InstallPlan:
     """Validate and construct an installation plan without filesystem mutation."""
 
-    if target != "generic":
+    if target not in TARGETS:
         raise UsageError(
-            f"target '{target}' is not implemented by the generic installer",
-            remediation="use target 'generic'",
+            f"target '{target}' is unsupported",
+            remediation=f"use one of: {', '.join(TARGETS)}",
         )
     source = _resolve_directory(source_root, "source root")
     destination = _resolve_directory(project, "project")
     install_root = destination / INSTALL_ROOT
-    if not update:
-        if install_root.exists() or install_root.is_symlink():
+    emitted_snippet: str | None = None
+    include_claude_loader = target == "claude-code"
+    claude_path = destination / "CLAUDE.md"
+    if target == "claude-code" and (claude_path.exists() or claude_path.is_symlink()):
+        if claude_path.is_symlink() or not claude_path.is_file():
             raise CollisionError(
-                "installation path already exists",
-                path=install_root,
-                remediation="use --update for an intact managed installation",
+                "Claude root path must be a regular file",
+                path=claude_path,
+                remediation="move the conflicting path and retry",
             )
+        include_claude_loader = False
+        emitted_snippet = _claude_snippet()
+    if not update:
         previous_receipt = None
         expected_existing: tuple[tuple[str, str], ...] = ()
     else:
@@ -410,13 +487,29 @@ def plan_install(
                 remediation="restore the installation or perform a clean install",
             )
         previous_receipt, receipt_bytes = _read_receipt(destination)
+        if previous_receipt.target != target:
+            raise IntegrityError(
+                "installation receipt target does not match the requested target",
+                path=RECEIPT_PATH,
+                remediation=f"use target '{previous_receipt.target}' for this installation",
+            )
         expected_existing = _verify_owned_files(
             destination,
             previous_receipt,
             receipt_bytes,
         )
+        if target == "claude-code" and "CLAUDE.md" in previous_receipt.owned_paths:
+            include_claude_loader = True
+            emitted_snippet = None
     manifest, bundle = _load_distribution(source)
-    files = _planned_files(manifest, bundle)
+    files = _planned_files(
+        manifest,
+        bundle,
+        target,
+        include_claude_loader=include_claude_loader,
+    )
+    if not update:
+        _check_initial_destinations(destination, target, files)
     if update:
         assert previous_receipt is not None
         owned = set(previous_receipt.owned_paths)
@@ -431,11 +524,12 @@ def plan_install(
     return InstallPlan(
         source_root=source,
         project=destination,
-        target="generic",
+        target=target,
         update=update,
         files=files,
         previous_receipt=previous_receipt,
         expected_existing=expected_existing,
+        emitted_snippet=emitted_snippet,
     )
 
 
@@ -529,13 +623,7 @@ def _ensure_parent_directories(
 
 def _verify_plan_still_safe(plan: InstallPlan) -> None:
     if not plan.update:
-        target = plan.project / INSTALL_ROOT
-        if target.exists() or target.is_symlink():
-            raise CollisionError(
-                "installation path appeared after planning",
-                path=target,
-                remediation="inspect the new path and retry planning",
-            )
+        _check_initial_destinations(plan.project, plan.target, plan.files)
         return
     for relative, expected_hash in plan.expected_existing:
         path = _project_path(plan.project, relative)
@@ -566,12 +654,10 @@ def _stage(plan: InstallPlan) -> tuple[Path, Path]:
         )
         staged_install = stage / INSTALL_ROOT
         for planned in plan.files:
-            relative_inside = PurePosixPath(planned.path).relative_to(INSTALL_ROOT)
-            staged_path = staged_install.joinpath(*relative_inside.parts)
+            staged_path = stage.joinpath(*PurePosixPath(planned.path).parts)
             _write_staged_file(staged_path, planned.content)
         for planned in plan.files:
-            relative_inside = PurePosixPath(planned.path).relative_to(INSTALL_ROOT)
-            staged_path = staged_install.joinpath(*relative_inside.parts)
+            staged_path = stage.joinpath(*PurePosixPath(planned.path).parts)
             if sha256_bytes(staged_path.read_bytes()) != planned.sha256:
                 raise IntegrityError(
                     "staged file hash does not match the installation plan",
@@ -601,18 +687,40 @@ def _stage(plan: InstallPlan) -> tuple[Path, Path]:
 def _apply_initial(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
     target = plan.project / INSTALL_ROOT
     created_root = False
+    installed: list[str] = []
+    created_parents: list[Path] = []
     try:
         target.mkdir()
         created_root = True
         for planned in plan.files:
-            relative_inside = PurePosixPath(planned.path).relative_to(INSTALL_ROOT)
-            source = staged_install.joinpath(*relative_inside.parts)
+            source = stage.joinpath(*PurePosixPath(planned.path).parts)
             destination = _project_path(plan.project, planned.path)
-            destination.parent.mkdir(parents=True, exist_ok=True)
+            if not destination.is_relative_to(target):
+                _ensure_parent_directories(
+                    destination,
+                    stop=plan.project,
+                    created=created_parents,
+                )
+            else:
+                destination.parent.mkdir(parents=True, exist_ok=True)
             os.replace(source, destination)
+            installed.append(planned.path)
     except (LearningTutorError, OSError) as error:
+        cleanup_failures: list[tuple[Path, OSError]] = []
+        for relative in reversed(installed):
+            path = _project_path(plan.project, relative)
+            if not path.is_relative_to(target):
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError as cleanup_error:
+                    cleanup_failures.append((path, cleanup_error))
+        for parent in sorted(created_parents, key=lambda item: len(item.parts), reverse=True):
+            try:
+                parent.rmdir()
+            except OSError as cleanup_error:
+                cleanup_failures.append((parent, cleanup_error))
         cleanup_paths = ([target] if created_root else []) + [stage]
-        cleanup_failures = _cleanup_created_trees(cleanup_paths)
+        cleanup_failures.extend(_cleanup_created_trees(cleanup_paths))
         if cleanup_failures:
             raise _combined_cleanup_error(
                 "initial installation commit and cleanup failed",
@@ -678,12 +786,11 @@ def _apply_update(plan: InstallPlan, stage: Path, staged_install: Path) -> None:
             os.replace(source, destination)
             backed_up.append(relative)
         for planned in plan.files:
-            relative_inside = PurePosixPath(planned.path).relative_to(INSTALL_ROOT)
-            source = staged_install.joinpath(*relative_inside.parts)
+            source = stage.joinpath(*PurePosixPath(planned.path).parts)
             destination = _project_path(plan.project, planned.path)
             _ensure_parent_directories(
                 destination,
-                stop=plan.project / INSTALL_ROOT,
+                stop=plan.project,
                 created=created_parents,
             )
             os.replace(source, destination)
@@ -788,8 +895,9 @@ def install(
         else None
     )
     apply_install(plan)
-    loader = next(file.content for file in plan.files if file.path.endswith("/loader.md"))
-    report = loader.decode("utf-8")
+    report = plan.emitted_snippet or next(
+        file.content for file in plan.files if file.path.endswith("/loader.md")
+    ).decode("utf-8")
     if update:
         report += f"Protocol: {previous_protocol} -> {PROTOCOL_VERSION}\n"
     try:
