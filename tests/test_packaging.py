@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -9,6 +10,33 @@ from pathlib import Path
 
 
 class PackagingTests(unittest.TestCase):
+    def test_published_archives_exclude_private_evaluation_system(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temporary:
+            subprocess.run(
+                [sys.executable, "-m", "build", "--outdir", temporary],
+                cwd=root,
+                check=True,
+            )
+            wheel = next(Path(temporary).glob("*.whl"))
+            sdist = next(Path(temporary).glob("*.tar.gz"))
+            with zipfile.ZipFile(wheel) as archive:
+                self.assertFalse(
+                    any(
+                        name.startswith("evaluation/")
+                        or ".semantic-runs/" in name
+                        for name in archive.namelist()
+                    )
+                )
+            with tarfile.open(sdist, "r:gz") as archive:
+                self.assertFalse(
+                    any(
+                        "/evaluation/" in name
+                        or "/.semantic-runs/" in name
+                        for name in archive.getnames()
+                    )
+                )
+
     def test_wheel_contains_console_entry_and_protocol(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temporary:

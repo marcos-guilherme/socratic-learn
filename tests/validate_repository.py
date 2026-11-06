@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 import subprocess
 import sys
@@ -14,6 +15,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
 from socratic_learn.build import build_distribution
 from socratic_learn.errors import LearningTutorError
 from socratic_learn.manifest import validate_manifest
+from evaluation.sanitize import assert_tracked_safe
 
 REQUIRED_PATHS = (
     "README.md",
@@ -209,6 +211,11 @@ LOCAL_RELEASE_PLAN = (
 )
 LOCAL_PACKAGE_BUILD_COMMAND = "python -m build --outdir package-dist"
 CANONICAL_DIST_FILES = {"manifest.json", "socratic-learn.prompt.md"}
+RUNTIME_WORKSPACE_MARKERS = (".socratic-learn",)
+TRACKED_EVALUATION_ASSET_ROOTS = (
+    "evaluation/fixtures/antigravity/",
+    "evaluation/reports/",
+)
 
 
 def markdown_files(root: Path) -> list[Path]:
@@ -294,6 +301,21 @@ def tracked_files(root: Path) -> tuple[set[str], str | None]:
         {line.replace("\\", "/") for line in result.stdout.splitlines()},
         None,
     )
+
+
+def semantic_runtime_errors(root: Path) -> list[str]:
+    raw_root = root / ".semantic-runs"
+    if not raw_root.is_dir():
+        return []
+    errors = []
+    for directory, subdirectories, _ in os.walk(raw_root, followlinks=False):
+        relative = Path(directory).relative_to(raw_root).as_posix()
+        names = set(subdirectories)
+        if names & set(RUNTIME_WORKSPACE_MARKERS) or (
+            Path(directory).name == "home" and "learning" in names
+        ):
+            errors.append(f"Runtime home/cwd under .semantic-runs: {relative}")
+    return sorted(errors)
 
 
 def validate_distribution(root: Path) -> list[str]:
@@ -1077,6 +1099,8 @@ def validate(root: Path) -> list[str]:
             errors.append(".gitignore must ignore workspace except .gitkeep")
         if "/package-dist/" not in rules:
             errors.append(".gitignore must ignore /package-dist/")
+        if "/.semantic-runs/" not in rules:
+            errors.append(".gitignore must ignore /.semantic-runs/")
 
     gitattributes = root / ".gitattributes"
     if gitattributes.is_file():
@@ -1094,7 +1118,29 @@ def validate(root: Path) -> list[str]:
     )
     if tracked_private:
         errors.append("Tracked private learner files: " + ", ".join(tracked_private))
+    tracked_semantic_raw = sorted(
+        path for path in tracked if path.startswith(".semantic-runs/")
+    )
+    if tracked_semantic_raw:
+        errors.append(
+            "Tracked raw semantic evaluation files: "
+            + ", ".join(tracked_semantic_raw)
+        )
+    for relative in sorted(tracked):
+        if not relative.startswith(TRACKED_EVALUATION_ASSET_ROOTS):
+            continue
+        path = root / relative
+        if not path.is_file():
+            continue
+        try:
+            assert_tracked_safe(
+                path.read_text(encoding="utf-8"),
+                forbidden_literals=(),
+            )
+        except (OSError, UnicodeError, ValueError):
+            errors.append(f"Unsafe tracked evaluation asset: {relative}")
 
+    errors.extend(semantic_runtime_errors(root))
     errors.extend(validate_distribution(root))
     errors.extend(validate_release_automation(root))
     errors.extend(validate_local_release_gate(root))

@@ -13,6 +13,7 @@ from unittest.mock import patch
 from tests.validate_repository import (
     UNSAFE_INSTALLER_PATTERNS,
     main,
+    semantic_runtime_errors,
     validate,
     without_fenced_code,
 )
@@ -194,7 +195,7 @@ class RepositoryValidationTests(unittest.TestCase):
             root.mkdir(parents=True)
         (root / ".gitignore").write_text(
             "workspace/*\n!workspace/.gitkeep\n__pycache__/\n*.py[cod]\n"
-            "/package-dist/\n",
+            "/package-dist/\n/.semantic-runs/\n",
             encoding="utf-8",
         )
         (root / ".gitattributes").write_text(
@@ -2133,6 +2134,101 @@ class RepositoryValidationTests(unittest.TestCase):
         )
         self.assertTrue(
             any("workspace/private.md" in error for error in validate(root))
+        )
+
+    def test_validator_requires_semantic_runs_ignore_rule(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        gitignore = root / ".gitignore"
+        gitignore.write_text(
+            gitignore.read_text(encoding="utf-8").replace(
+                "/.semantic-runs/\n",
+                "",
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertIn(
+            ".gitignore must ignore /.semantic-runs/",
+            validate(root),
+        )
+
+    def test_validator_rejects_tracked_raw_semantic_evidence(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        raw = root / ".semantic-runs/raw.ndjson"
+        raw.parent.mkdir(parents=True)
+        raw.write_text('{"private": true}\n', encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "add", "-f", ".semantic-runs/raw.ndjson"],
+            cwd=root,
+            check=True,
+        )
+
+        self.assertIn(
+            "Tracked raw semantic evaluation files: .semantic-runs/raw.ndjson",
+            validate(root),
+        )
+
+    def test_validator_rejects_runtime_home_under_semantic_runs(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        (root / ".semantic-runs/suite/scenario/home/learning").mkdir(
+            parents=True
+        )
+
+        self.assertIn(
+            "Runtime home/cwd under .semantic-runs: suite/scenario/home",
+            semantic_runtime_errors(root),
+        )
+
+    def test_validator_rejects_runtime_cwd_under_semantic_runs(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        (root / ".semantic-runs/suite/scenario/learning/.socratic-learn").mkdir(
+            parents=True
+        )
+
+        self.assertIn(
+            "Runtime home/cwd under .semantic-runs: suite/scenario/learning",
+            semantic_runtime_errors(root),
+        )
+
+    def test_raw_semantic_tree_is_not_runtime_placement(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        for relative in (
+            ".semantic-runs/suite/scenario/raw/output.ndjson",
+            ".semantic-runs/suite/scenario/raw/runtime-context.json",
+            ".semantic-runs/suite/scenario/raw/learner-records/progress.md",
+        ):
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("raw evidence\n", encoding="utf-8")
+
+        self.assertEqual([], semantic_runtime_errors(root))
+
+    def test_validator_rejects_unsafe_tracked_evaluation_assets(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        fixture = root / "evaluation/fixtures/antigravity/leak.json"
+        fixture.parent.mkdir(parents=True)
+        fixture.write_text(
+            '{"Authorization": "Bearer provider-secret"}\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "add", "-f", "evaluation/fixtures/antigravity/leak.json"],
+            cwd=root,
+            check=True,
+        )
+
+        self.assertIn(
+            "Unsafe tracked evaluation asset: "
+            "evaluation/fixtures/antigravity/leak.json",
+            validate(root),
         )
 
     def test_invalid_gitignore_fails(self) -> None:
