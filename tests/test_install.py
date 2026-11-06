@@ -213,6 +213,7 @@ class InstallTests(unittest.TestCase):
             (install_root / ".gitignore").read_text(encoding="utf-8"),
         )
         loader = (install_root / "loader.md").read_text(encoding="utf-8")
+        self.assertTrue(loader.startswith("# Socratic Learn Loader\n"))
         self.assertIn(".socratic-learn/socratic-learn.prompt.md", loader)
         self.assertEqual(b"", (install_root / "workspace/.gitkeep").read_bytes())
         receipt = load_receipt(self.project)

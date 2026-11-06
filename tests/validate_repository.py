@@ -226,7 +226,7 @@ def validate_distribution(root: Path) -> list[str]:
     if bundle != expected.bundle or manifest_bytes != expected.manifest:
         errors.append(
             "Found stale generated artifacts in dist/; run: "
-            "python -m learning_tutor build"
+            "python -m socratic_learn build"
         )
     return errors
 
@@ -248,6 +248,19 @@ def validate(root: Path) -> list[str]:
             errors.append(
                 f"Required path is not a file: {relative} (found non-file)"
             )
+
+    legacy_package = root / "learning_tutor"
+    allowed_legacy_modules = {"__init__.py", "__main__.py"}
+    if legacy_package.is_dir():
+        for path in sorted(legacy_package.rglob("*.py")):
+            relative = path.relative_to(root).as_posix()
+            if (
+                path.parent != legacy_package
+                or path.name not in allowed_legacy_modules
+            ):
+                errors.append(
+                    f"Legacy package contains implementation module: {relative}"
+                )
 
     for relative in POSIX_THREAT_MODEL_PATHS:
         path = root / relative

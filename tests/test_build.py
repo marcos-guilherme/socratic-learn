@@ -725,6 +725,18 @@ class BuildTests(unittest.TestCase):
 
         self.assertEqual(result.bundle, output.read_bytes())
 
+    def test_export_missing_manifest_recommends_canonical_build_command(self) -> None:
+        temporary, root = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+
+        with self.assertRaises(IntegrityError) as raised:
+            export_prompt(root=root)
+
+        self.assertEqual(
+            "run 'python -m socratic_learn build'",
+            raised.exception.remediation,
+        )
+
     def test_export_rejects_existing_output_without_overwrite(self) -> None:
         temporary, root = self.make_repository()
         self.addCleanup(temporary.cleanup)

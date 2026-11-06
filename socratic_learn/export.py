@@ -24,13 +24,16 @@ def _read_artifact(path: Path, label: str) -> bytes:
         raise IntegrityError(
             f"{label} is missing",
             path=path,
-            remediation="run 'learning-tutor build'",
+            remediation="run 'python -m socratic_learn build'",
         ) from error
     except OSError as error:
         raise FilesystemError(
             f"{label} could not be read",
             path=path,
-            remediation="check artifact permissions and run 'learning-tutor build'",
+            remediation=(
+                "check artifact permissions and run "
+                "'python -m socratic_learn build'"
+            ),
         ) from error
 
 
@@ -93,13 +96,13 @@ def export_prompt(output: Path | None = None, *, root: Path | None = None) -> No
         raise IntegrityError(
             "distribution manifest is not valid UTF-8 JSON",
             path=manifest_path,
-            remediation="run 'learning-tutor build'",
+            remediation="run 'python -m socratic_learn build'",
         ) from error
     if not isinstance(manifest, dict):
         raise IntegrityError(
             "distribution manifest must contain a JSON object",
             path="dist/manifest.json",
-            remediation="run 'learning-tutor build'",
+            remediation="run 'python -m socratic_learn build'",
         )
     validate_manifest(manifest)
 
@@ -115,7 +118,7 @@ def export_prompt(output: Path | None = None, *, root: Path | None = None) -> No
         raise IntegrityError(
             "distribution prompt hash does not match the manifest",
             path=bundle_path,
-            remediation="run 'learning-tutor build'",
+            remediation="run 'python -m socratic_learn build'",
         )
 
     if output is None:

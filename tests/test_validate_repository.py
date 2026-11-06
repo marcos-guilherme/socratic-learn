@@ -228,6 +228,18 @@ class RepositoryValidationTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.assertEqual([], validate(root))
 
+    def test_legacy_package_rejects_implementation_modules(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        legacy_module = root / "learning_tutor/install.py"
+        legacy_module.write_text("raise RuntimeError\n", encoding="utf-8")
+
+        self.assertIn(
+            "Legacy package contains implementation module: "
+            "learning_tutor/install.py",
+            validate(root),
+        )
+
     def test_validator_rejects_missing_posix_threat_model(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
@@ -796,12 +808,13 @@ class RepositoryValidationTests(unittest.TestCase):
             "ubuntu-latest",
             "macos-latest",
             "python-version: \"3.11\"",
-            "python -m learning_tutor build",
+            "python -m socratic_learn build",
             "python -m unittest discover",
             "python tests/validate_repository.py",
             '"install", "generic"',
             "--update",
             '"doctor", str(project)',
+            "create_valid_legacy_install",
             '"git", "diff", "--check"',
             '"git", "status", "--porcelain"',
         ):
@@ -845,7 +858,7 @@ class RepositoryValidationTests(unittest.TestCase):
             self.assertTrue(
                 any(
                     "stale generated artifacts" in error
-                    and "python -m learning_tutor build" in error
+                    and "python -m socratic_learn build" in error
                     for error in errors
                 )
             )

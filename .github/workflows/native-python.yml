@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Build deterministic distribution
-        run: python -m learning_tutor build
+        run: python -m socratic_learn build
       - name: Run full unit suite
         run: python -m unittest discover -s tests -p "test_*.py" -v
       - name: Validate repository
@@ -36,11 +36,13 @@ jobs:
           import sys
           import tempfile
 
+          from tests.legacy_install_fixture import create_valid_legacy_install
+
           root = pathlib.Path.cwd()
           with tempfile.TemporaryDirectory() as temporary:
               project = pathlib.Path(temporary) / "project"
               project.mkdir()
-              command = [sys.executable, "-m", "learning_tutor"]
+              command = [sys.executable, "-m", "socratic_learn"]
               subprocess.run(
                   [*command, "install", "generic", str(project)],
                   cwd=root,
@@ -48,6 +50,25 @@ jobs:
               )
               subprocess.run(
                   [*command, "install", "generic", str(project), "--update"],
+                  cwd=root,
+                  check=True,
+              )
+              legacy_project = pathlib.Path(temporary) / "legacy-project"
+              legacy_project.mkdir()
+              create_valid_legacy_install(legacy_project, target="generic")
+              subprocess.run(
+                  [
+                      *command,
+                      "install",
+                      "generic",
+                      str(legacy_project),
+                      "--update",
+                  ],
+                  cwd=root,
+                  check=True,
+              )
+              subprocess.run(
+                  [*command, "doctor", str(legacy_project)],
                   cwd=root,
                   check=True,
               )

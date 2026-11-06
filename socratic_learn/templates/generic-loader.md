@@ -1,4 +1,4 @@
-# Learning Tutor Loader
+# Socratic Learn Loader
 
 Load and follow `.socratic-learn/socratic-learn.prompt.md` as the canonical Socratic Learn instructions.
 

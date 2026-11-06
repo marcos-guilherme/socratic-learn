@@ -8,6 +8,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+from tests.legacy_install_fixture import create_valid_legacy_install
+
 
 class UniversalSmokeTests(unittest.TestCase):
     TARGETS = ("generic", "cursor", "claude-code", "pi")
@@ -42,7 +44,7 @@ class UniversalSmokeTests(unittest.TestCase):
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, "-m", "learning_tutor", *arguments],
+            [sys.executable, "-m", "socratic_learn", *arguments],
             cwd=source,
             env=self._isolated_environment(),
             check=check,
@@ -90,7 +92,7 @@ class UniversalSmokeTests(unittest.TestCase):
                     doctor = self._run_cli(source, "doctor", str(project))
                     self.assertEqual("Installation healthy.\n", doctor.stdout)
 
-                    private = project / ".learning-tutor/workspace/private.md"
+                    private = project / ".socratic-learn/workspace/private.md"
                     private.write_text("PRIVATE_LEARNER_DATA\n", encoding="utf-8")
                     ignored = subprocess.run(
                         ["git", "check-ignore", "--quiet", str(private)],
@@ -110,7 +112,7 @@ class UniversalSmokeTests(unittest.TestCase):
                     self.assertEqual("Installation healthy.\n", doctor.stdout)
                     projects[target] = project
 
-            tampered = projects["generic"] / ".learning-tutor/loader.md"
+            tampered = projects["generic"] / ".socratic-learn/loader.md"
             tampered.write_text("user change\n", encoding="utf-8")
             before = self._snapshot(projects["generic"])
             refused = self._run_cli(
@@ -125,6 +127,42 @@ class UniversalSmokeTests(unittest.TestCase):
             self.assertIn("owned installation file was modified", refused.stderr)
             self.assertEqual(before, self._snapshot(projects["generic"]))
 
+            legacy = root / "project-legacy"
+            legacy.mkdir()
+            create_valid_legacy_install(legacy, target="generic")
+            private = legacy / ".learning-tutor/workspace/private.md"
+            private.write_text("PRIVATE_LEARNER_DATA\n", encoding="utf-8")
+
+            before_migration = self._run_cli(
+                source,
+                "doctor",
+                str(legacy),
+                check=False,
+            )
+            self.assertEqual(4, before_migration.returncode)
+            self.assertIn("legacy-installation", before_migration.stdout)
+
+            self._run_cli(
+                source,
+                "install",
+                "generic",
+                str(legacy),
+                "--update",
+            )
+            self.assertFalse((legacy / ".learning-tutor").exists())
+            self.assertEqual(
+                "PRIVATE_LEARNER_DATA\n",
+                (
+                    legacy / ".socratic-learn/workspace/private.md"
+                ).read_text(encoding="utf-8"),
+            )
+            migrated_doctor = self._run_cli(
+                source,
+                "doctor",
+                str(legacy),
+            )
+            self.assertEqual("Installation healthy.\n", migrated_doctor.stdout)
+
     def test_copied_runtime_removal_fails_without_live_checkout_fallback(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -133,7 +171,7 @@ class UniversalSmokeTests(unittest.TestCase):
             source.mkdir()
             project.mkdir()
             self._tracked_copy(source)
-            (source / "learning_tutor/install.py").unlink()
+            (source / "socratic_learn/install.py").unlink()
 
             result = self._run_cli(
                 source,
@@ -145,7 +183,7 @@ class UniversalSmokeTests(unittest.TestCase):
 
             self.assertEqual(4, result.returncode)
             self.assertIn("install implementation is unavailable", result.stderr)
-            self.assertFalse((project / ".learning-tutor").exists())
+            self.assertFalse((project / ".socratic-learn").exists())
 
 
 if __name__ == "__main__":
