@@ -1,5 +1,6 @@
 from contextlib import redirect_stdout
 from io import StringIO
+import json
 from pathlib import Path
 import re
 import shutil
@@ -9,6 +10,27 @@ import unittest
 from unittest.mock import patch
 
 from tests.validate_repository import main, validate, without_fenced_code
+
+UNIVERSAL_REQUIRED_PATHS = (
+    "learning_tutor/__init__.py",
+    "learning_tutor/__main__.py",
+    "learning_tutor/build.py",
+    "learning_tutor/conformance.py",
+    "learning_tutor/doctor.py",
+    "learning_tutor/errors.py",
+    "learning_tutor/export.py",
+    "learning_tutor/install.py",
+    "learning_tutor/manifest.py",
+    "learning_tutor/templates/generic-loader.md",
+    "learning_tutor/templates/cursor-skill.md",
+    "learning_tutor/templates/claude-loader.md",
+    "learning_tutor/templates/pi-skill.md",
+    "dist/learning-tutor.prompt.md",
+    "dist/manifest.json",
+    "docs/universal-installation.md",
+    "docs/manifest-reference.md",
+    "docs/adding-an-adapter.md",
+)
 
 CURRICULUM_FIELDS = (
     "Outcome",
@@ -91,6 +113,23 @@ def parse_prerequisite_ids(value: str) -> set[str]:
 
 
 class RepositoryValidationTests(unittest.TestCase):
+    def tracked_copy(self, destination: Path) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=source_root,
+            check=True,
+            capture_output=True,
+        )
+        for raw_relative in result.stdout.split(b"\0"):
+            if not raw_relative:
+                continue
+            relative = raw_relative.decode("utf-8")
+            source = source_root / relative
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+
     def make_root(
         self, nested_under_workspace: bool = False
     ) -> tuple[TemporaryDirectory, Path]:
@@ -128,10 +167,22 @@ class RepositoryValidationTests(unittest.TestCase):
             "workspace.example/progress.md",
             "workspace.example/sessions/2026-01-15-example.md",
             "workspace/.gitkeep",
+            *UNIVERSAL_REQUIRED_PATHS,
         ):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("# file\n", encoding="utf-8")
+        source_root = Path(__file__).resolve().parents[1]
+        for relative in (
+            *UNIVERSAL_REQUIRED_PATHS,
+            "core/pedagogy.md",
+            "core/session-protocol.md",
+            "core/assessment.md",
+            "core/evidence-policy.md",
+            "curricula/mathematics/map.md",
+            "curricula/ai/map.md",
+        ):
+            shutil.copy2(source_root / relative, root / relative)
         skill = (
             "---\n"
             "name: learning-tutor\n"
@@ -661,6 +712,70 @@ class RepositoryValidationTests(unittest.TestCase):
                 )
                 path.write_text(original, encoding="utf-8")
 
+    def test_universal_package_artifacts_and_docs_are_required(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        for relative in UNIVERSAL_REQUIRED_PATHS:
+            (root / relative).unlink()
+
+        errors = validate(root)
+
+        for relative in UNIVERSAL_REQUIRED_PATHS:
+            with self.subTest(path=relative):
+                self.assertIn(f"Missing required path: {relative}", errors)
+
+    def test_stale_distribution_is_detected_without_mutation(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.tracked_copy(root)
+            bundle = root / "dist/learning-tutor.prompt.md"
+            bundle.write_bytes(bundle.read_bytes() + b"stale\n")
+            before = {
+                path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in (root / "dist").iterdir()
+            }
+
+            errors = validate(root)
+
+            after = {
+                path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in (root / "dist").iterdir()
+            }
+            self.assertEqual(before, after)
+            self.assertTrue(
+                any(
+                    "stale generated artifacts" in error
+                    and "python -m learning_tutor build" in error
+                    for error in errors
+                )
+            )
+
+    def test_generated_bundle_header_and_manifest_paths_are_validated(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.tracked_copy(root)
+            bundle = root / "dist/learning-tutor.prompt.md"
+            bundle.write_bytes(
+                bundle.read_bytes().replace(
+                    b"# Universal Learning Tutor\n",
+                    b"# Wrong Header\n",
+                    1,
+                )
+            )
+            manifest_path = root / "dist/manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["sources"][0]["path"] = "C:/private/source.md"
+            manifest_path.write_text(
+                json.dumps(manifest, sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+
+            errors = validate(root)
+
+            self.assertTrue(any("expected header" in error for error in errors))
+            self.assertTrue(any("relative POSIX path" in error for error in errors))
+
     def test_broken_relative_markdown_link_fails(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
@@ -805,6 +920,18 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertEqual(
             "ERROR: first problem\nERROR: second problem\n", output.getvalue()
         )
+
+    def test_validator_script_runs_from_repository_root(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            ["python", "tests/validate_repository.py"],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("Repository validation passed.\n", result.stdout)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
+import sys
 from pathlib import Path
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from learning_tutor.build import build_distribution
+from learning_tutor.errors import LearningTutorError
+from learning_tutor.manifest import validate_manifest
 
 REQUIRED_PATHS = (
     "README.md",
@@ -30,6 +40,24 @@ REQUIRED_PATHS = (
     "workspace.example/progress.md",
     "workspace.example/sessions/2026-01-15-example.md",
     "workspace/.gitkeep",
+    "learning_tutor/__init__.py",
+    "learning_tutor/__main__.py",
+    "learning_tutor/build.py",
+    "learning_tutor/conformance.py",
+    "learning_tutor/doctor.py",
+    "learning_tutor/errors.py",
+    "learning_tutor/export.py",
+    "learning_tutor/install.py",
+    "learning_tutor/manifest.py",
+    "learning_tutor/templates/generic-loader.md",
+    "learning_tutor/templates/cursor-skill.md",
+    "learning_tutor/templates/claude-loader.md",
+    "learning_tutor/templates/pi-skill.md",
+    "dist/learning-tutor.prompt.md",
+    "dist/manifest.json",
+    "docs/universal-installation.md",
+    "docs/manifest-reference.md",
+    "docs/adding-an-adapter.md",
 )
 SKILL_PATHS = (
     ".cursor/skills/learning-tutor/SKILL.md",
@@ -43,6 +71,17 @@ CANONICAL_RE = re.compile(
 )
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 FENCE_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})")
+UNIVERSAL_VALIDATION_INPUTS = (
+    "learning_tutor/build.py",
+    "dist/learning-tutor.prompt.md",
+    "dist/manifest.json",
+    "core/pedagogy.md",
+    "core/session-protocol.md",
+    "core/assessment.md",
+    "core/evidence-policy.md",
+    "curricula/mathematics/map.md",
+    "curricula/ai/map.md",
+)
 
 
 def markdown_files(root: Path) -> list[Path]:
@@ -129,6 +168,45 @@ def tracked_files(root: Path) -> tuple[set[str], str | None]:
     )
 
 
+def validate_distribution(root: Path) -> list[str]:
+    if not all((root / relative).is_file() for relative in UNIVERSAL_VALIDATION_INPUTS):
+        return []
+
+    errors: list[str] = []
+    bundle_path = root / "dist/learning-tutor.prompt.md"
+    manifest_path = root / "dist/manifest.json"
+    try:
+        bundle = bundle_path.read_bytes()
+        manifest_bytes = manifest_path.read_bytes()
+    except OSError as error:
+        return [f"Generated distribution could not be read: {error}"]
+
+    if not bundle.startswith(b"# Universal Learning Tutor\n"):
+        errors.append(
+            "Generated bundle does not have the expected header: "
+            "# Universal Learning Tutor"
+        )
+
+    try:
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+        validate_manifest(manifest)
+    except (UnicodeDecodeError, json.JSONDecodeError, LearningTutorError) as error:
+        errors.append(f"Generated manifest is invalid: {error}")
+
+    try:
+        expected = build_distribution(root)
+    except LearningTutorError as error:
+        errors.append(f"In-memory distribution build failed: {error}")
+        return errors
+
+    if bundle != expected.bundle or manifest_bytes != expected.manifest:
+        errors.append(
+            "Found stale generated artifacts in dist/; run: "
+            "python -m learning_tutor build"
+        )
+    return errors
+
+
 def validate(root: Path) -> list[str]:
     errors: list[str] = []
 
@@ -212,6 +290,7 @@ def validate(root: Path) -> list[str]:
     if tracked_private:
         errors.append("Tracked private learner files: " + ", ".join(tracked_private))
 
+    errors.extend(validate_distribution(root))
     return errors
 
 
