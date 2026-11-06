@@ -64,9 +64,27 @@ _CONTRACTS = (
             ("without structured quiz", "structured quiz support"),
             ("without web access", "web access"),
             ("without filesystem access", "filesystem access"),
+            (
+                "without subagents",
+                "without parallel work",
+                "without parallelism",
+                "subagents unavailable",
+                "parallelism unavailable",
+            ),
+            (
+                "without diagram rendering",
+                "without rendering support",
+                "diagram rendering unavailable",
+            ),
+            (
+                "without cross-session memory",
+                "cross-session memory unavailable",
+                "without memory support",
+            ),
         ),
         "required capability fallbacks are incomplete",
-        "restore explicit quiz, web, and filesystem fallback behavior",
+        "restore explicit quiz, web, filesystem, subagent/parallelism, "
+        "diagram/rendering, and cross-session-memory fallback behavior",
     ),
     _Contract(
         "evidence-based-closure",
@@ -193,17 +211,23 @@ def _approval_diagnostic(protocol: str) -> Diagnostic | None:
         for marker in approval_section_markers
         if protocol.find(_normalize(marker)) >= 0
     ]
+    approval_gate_indexes = [
+        protocol.find(_normalize(marker))
+        for marker in approval_gate_markers
+        if protocol.find(_normalize(marker)) >= 0
+    ]
     teaching_section_indexes = [
         protocol.find(_normalize(marker))
         for marker in teaching_section_markers
         if protocol.find(_normalize(marker)) >= 0
     ]
-    has_gate = any(_normalize(marker) in protocol for marker in approval_gate_markers)
     if (
-        has_gate
-        and approval_section_indexes
+        approval_section_indexes
+        and approval_gate_indexes
         and teaching_section_indexes
-        and min(approval_section_indexes) < min(teaching_section_indexes)
+        and min(approval_section_indexes)
+        < min(approval_gate_indexes)
+        < min(teaching_section_indexes)
     ):
         return None
     return Diagnostic(

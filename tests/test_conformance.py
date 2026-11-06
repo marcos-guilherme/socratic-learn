@@ -53,6 +53,9 @@ Keep real learner data under `workspace/` and out of version control.
 Without structured quiz support, ask one question at a time in conversation.
 Without web access, mark volatile claims unverified.
 Without filesystem access, return the complete session record as Markdown.
+Without subagents or parallel work, research and teach sequentially.
+Without diagram rendering, use Mermaid or a textual edge list.
+Without cross-session memory, ask for a prior summary.
 """,
     "core/assessment.md": """# Assessment
 
@@ -117,20 +120,29 @@ class ConformanceTests(unittest.TestCase):
             "bounded-diagnosis",
         )
 
-    def test_requires_plan_approval_before_teaching(self) -> None:
+    def test_requires_explicit_plan_approval_gate(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Do not begin teaching until the learner approves or adjusts the path.",
+                "Present the path.",
+            ),
+            "plan-approval-before-teaching",
+        )
+
+    def test_requires_plan_approval_before_teaching_order(self) -> None:
         bundle = minimal_bundle()
         approval = "## 3. Present and approve a dependency path"
-        teaching = "## 4. Teach one node at a time"
-        bundle = bundle.replace(
-            f"{approval}\n\nDo not begin teaching until the learner approves or adjusts the path."
-            f"\n\n{teaching}",
-            f"{teaching}\n\nTeach one approved node at a time.\n\n{approval}",
-        ).replace(
-            f"{approval}\n\nTeach one approved node at a time.\n\n{teaching}"
-            "\n\nTeach one approved node at a time.",
-            f"{approval}\n\nDo not begin teaching until the learner approves or adjusts the path."
-            f"\n\n{teaching}\n\nTeach one approved node at a time.",
+        gate = "Do not begin teaching until the learner approves or adjusts the path."
+        teaching = (
+            "## 4. Teach one node at a time\n\n"
+            "Teach one approved node at a time."
         )
+        bundle = bundle.replace(
+            f"{approval}\n\n{gate}\n\n{teaching}",
+            f"{approval}\n\n{teaching}\n\n{gate}",
+        )
+
+        self.assertIn(gate, bundle)
 
         self.assert_only_code(bundle, "plan-approval-before-teaching")
 
@@ -176,12 +188,39 @@ class ConformanceTests(unittest.TestCase):
             "volatile-primary-source-verification",
         )
 
-    def test_requires_capability_fallbacks(self) -> None:
+    def test_requires_structured_quiz_fallback(self) -> None:
         self.assert_only_code(
-            minimal_bundle().replace(
-                "Without filesystem access, return the complete session record as Markdown.",
-                "",
-            ),
+            minimal_bundle().replace("structured quiz support", "assessment feature"),
+            "capability-fallbacks",
+        )
+
+    def test_requires_web_fallback(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace("web access", "network access"),
+            "capability-fallbacks",
+        )
+
+    def test_requires_filesystem_fallback(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace("filesystem access", "persistent storage"),
+            "capability-fallbacks",
+        )
+
+    def test_requires_subagent_or_parallelism_fallback(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace("subagents or parallel work", "extra workers"),
+            "capability-fallbacks",
+        )
+
+    def test_requires_diagram_or_rendering_fallback(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace("diagram rendering", "visual tool"),
+            "capability-fallbacks",
+        )
+
+    def test_requires_cross_session_memory_fallback(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace("cross-session memory", "saved context"),
             "capability-fallbacks",
         )
 
