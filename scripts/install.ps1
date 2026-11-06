@@ -158,6 +158,94 @@ function Test-Integer {
     )
 }
 
+$canonicalManifestUrl = "https://github.com/marcos-guilherme/socratic-learn/releases/latest/download/release-manifest.json"
+
+function Assert-TrustedRequestUri {
+    param([Uri]$Uri, [string]$TrustMode)
+    if (
+        $null -eq $Uri -or
+        -not $Uri.IsAbsoluteUri -or
+        -not [string]::IsNullOrEmpty($Uri.UserInfo) -or
+        -not [string]::IsNullOrEmpty($Uri.Fragment)
+    ) {
+        throw "URL is outside the trusted release boundary"
+    }
+    if ($TrustMode -eq "production") {
+        if (
+            $Uri.Scheme -cne [Uri]::UriSchemeHttps -or
+            [string]::IsNullOrEmpty($Uri.Host)
+        ) {
+            throw "URL is outside the trusted HTTPS release boundary"
+        }
+        return
+    }
+    if (
+        $TrustMode -ne "loopback" -or
+        $Uri.Scheme -cne [Uri]::UriSchemeHttp -or
+        $Uri.OriginalString -cnotmatch '^http://(?:localhost|127[.]0[.]0[.]1|\[::1\])(?::[0-9]+)?(?:/[^?#]*)?$' -or
+        -not [string]::IsNullOrEmpty($Uri.Query)
+    ) {
+        throw "URL is outside the trusted loopback test boundary"
+    }
+}
+
+function Get-ManifestTrust {
+    param([string]$Value)
+    $parsed = $null
+    if (
+        -not [Uri]::TryCreate($Value, [UriKind]::Absolute, [ref]$parsed) -or
+        -not $parsed.IsWellFormedOriginalString()
+    ) {
+        throw "Manifest URL is not a trusted absolute URI"
+    }
+    if ($Value -ceq $canonicalManifestUrl) {
+        Assert-TrustedRequestUri $parsed "production"
+        return [pscustomobject]@{ Uri = $parsed; Mode = "production" }
+    }
+    Assert-TrustedRequestUri $parsed "loopback"
+    return [pscustomobject]@{ Uri = $parsed; Mode = "loopback" }
+}
+
+function Invoke-TrustedGet {
+    param(
+        [Net.Http.HttpClient]$Client,
+        [Uri]$Uri,
+        [string]$TrustMode
+    )
+    $current = $Uri
+    for ($redirects = 0; $redirects -le 10; $redirects++) {
+        Assert-TrustedRequestUri $current $TrustMode
+        $response = $Client.GetAsync(
+            $current,
+            [Net.Http.HttpCompletionOption]::ResponseHeadersRead
+        ).GetAwaiter().GetResult()
+        $status = [int]$response.StatusCode
+        if ($status -ge 300 -and $status -lt 400) {
+            $location = $response.Headers.Location
+            $response.Dispose()
+            if ($null -eq $location) {
+                throw "Release redirect is missing a trusted Location"
+            }
+            $current = if ($location.IsAbsoluteUri) {
+                $location
+            } else {
+                New-Object Uri($current, $location)
+            }
+            Assert-TrustedRequestUri $current $TrustMode
+            continue
+        }
+        if (-not $response.IsSuccessStatusCode) {
+            try {
+                $response.EnsureSuccessStatusCode() | Out-Null
+            } finally {
+                $response.Dispose()
+            }
+        }
+        return $response
+    }
+    throw "Release download exceeded the trusted redirect limit"
+}
+
 $architecture = if ($env:PROCESSOR_ARCHITEW6432) {
     $env:PROCESSOR_ARCHITEW6432
 } else {
@@ -175,14 +263,11 @@ if (-not $Yes) {
     }
 }
 
-$manifestUri = [Uri]$ManifestUrl
-if (
-    $manifestUri.Host -eq "github.com" -and
-    $manifestUri.Scheme -ne [Uri]::UriSchemeHttps
-) {
-    throw "The canonical release manifest must use HTTPS"
-}
+$manifestTrust = Get-ManifestTrust $ManifestUrl
+$manifestUri = $manifestTrust.Uri
+$trustMode = $manifestTrust.Mode
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+Add-Type -AssemblyName System.Net.Http
 
 $installWasOverridden = $PSBoundParameters.ContainsKey("InstallDirectory")
 $installPath = [IO.Path]::GetFullPath($InstallDirectory)
@@ -196,9 +281,19 @@ New-Item -ItemType Directory -Force -Path $installPath | Out-Null
 New-Item -ItemType Directory -Force -Path $channelHome | Out-Null
 Remove-Item -Force -ErrorAction SilentlyContinue $staged, $channelStaged
 
+$handler = New-Object Net.Http.HttpClientHandler
+$handler.AllowAutoRedirect = $false
+$client = New-Object Net.Http.HttpClient($handler)
 try {
-    $client = New-Object Net.WebClient
-    $manifestText = $client.DownloadString($manifestUri)
+    $manifestResponse = Invoke-TrustedGet $client $manifestUri $trustMode
+    try {
+        $manifestBytes = $manifestResponse.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+        $manifestBaseUri = $manifestResponse.RequestMessage.RequestUri
+    } finally {
+        $manifestResponse.Dispose()
+    }
+    $strictUtf8 = New-Object Text.UTF8Encoding($false, $true)
+    $manifestText = $strictUtf8.GetString($manifestBytes)
     $manifest = ConvertFrom-StrictJson $manifestText
     Assert-ExactKeys $manifest @("schema_version", "version", "artifacts") "release manifest"
     if (-not (Test-Integer $manifest.schema_version) -or $manifest.schema_version -ne 1) {
@@ -254,14 +349,30 @@ try {
         throw "release manifest must contain exactly one windows/x86_64 artifact"
     }
     $selected = $selectedArtifacts[0]
-    $artifactUri = New-Object Uri($manifestUri, $selected.filename)
-    if (
-        $manifestUri.Scheme -eq [Uri]::UriSchemeHttps -and
-        $artifactUri.Scheme -ne [Uri]::UriSchemeHttps
-    ) {
-        throw "release artifact URL must use HTTPS"
+    $artifactUri = New-Object Uri($manifestBaseUri, $selected.filename)
+    Assert-TrustedRequestUri $artifactUri $trustMode
+    $artifactResponse = Invoke-TrustedGet $client $artifactUri $trustMode
+    try {
+        $artifactStream = $artifactResponse.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        try {
+            $output = New-Object IO.FileStream(
+                $staged,
+                [IO.FileMode]::CreateNew,
+                [IO.FileAccess]::Write,
+                [IO.FileShare]::None
+            )
+            try {
+                $artifactStream.CopyTo($output)
+                $output.Flush($true)
+            } finally {
+                $output.Dispose()
+            }
+        } finally {
+            $artifactStream.Dispose()
+        }
+    } finally {
+        $artifactResponse.Dispose()
     }
-    $client.DownloadFile($artifactUri, $staged)
 
     $actualSize = (Get-Item -LiteralPath $staged).Length
     if ($actualSize -ne $selected.size) {
@@ -277,21 +388,21 @@ try {
         schema_version = 1
         channel = "native"
         executable = $resolvedTarget
-        manifest_url = $ManifestUrl
+        manifest_url = $canonicalManifestUrl
     }
     $channelJson = $channel | ConvertTo-Json
     $utf8WithoutBom = New-Object Text.UTF8Encoding($false)
     [IO.File]::WriteAllText($channelStaged, $channelJson, $utf8WithoutBom)
 
-    if ([IO.File]::Exists($target)) {
-        [IO.File]::Replace($staged, $target, $null)
-    } else {
-        [IO.File]::Move($staged, $target)
-    }
     if ([IO.File]::Exists($channelTarget)) {
         [IO.File]::Replace($channelStaged, $channelTarget, $null)
     } else {
         [IO.File]::Move($channelStaged, $channelTarget)
+    }
+    if ([IO.File]::Exists($target)) {
+        [IO.File]::Replace($staged, $target, $null)
+    } else {
+        [IO.File]::Move($staged, $target)
     }
 
     if (-not $installWasOverridden) {
@@ -307,6 +418,8 @@ try {
         }
     }
 } finally {
+    $client.Dispose()
+    $handler.Dispose()
     Remove-Item -Force -ErrorAction SilentlyContinue $staged, $channelStaged
 }
 

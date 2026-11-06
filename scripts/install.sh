@@ -37,27 +37,63 @@ if [ "${SOCRATIC_INSTALL_YES:-0}" != "1" ]; then
     esac
 fi
 
-case "$release_base" in
-    "$canonical_release_base")
-        curl_download() {
-            curl --fail --location --proto '=https' --tlsv1.2 "$1" -o "$2"
-        }
-        ;;
-    http://127.0.0.1:*|http://localhost:*)
-        curl_download() {
-            curl --fail --location --proto '=http' "$1" -o "$2"
-        }
-        ;;
-    https://*)
-        curl_download() {
-            curl --fail --location --proto '=https' --tlsv1.2 "$1" -o "$2"
-        }
-        ;;
-    *)
-        printf '%s\n' "Release URL overrides must use HTTPS or loopback HTTP." >&2
-        exit 1
-        ;;
-esac
+validate_loopback_url() {
+    candidate=$1
+    case "$candidate" in
+        *'#'*|*'?'*|*'@'*) return 1 ;;
+        http://*) ;;
+        *) return 1 ;;
+    esac
+    remainder=${candidate#http://}
+    authority=${remainder%%/*}
+    case "$authority" in
+        localhost|127.0.0.1|'[::1]')
+            return 0
+            ;;
+        localhost:*|127.0.0.1:*)
+            port=${authority#*:}
+            ;;
+        '[::1]':*)
+            port=${authority#'[::1]:'}
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    case "$port" in
+        ''|*[!0-9]*) return 1 ;;
+        *)
+            if [ "${#port}" -gt 5 ] || [ "$port" -gt 65535 ]; then
+                return 1
+            fi
+            return 0
+            ;;
+    esac
+}
+
+validate_https_url() {
+    candidate=$1
+    case "$candidate" in
+        *'#'*|*'@'*) return 1 ;;
+        https://*) ;;
+        *) return 1 ;;
+    esac
+    remainder=${candidate#https://}
+    authority=${remainder%%/*}
+    case "$authority" in
+        ''|*'?'*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+if [ "$release_base" = "$canonical_release_base" ]; then
+    trust_mode=production
+elif validate_loopback_url "$release_base"; then
+    trust_mode=loopback
+else
+    printf '%s\n' "Release URL is outside the trusted download boundary." >&2
+    exit 1
+fi
 
 release_base=${release_base%/}
 asset="socratic-${platform}-x86_64"
@@ -74,9 +110,82 @@ channel_target="$channel_home/channel.json"
 channel_staged="$channel_home/channel.json.new"
 
 cleanup() {
-    rm -f "$staged" "$checksums" "$channel_staged"
+    rm -f \
+        "$staged" "$checksums" "$channel_staged" \
+        "$staged.part" "$staged.headers" \
+        "$checksums.part" "$checksums.headers"
 }
 trap cleanup EXIT HUP INT TERM
+
+curl_download() {
+    current_url=$1
+    destination=$2
+    response_body="$destination.part"
+    response_headers="$destination.headers"
+    redirect_count=0
+    while [ "$redirect_count" -le 10 ]; do
+        rm -f "$response_body" "$response_headers"
+        if [ "$trust_mode" = production ]; then
+            validate_https_url "$current_url" || {
+                printf '%s\n' "Redirect left the trusted HTTPS boundary." >&2
+                return 1
+            }
+            status=$(
+                curl --fail --silent --show-error \
+                    --proto '=https' --proto-redir '=https' --tlsv1.2 \
+                    --max-redirs 0 --dump-header "$response_headers" \
+                    --output "$response_body" --write-out '%{http_code}' \
+                    "$current_url"
+            ) || return 1
+        else
+            validate_loopback_url "$current_url" || {
+                printf '%s\n' "Redirect left the trusted loopback boundary." >&2
+                return 1
+            }
+            status=$(
+                curl --fail --silent --show-error \
+                    --proto '=http' --proto-redir '=http' \
+                    --max-redirs 0 --dump-header "$response_headers" \
+                    --output "$response_body" --write-out '%{http_code}' \
+                    "$current_url"
+            ) || return 1
+        fi
+        case "$status" in
+            2??)
+                mv "$response_body" "$destination"
+                rm -f "$response_headers"
+                return 0
+                ;;
+            3??)
+                locations=$(
+                    awk '
+                        tolower(substr($0, 1, 9)) == "location:" {
+                            sub(/^[^:]*:[ \t]*/, "")
+                            sub(/\r$/, "")
+                            print
+                        }
+                    ' "$response_headers"
+                )
+                location_count=$(
+                    printf '%s\n' "$locations" |
+                        awk 'NF {count++} END {print count + 0}'
+                )
+                if [ "$location_count" -ne 1 ]; then
+                    printf '%s\n' "Redirect must contain one trusted Location." >&2
+                    return 1
+                fi
+                current_url=$locations
+                redirect_count=$((redirect_count + 1))
+                ;;
+            *)
+                printf '%s\n' "Release download returned HTTP $status." >&2
+                return 1
+                ;;
+        esac
+    done
+    printf '%s\n' "Release download exceeded the trusted redirect limit." >&2
+    return 1
+}
 
 curl_download "$release_base/SHA256SUMS" "$checksums"
 curl_download "$release_base/$asset" "$staged"
@@ -128,6 +237,25 @@ json_escape() {
     '
 }
 
+shell_single_quote() {
+    LC_ALL=C awk '
+        BEGIN {
+            ORS = ""
+            printf "\047"
+        }
+        {
+            if (NR > 1) {
+                printf "\\n"
+            }
+            gsub(/\047/, "\047\\\047\047")
+            printf "%s", $0
+        }
+        END {
+            printf "\047"
+        }
+    '
+}
+
 escaped_target=$(printf '%s' "$target" | json_escape)
 escaped_manifest=$(printf '%s' "$canonical_manifest_url" | json_escape)
 umask 077
@@ -141,11 +269,14 @@ cat >"$channel_staged" <<EOF
 EOF
 
 chmod 755 "$staged"
-mv "$staged" "$target"
 mv "$channel_staged" "$channel_target"
+mv "$staged" "$target"
 
 case ":${PATH:-}:" in
     *":$install_dir:"*) ;;
-    *) printf '%s\n' "export PATH=\"$install_dir:\$PATH\"" ;;
+    *)
+        quoted_install_dir=$(printf '%s' "$install_dir" | shell_single_quote)
+        printf 'export PATH=%s:"$PATH"\n' "$quoted_install_dir"
+        ;;
 esac
 printf '%s\n' "Run: socratic"
