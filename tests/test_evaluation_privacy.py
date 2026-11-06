@@ -6,6 +6,7 @@ from pathlib import Path
 
 from evaluation.report import validate_baseline_report
 from evaluation.sanitize import assert_tracked_safe
+from tests.validate_repository import guarded_tracked_asset_path
 
 
 class EvaluationPrivacyTests(unittest.TestCase):
@@ -30,11 +31,11 @@ class EvaluationPrivacyTests(unittest.TestCase):
             text=True,
         ).stdout.splitlines()
         for relative in sorted(tracked):
-            path = root / relative
+            path = Path(relative)
             if path.suffix not in {".json", ".md", ".py"}:
                 continue
             with self.subTest(path=relative):
-                self.assertFalse(path.is_symlink())
+                path = guarded_tracked_asset_path(root, relative)
                 text = path.read_text(encoding="utf-8")
                 assert_tracked_safe(text, forbidden_literals=())
                 if relative.startswith("evaluation/reports/"):

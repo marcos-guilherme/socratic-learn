@@ -304,6 +304,56 @@ def tracked_files(root: Path) -> tuple[set[str], str | None]:
     )
 
 
+class GuardedAssetPathError(ValueError):
+    pass
+
+
+def guarded_tracked_asset_path(root: Path, relative: str) -> Path:
+    relative_path = Path(relative)
+    if relative_path.is_absolute() or any(
+        part in ("", ".", "..") for part in relative_path.parts
+    ):
+        raise GuardedAssetPathError(
+            f"Unsafe tracked evaluation asset path: {relative}"
+        )
+
+    asset = relative_path.as_posix()
+    current = root
+    components = [(".", current)]
+    for part in relative_path.parts:
+        current = current / part
+        component = current.relative_to(root).as_posix()
+        components.append((component, current))
+
+    for index, (component, candidate) in enumerate(components):
+        try:
+            status = candidate.lstat()
+        except OSError as error:
+            raise GuardedAssetPathError(
+                f"Unsafe tracked evaluation asset path component: {component} "
+                f"(tracked asset: {asset})"
+            ) from error
+        if stat.S_ISLNK(status.st_mode):
+            message = (
+                f"Unsafe tracked evaluation asset symlink: {component}"
+            )
+            if component != asset:
+                message += f" (tracked asset: {asset})"
+            raise GuardedAssetPathError(message)
+        is_leaf = index == len(components) - 1
+        expected_type = (
+            stat.S_ISREG(status.st_mode)
+            if is_leaf
+            else stat.S_ISDIR(status.st_mode)
+        )
+        if not expected_type:
+            raise GuardedAssetPathError(
+                f"Unsafe tracked evaluation asset path component: {component} "
+                f"(tracked asset: {asset})"
+            )
+    return current
+
+
 def semantic_runtime_errors(root: Path) -> list[str]:
     raw_root = root / ".semantic-runs"
     try:
@@ -1157,18 +1207,10 @@ def validate(root: Path) -> list[str]:
     for relative in sorted(tracked):
         if not relative.startswith(TRACKED_EVALUATION_ASSET_ROOTS):
             continue
-        path = root / relative
         try:
-            status = path.lstat()
-        except OSError:
-            errors.append(f"Unsafe tracked evaluation asset: {relative}")
-            continue
-        if stat.S_ISLNK(status.st_mode):
-            errors.append(
-                f"Unsafe tracked evaluation asset symlink: {relative}"
-            )
-            continue
-        if not stat.S_ISREG(status.st_mode):
+            path = guarded_tracked_asset_path(root, relative)
+        except GuardedAssetPathError as error:
+            errors.append(str(error))
             continue
         try:
             assert_tracked_safe(

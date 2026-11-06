@@ -2318,6 +2318,60 @@ class RepositoryValidationTests(unittest.TestCase):
                     errors,
                 )
 
+    def test_validator_rejects_guarded_asset_symlinked_ancestors_without_reading(
+        self,
+    ) -> None:
+        for label in ("external", "ignored raw"):
+            with self.subTest(target=label):
+                temp, root = self.make_root(
+                    nested_under_workspace=label == "external"
+                )
+                self.addCleanup(temp.cleanup)
+                guarded = root / "evaluation/reports/tracked-report.md"
+                guarded.parent.mkdir(parents=True)
+                guarded.write_text("# Sanitized report\n", encoding="utf-8")
+                subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+                subprocess.run(
+                    ["git", "add", "-f", "evaluation/reports/tracked-report.md"],
+                    cwd=root,
+                    check=True,
+                )
+
+                target = (
+                    Path(temp.name) / "external-reports"
+                    if label == "external"
+                    else root / ".semantic-runs/private-reports"
+                )
+                target.mkdir(parents=True)
+                (target / guarded.name).write_text(
+                    "Authorization: Bearer provider-secret\n",
+                    encoding="utf-8",
+                )
+                shutil.rmtree(guarded.parent)
+                guarded.parent.symlink_to(target, target_is_directory=True)
+                original_read_text = Path.read_text
+
+                def reject_guarded_read(
+                    path: Path,
+                    *args: object,
+                    **kwargs: object,
+                ) -> str:
+                    if path == guarded:
+                        raise AssertionError(
+                            "guarded ancestor symlink content was read"
+                        )
+                    return original_read_text(path, *args, **kwargs)
+
+                with patch("pathlib.Path.read_text", new=reject_guarded_read):
+                    errors = validate(root)
+
+                self.assertIn(
+                    "Unsafe tracked evaluation asset symlink: "
+                    "evaluation/reports (tracked asset: "
+                    "evaluation/reports/tracked-report.md)",
+                    errors,
+                )
+
     def test_validator_guards_tracked_evaluation_reports(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
