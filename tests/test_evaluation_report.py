@@ -321,6 +321,35 @@ class EvaluationReportTests(unittest.TestCase):
             with self.subTest(label), self.assertRaises(ValueError):
                 validate_baseline_report(malformed)
 
+    def test_validator_rejects_deleted_required_section_bodies(self) -> None:
+        report = self.render(disclosure())
+
+        def delete_body(text: str, heading: str, next_heading: str) -> str:
+            prefix, remainder = text.split(f"{heading}\n", 1)
+            _body, suffix = remainder.split(next_heading, 1)
+            return f"{prefix}{heading}\n{next_heading}{suffix}"
+
+        cases = {
+            "scenario results": delete_body(
+                report,
+                "## Scenario results",
+                "## General findings",
+            ),
+            "general findings": delete_body(
+                report,
+                "## General findings",
+                "## Scenario-specific findings",
+            ),
+            "scenario-specific findings": delete_body(
+                report,
+                "## Scenario-specific findings",
+                "## Infrastructure results",
+            ),
+        }
+        for label, malformed in cases.items():
+            with self.subTest(label), self.assertRaises(ValueError):
+                validate_baseline_report(malformed)
+
     def test_private_cli_scores_renders_and_validates_report(self) -> None:
         from evaluation import cli
 

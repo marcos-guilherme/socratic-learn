@@ -425,8 +425,8 @@ def _validate_identity_section(lines: list[str]) -> None:
 
 
 def _validate_scenario_section(lines: list[str]) -> None:
-    if lines == [""]:
-        return
+    if not lines:
+        raise ValueError("baseline report scenario results must not be empty")
     index = 0
     while index < len(lines):
         scenario_id = _require_prefixed(lines[index], "### ", "scenario heading")
@@ -531,6 +531,8 @@ def _validate_scenario_section(lines: list[str]) -> None:
 
 
 def _validate_findings_section(lines: list[str]) -> None:
+    if not lines:
+        raise ValueError("baseline report findings must not be empty")
     if lines == ["- None.", ""]:
         return
     index = 0
