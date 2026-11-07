@@ -357,9 +357,24 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertTrue(readme.exists(), "README.md must exist")
         text = readme.read_text(encoding="utf-8")
         self.assertTrue(text.startswith("# Socratic Learn\n"))
-        self.assertIn(README_TAGLINE, text)
-        opening = text.split("## Why I built this", 1)[0].lower()
-        self.assertIn(README_OPENING_PROMISE, opening)
+        tagline = f"**{README_TAGLINE}**"
+        self.assertIn(tagline, text)
+        after_tagline = text.split(tagline, 1)[1]
+        first_prose_paragraph = next(
+            (
+                paragraph.strip()
+                for paragraph in re.split(
+                    r"\r?\n[ \t]*\r?\n",
+                    after_tagline,
+                )
+                if paragraph.strip()
+            ),
+            "",
+        )
+        self.assertIn(
+            README_OPENING_PROMISE,
+            first_prose_paragraph.lower(),
+        )
         for dash in README_UNFRIENDLY_DASHES:
             with self.subTest(dash=dash):
                 self.assertNotIn(dash, text)
@@ -531,6 +546,42 @@ class RepositoryValidationTests(unittest.TestCase):
                     "Narrow product positioning in README.md",
                     validate(root),
                 )
+
+    def test_validator_requires_any_subject_in_first_prose_paragraph(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        readme = root / "README.md"
+        text = readme.read_text(encoding="utf-8")
+        tagline = f"**{README_TAGLINE}**"
+        before_tagline, separator, after_tagline = text.partition(tagline)
+        self.assertEqual(separator, tagline)
+        first_paragraph, paragraph_break, later_text = after_tagline.lstrip(
+            "\r\n"
+        ).partition("\n\n")
+        self.assertEqual(paragraph_break, "\n\n")
+        self.assertIn(README_OPENING_PROMISE, first_paragraph)
+        first_paragraph = first_paragraph.replace(
+            README_OPENING_PROMISE,
+            "study selected topics",
+        )
+        later_text = (
+            "Compatible agents can still help people learn any subject.\n\n"
+            + later_text
+        )
+        readme.write_text(
+            before_tagline
+            + tagline
+            + "\n\n"
+            + first_paragraph
+            + paragraph_break
+            + later_text,
+            encoding="utf-8",
+        )
+
+        self.assertIn(
+            "Narrow product positioning in README.md",
+            validate(root),
+        )
 
     def test_validator_rejects_unfriendly_readme_dash_punctuation(self) -> None:
         for dash in README_UNFRIENDLY_DASHES:

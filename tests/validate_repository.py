@@ -95,10 +95,10 @@ README_POSITIONING_REQUIREMENTS = (
     "any subject or skill",
     "starter curricula",
 )
-README_OPENING_REQUIREMENTS = (
-    "A portable, evidence-aware Socratic protocol for learning any subject.",
-    "learn any subject",
+README_TAGLINE = (
+    "A portable, evidence-aware Socratic protocol for learning any subject."
 )
+README_OPENING_PROMISE = "learn any subject"
 README_UNFRIENDLY_DASHES = ("—", "–")
 README_PORTFOLIO_REQUIREMENTS = (
     "I built Socratic Learn out of a recurring need in my work as an AI researcher",
@@ -366,6 +366,23 @@ def parse_frontmatter(text: str) -> dict[str, str] | None:
 
 def normalize(text: str) -> str:
     return " ".join(text.split())
+
+
+def first_markdown_paragraph_after(text: str, marker: str) -> str:
+    _, found, remainder = text.partition(marker)
+    if not found:
+        return ""
+    return next(
+        (
+            paragraph.strip()
+            for paragraph in re.split(
+                r"\r?\n[ \t]*\r?\n",
+                remainder,
+            )
+            if paragraph.strip()
+        ),
+        "",
+    )
 
 
 def contains_unsupported_effectiveness_claim(text: str) -> bool:
@@ -1060,12 +1077,17 @@ def validate(root: Path) -> list[str]:
     if readme.is_file():
         readme_text = readme.read_text(encoding="utf-8")
         readme_opening = readme_text.split("## Why I built this", 1)[0]
+        tagline = f"**{README_TAGLINE}**"
+        first_prose_paragraph = first_markdown_paragraph_after(
+            readme_opening,
+            tagline,
+        )
         if not all(
             phrase.lower() in readme_text.lower()
             for phrase in README_POSITIONING_REQUIREMENTS
-        ) or not all(
-            phrase.lower() in readme_opening.lower()
-            for phrase in README_OPENING_REQUIREMENTS
+        ) or tagline not in readme_opening or (
+            README_OPENING_PROMISE
+            not in first_prose_paragraph.lower()
         ):
             errors.append("Narrow product positioning in README.md")
         if any(dash in readme_text for dash in README_UNFRIENDLY_DASHES):
