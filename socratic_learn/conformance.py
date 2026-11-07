@@ -249,6 +249,8 @@ _CONTRACTS = (
             "obtain learner approval before teaching",
             "do not begin teaching until the learner approves",
             "ask the learner to approve the technical route",
+            "learner approval before teaching",
+            "learner approves the path",
         ),
     ),
     _Contract(
@@ -313,6 +315,47 @@ def _has_groups(text: str, groups: tuple[tuple[str, ...], ...]) -> bool:
     return all(any(_normalize(marker) in text for marker in group) for group in groups)
 
 
+def _has_forbidden_marker(text: str, marker: str) -> bool:
+    normalized_marker = _normalize(marker)
+    negating_prefixes = (
+        "do not",
+        "don't",
+        "never",
+        "must not",
+        "should not",
+        "no",
+    )
+    negating_suffixes = (
+        " is not required",
+        " is not needed",
+        " is unnecessary",
+    )
+    search_from = 0
+    while (index := text.find(normalized_marker, search_from)) != -1:
+        prefix = text[:index]
+        suffix = text[index + len(normalized_marker) :]
+        has_negating_prefix = any(
+            prefix.endswith(f"{negator} ")
+            and (
+                len(prefix) == len(negator) + 1
+                or not prefix[-len(negator) - 2].isalnum()
+            )
+            for negator in negating_prefixes
+        )
+        has_negating_suffix = any(
+            suffix.startswith(negator)
+            and (
+                len(suffix) == len(negator)
+                or not suffix[len(negator)].isalnum()
+            )
+            for negator in negating_suffixes
+        )
+        if not has_negating_prefix and not has_negating_suffix:
+            return True
+        search_from = index + len(normalized_marker)
+    return False
+
+
 def check_conformance(bundle: str) -> list[Diagnostic]:
     """Return every behavioral contract failure in deterministic order."""
 
@@ -321,7 +364,8 @@ def check_conformance(bundle: str) -> list[Diagnostic]:
     for contract in _CONTRACTS:
         section = sections.get(contract.path, "")
         has_forbidden_marker = any(
-            _normalize(marker) in section for marker in contract.forbidden_markers
+            _has_forbidden_marker(section, marker)
+            for marker in contract.forbidden_markers
         )
         if not _has_groups(section, contract.marker_groups) or has_forbidden_marker:
             diagnostics.append(

@@ -242,6 +242,32 @@ class ConformanceTests(unittest.TestCase):
                     "agent-led-route",
                 )
 
+    def test_rejects_legacy_affirmative_approval_gates(self) -> None:
+        for statement in (
+            "Learner approval before teaching is required.",
+            "Teaching starts after the learner approves the path.",
+        ):
+            with self.subTest(statement=statement):
+                self.assert_only_code(
+                    minimal_bundle().replace(
+                        "The learner may redirect at any time.",
+                        f"The learner may redirect at any time. {statement}",
+                    ),
+                    "agent-led-route",
+                )
+
+    def test_allows_negated_approval_gate_markers(self) -> None:
+        for statement in (
+            "Do not wait for approval before teaching.",
+            "Learner approval before teaching is not required.",
+        ):
+            with self.subTest(statement=statement):
+                bundle = minimal_bundle().replace(
+                    "The learner may redirect at any time.",
+                    f"The learner may redirect at any time. {statement}",
+                )
+                self.assertEqual([], check_conformance(bundle))
+
     def test_requires_learner_owned_choices(self) -> None:
         self.assert_only_code(
             minimal_bundle().replace(
