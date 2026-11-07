@@ -559,6 +559,10 @@ class RepositoryValidationTests(unittest.TestCase):
             "Research\nproves that Socratic Learn improves learning.",
             "Studies validate\nSocratic Learn.",
             "Literature validates that\nSocratic Learn.",
+            "Socratic Learn improves learning.",
+            "Socratic\nLearn improves\nlearning.",
+            "Evidence shows that Socratic Learn improves learning.",
+            "Research\ndemonstrates that Socratic Learn improves learning.",
         )
         for claim in claims:
             with self.subTest(claim=claim):
@@ -582,9 +586,22 @@ class RepositoryValidationTests(unittest.TestCase):
         readme.write_text(
             readme.read_text(encoding="utf-8")
             + "\nSocratic Learn is not proven to improve learning.\n"
-            + "Research does not prove that Socratic Learn improves learning.\n",
+            + "Socratic Learn does not improve learning.\n"
+            + "Research does not prove that Socratic Learn improves learning.\n"
+            + "Evidence does not show that Socratic Learn improves learning.\n"
+            + "No research proves that Socratic Learn improves learning.\n"
+            + "No\nevidence demonstrates that Socratic Learn improves learning.\n",
             encoding="utf-8",
         )
+
+        self.assertNotIn(
+            "README.md contains an unsupported effectiveness claim",
+            validate(root),
+        )
+
+    def test_validator_allows_approved_readme_effectiveness_caveats(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
 
         self.assertNotIn(
             "README.md contains an unsupported effectiveness claim",

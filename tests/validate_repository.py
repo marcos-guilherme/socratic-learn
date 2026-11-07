@@ -115,17 +115,62 @@ README_PORTFOLIO_REQUIREMENTS = (
     "no pedagogy score was assigned",
     "evaluation/reports/2026-11-06-antigravity-baseline.md",
 )
+_MARKDOWN_WHITESPACE = r"[ \t\r\n]+"
+_PRODUCT_NAME = rf"Socratic{_MARKDOWN_WHITESPACE}Learn"
+_EFFECTIVENESS_RESULT = rf"improves?{_MARKDOWN_WHITESPACE}learning"
+_EVIDENCE_SUBJECT = r"(?:research|evidence|studies|literature)"
+_EVIDENCE_VERB = r"(?:shows?|demonstrates?|proves?|validates?)"
+
+# This is intentionally a lexical grammar, not natural-language inference.
+# Markdown whitespace may separate its words. Positive forms cover product-led
+# validation/improvement claims and evidence-led attribution to the product.
 README_UNSUPPORTED_EFFECTIVENESS_PATTERNS = (
     re.compile(
-        r"\bSocratic[ \t\r\n]+Learn[ \t\r\n]+"
-        r"(?:is[ \t\r\n]+)?"
-        r"(?:proven|scientifically[ \t\r\n]+validated)\b",
+        rf"\b{_PRODUCT_NAME}{_MARKDOWN_WHITESPACE}"
+        rf"(?:is{_MARKDOWN_WHITESPACE})?"
+        rf"(?:proven|scientifically{_MARKDOWN_WHITESPACE}validated)\b",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:research|studies|literature)[ \t\r\n]+"
-        r"(?:proves?|validates?)[ \t\r\n]+"
-        r"(?:that[ \t\r\n]+)?Socratic[ \t\r\n]+Learn\b",
+        rf"\b{_PRODUCT_NAME}{_MARKDOWN_WHITESPACE}"
+        rf"{_EFFECTIVENESS_RESULT}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b{_EVIDENCE_SUBJECT}{_MARKDOWN_WHITESPACE}"
+        rf"{_EVIDENCE_VERB}{_MARKDOWN_WHITESPACE}"
+        rf"(?:that{_MARKDOWN_WHITESPACE})?{_PRODUCT_NAME}\b",
+        re.IGNORECASE,
+    ),
+)
+# Explicit lexical negations suppress positive submatches contained inside
+# them. Other wording is deliberately outside this narrow grammar.
+README_NEGATED_EFFECTIVENESS_PATTERNS = (
+    re.compile(
+        rf"\bno{_MARKDOWN_WHITESPACE}{_EVIDENCE_SUBJECT}"
+        rf"{_MARKDOWN_WHITESPACE}{_EVIDENCE_VERB}{_MARKDOWN_WHITESPACE}"
+        rf"(?:that{_MARKDOWN_WHITESPACE})?{_PRODUCT_NAME}"
+        rf"(?:{_MARKDOWN_WHITESPACE}{_EFFECTIVENESS_RESULT})?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b{_EVIDENCE_SUBJECT}{_MARKDOWN_WHITESPACE}"
+        rf"does{_MARKDOWN_WHITESPACE}not{_MARKDOWN_WHITESPACE}"
+        rf"(?:show|demonstrate|prove|validate){_MARKDOWN_WHITESPACE}"
+        rf"(?:that{_MARKDOWN_WHITESPACE})?{_PRODUCT_NAME}"
+        rf"(?:{_MARKDOWN_WHITESPACE}{_EFFECTIVENESS_RESULT})?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b{_PRODUCT_NAME}{_MARKDOWN_WHITESPACE}"
+        rf"(?:is{_MARKDOWN_WHITESPACE})?not{_MARKDOWN_WHITESPACE}"
+        rf"(?:proven|scientifically{_MARKDOWN_WHITESPACE}validated)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b{_PRODUCT_NAME}{_MARKDOWN_WHITESPACE}"
+        rf"does{_MARKDOWN_WHITESPACE}not{_MARKDOWN_WHITESPACE}"
+        rf"improve{_MARKDOWN_WHITESPACE}learning\b",
         re.IGNORECASE,
     ),
 )
@@ -310,6 +355,22 @@ def parse_frontmatter(text: str) -> dict[str, str] | None:
 
 def normalize(text: str) -> str:
     return " ".join(text.split())
+
+
+def contains_unsupported_effectiveness_claim(text: str) -> bool:
+    negated_spans = [
+        match.span()
+        for pattern in README_NEGATED_EFFECTIVENESS_PATTERNS
+        for match in pattern.finditer(text)
+    ]
+    return any(
+        not any(
+            negated_start <= match.start() and match.end() <= negated_end
+            for negated_start, negated_end in negated_spans
+        )
+        for pattern in README_UNSUPPORTED_EFFECTIVENESS_PATTERNS
+        for match in pattern.finditer(text)
+    )
 
 
 def tracked_files(root: Path) -> tuple[set[str], str | None]:
@@ -997,10 +1058,7 @@ def validate(root: Path) -> list[str]:
             for requirement in README_PORTFOLIO_REQUIREMENTS
         ):
             errors.append("README.md is missing portfolio narrative")
-        if any(
-            pattern.search(readme_text)
-            for pattern in README_UNSUPPORTED_EFFECTIVENESS_PATTERNS
-        ):
+        if contains_unsupported_effectiveness_claim(readme_text):
             errors.append("README.md contains an unsupported effectiveness claim")
         normalized_readme = normalize(readme_text).lower()
         if not all(
