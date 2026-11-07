@@ -102,7 +102,7 @@ README_OPENING_PROMISE = "learn any subject"
 README_UNFRIENDLY_DASHES = ("—", "–")
 README_PORTFOLIO_REQUIREMENTS = (
     "I built Socratic Learn out of a recurring need in my work as an AI researcher",
-    "objective → prerequisites → approved path → application → evidence",
+    "objective → prerequisites → guided route → application → evidence",
     "Mahoney et al. (2023)",
     "Munshi et al. (2023)",
     "Borchers et al. (2025)",

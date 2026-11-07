@@ -16,7 +16,7 @@ from socratic_learn.manifest import serialize_json, sha256_bytes, validate_manif
 SESSION_HEADINGS = (
     "## Outcome",
     "## Diagnostic evidence",
-    "## Approved dependency path",
+    "## Learning route",
     "## Concepts established",
     "## Application evidence",
     "## Remaining gaps",
@@ -59,6 +59,10 @@ def valid_manifest() -> dict[str, object]:
 
 
 class ManifestTests(unittest.TestCase):
+    def test_public_contract_versions_are_exact(self) -> None:
+        self.assertEqual("1.1.0", PROTOCOL_VERSION)
+        self.assertEqual(2, CONFORMANCE_CONTRACT_VERSION)
+
     def test_serialize_json_is_sorted_utf8_with_one_final_newline(self) -> None:
         result = serialize_json({"z": "café", "a": 1})
 

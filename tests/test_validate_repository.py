@@ -129,7 +129,7 @@ README_OPENING_PROMISE = "learn any subject"
 README_UNFRIENDLY_DASHES = ("—", "–")
 README_PORTFOLIO_REQUIREMENTS = (
     "I built Socratic Learn out of a recurring need in my work as an AI researcher",
-    "objective → prerequisites → approved path → application → evidence",
+    "objective → prerequisites → guided route → application → evidence",
     "Mahoney et al. (2023)",
     "Munshi et al. (2023)",
     "Borchers et al. (2025)",
@@ -419,6 +419,32 @@ class RepositoryValidationTests(unittest.TestCase):
         for command in README_WORKSPACE_COMMANDS:
             with self.subTest(command=command):
                 self.assertIn(command, text)
+        self.assertIn("**Preview the route.**", text)
+        self.assertIn("start teaching automatically", normalized_text)
+        self.assertIn("redirect at any time", normalized_text)
+        self.assertNotIn("learner approval", normalized_text.lower())
+
+    def test_manifest_reference_documents_current_behavior_contract(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = normalize(
+            (root / "docs/manifest-reference.md").read_text(encoding="utf-8")
+        ).lower()
+
+        for clause in (
+            "`protocol_version`: exact protocol version `1.1.0`",
+            "`conformance.version` is integer `2`",
+            "silent orchestration",
+            "vocabulary readiness",
+            "connected perspectives",
+            "productive effort",
+            "graduated support",
+            "agent-led route",
+            "silent self-review",
+            "autonomous current-information research",
+            "protocol `1.1.0`",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, text)
 
     def test_readme_provides_public_launcher_onboarding(self) -> None:
         root = Path(__file__).resolve().parents[1]

@@ -13,14 +13,14 @@
   ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝ ╚═════╝
                               L E A R N
 
-  objective → prerequisites → approved path → application → evidence
+  objective → prerequisites → guided route → application → evidence
 ```
 
 **A portable, evidence-aware Socratic protocol for learning any subject.**
 
 Socratic Learn gives compatible AI agents a clear method for helping people
 learn any subject. First, define what the learner should be able to do. Then
-check only the knowledge they need, agree on the shortest useful path, and ask
+check only the knowledge they need, preview the shortest useful route, and ask
 them to apply what they learned before calling it progress.
 
 It is a protocol and distribution toolkit. It is not an AI model or chat
@@ -43,15 +43,15 @@ curricula and rigorous examples, not product boundaries.
    can explain, derive, predict, implement, or diagnose.
 2. **Find the starting point.** Check only prerequisites that could block that
    outcome.
-3. **Agree on the path.** Propose the smallest dependency path, identify
-   what the learner knows and what is missing, and wait for approval.
+3. **Preview the route.** Briefly explain what comes first and why, start
+   teaching automatically, and let the learner redirect at any time.
 4. **Teach adaptively.** Ask when the learner can work out the next step.
    Explain information they cannot work out yet. Then ask them to use it.
 5. **Require evidence.** Finish only after the learner applies the idea in the
    original task or a new one. Record what was established, what remains,
    sources, and one next step.
 
-`objective → prerequisites → approved path → application → evidence`
+`objective → prerequisites → guided route → application → evidence`
 
 ## A compact example
 
@@ -77,7 +77,7 @@ The learning behavior lives in four main documents:
 - [pedagogy](core/pedagogy.md): connected ideas, clear reasons for each step,
   responsive dialogue, and active practice.
 - [session protocol](core/session-protocol.md): clear outcomes, focused checks,
-  learner approval, and a saved session record.
+  tutor-led route selection, a short route preview, and a saved session record.
 - [assessment](core/assessment.md): finding what the learner knows and where
   the gap begins.
 - [evidence policy](core/evidence-policy.md): types of mathematical claims,

@@ -16,7 +16,7 @@ from .errors import IntegrityError
 SESSION_HEADINGS = (
     "## Outcome",
     "## Diagnostic evidence",
-    "## Approved dependency path",
+    "## Learning route",
     "## Concepts established",
     "## Application evidence",
     "## Remaining gaps",

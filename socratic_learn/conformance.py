@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 
 
-CONFORMANCE_CONTRACT_VERSION = 1
+CONFORMANCE_CONTRACT_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -166,12 +166,115 @@ _CONTRACTS = (
         "volatile technical claims do not require primary-source verification",
         "require consequential volatile claims to be checked against primary sources",
     ),
+    _Contract(
+        "silent-orchestration",
+        "core/session-protocol.md",
+        (
+            ("keep protocol orchestration internal",),
+            ("do not announce stage names",),
+            ("diagnostic budgets",),
+            ("question counters",),
+            ("unless the learner explicitly asks",),
+        ),
+        "learner-facing dialogue exposes protocol orchestration",
+        "keep stages, budgets, and counters internal unless the learner asks",
+    ),
+    _Contract(
+        "vocabulary-readiness",
+        "core/pedagogy.md",
+        (
+            ("vocabulary readiness",),
+            ("the learner used it correctly",),
+            ("demonstrated the underlying idea",),
+            ("introduced it in plain language",),
+            ("hidden prerequisites",),
+        ),
+        "learner-facing vocabulary is not gated by readiness",
+        "require demonstrated or plainly introduced vocabulary and reject hidden prerequisites",
+    ),
+    _Contract(
+        "connected-perspectives",
+        "core/pedagogy.md",
+        (
+            ("one primary explanation",),
+            ("up to two additional perspectives",),
+            ("explicitly connect",),
+        ),
+        "multiple perspectives are not bounded and connected",
+        "use one primary explanation, at most two useful added views, and connect them",
+    ),
+    _Contract(
+        "productive-effort",
+        "core/pedagogy.md",
+        (
+            ("learner attempt before",),
+            ("paper and pen",),
+            ("do not include the solution",),
+        ),
+        "central concepts do not require bounded learner effort before solutions",
+        "require an attempt, support paper-and-pen work, and withhold the immediate solution",
+    ),
+    _Contract(
+        "graduated-support",
+        "core/pedagogy.md",
+        (
+            ("small cue",),
+            ("alternative representation or simpler case",),
+            ("direct explanation",),
+            ("new application",),
+        ),
+        "difficulty does not receive graduated support",
+        "provide a cue, alternate view, explanation, and return through a new application",
+    ),
+    _Contract(
+        "agent-led-route",
+        "core/session-protocol.md",
+        (
+            ("the tutor owns technical route selection",),
+            ("do not ask the learner to validate a technical sequence",),
+            ("brief preview in ordinary language",),
+            ("begin teaching without formal approval",),
+            ("the learner may redirect at any time",),
+        ),
+        "technical route selection is delegated to a novice",
+        "make the tutor own the route, preview it briefly, start automatically, and preserve redirection",
+    ),
+    _Contract(
+        "silent-self-review",
+        "core/pedagogy.md",
+        (
+            ("silent self-review",),
+            ("alignment with the learner-owned objective",),
+            ("prerequisite evidence",),
+            ("vocabulary readiness and cognitive load",),
+            ("the smallest useful next step",),
+            ("a perspective contributes distinct value",),
+            ("factual currency or uncertainty requires research",),
+            ("a decision they lack the basis to evaluate",),
+            ("do not narrate this silent self-review",),
+        ),
+        "technical and pedagogical decisions lack silent self-review",
+        "silently check objective alignment, evidence, readiness, load, perspectives, currency, and decision ownership",
+    ),
+    _Contract(
+        "autonomous-current-research",
+        "core/evidence-policy.md",
+        (
+            ("autonomous current-information research",),
+            ("search autonomously",),
+            ("current, volatile, disputed, or uncertain",),
+            ("primary sources",),
+            ("date or version context",),
+            ("exclude private learner data",),
+            ("no-web fallback",),
+            ("continues with stable material",),
+        ),
+        "current-information research is not autonomous, source-prioritized, and privacy-safe",
+        "search current claims autonomously, prefer primary sources, exclude private data, and preserve the no-web fallback",
+    ),
 )
 
-_APPROVAL_CODE = "plan-approval-before-teaching"
-REQUIRED_DIAGNOSTIC_CODES = tuple(
-    sorted((*(_contract.code for _contract in _CONTRACTS), _APPROVAL_CODE))
-)
+REQUIRED_DIAGNOSTIC_CODES = tuple(sorted(_contract.code for _contract in _CONTRACTS))
 
 _SOURCE_RE = re.compile(
     r"<!-- source:(?P<path>[^>]+) -->(?P<body>.*?)"
@@ -195,49 +298,6 @@ def _has_groups(text: str, groups: tuple[tuple[str, ...], ...]) -> bool:
     return all(any(_normalize(marker) in text for marker in group) for group in groups)
 
 
-def _approval_diagnostic(protocol: str) -> Diagnostic | None:
-    approval_section_markers = (
-        "present and approve a dependency path",
-        "approve a dependency path",
-    )
-    approval_gate_markers = (
-        "learner approves or adjusts the path",
-        "learner approves the path",
-        "learner approval before teaching",
-    )
-    teaching_section_markers = ("teach one node at a time", "teaching phase")
-    approval_section_indexes = [
-        protocol.find(_normalize(marker))
-        for marker in approval_section_markers
-        if protocol.find(_normalize(marker)) >= 0
-    ]
-    approval_gate_indexes = [
-        protocol.find(_normalize(marker))
-        for marker in approval_gate_markers
-        if protocol.find(_normalize(marker)) >= 0
-    ]
-    teaching_section_indexes = [
-        protocol.find(_normalize(marker))
-        for marker in teaching_section_markers
-        if protocol.find(_normalize(marker)) >= 0
-    ]
-    if (
-        approval_section_indexes
-        and approval_gate_indexes
-        and teaching_section_indexes
-        and min(approval_section_indexes)
-        < min(approval_gate_indexes)
-        < min(teaching_section_indexes)
-    ):
-        return None
-    return Diagnostic(
-        _APPROVAL_CODE,
-        "core/session-protocol.md",
-        "teaching is not gated by prior learner approval of the dependency path",
-        "place explicit learner path approval before the teaching phase",
-    )
-
-
 def check_conformance(bundle: str) -> list[Diagnostic]:
     """Return every behavioral contract failure in deterministic order."""
 
@@ -255,7 +315,4 @@ def check_conformance(bundle: str) -> list[Diagnostic]:
                 )
             )
 
-    approval = _approval_diagnostic(sections.get("core/session-protocol.md", ""))
-    if approval is not None:
-        diagnostics.append(approval)
     return sorted(diagnostics, key=lambda item: (item.code, item.path))

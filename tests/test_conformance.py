@@ -17,6 +17,33 @@ from socratic_learn.errors import IntegrityError
 SOURCE_CONTENTS = {
     "core/pedagogy.md": """# Pedagogy
 
+## Vocabulary readiness and concept ramp
+
+Require vocabulary readiness. The learner used it correctly, demonstrated the
+underlying idea, or the tutor introduced it in plain language. Avoid hidden
+prerequisites.
+
+## Connected perspectives
+
+Use one primary explanation and up to two additional perspectives. Explicitly
+connect the views.
+
+## Productive effort and graduated support
+
+Require a learner attempt before a complete solution. Use paper and pen when
+useful. Do not include the solution with the task. Give a small cue, then an
+alternative representation or simpler case, then a direct explanation, then a
+new application.
+
+## Silent self-review
+
+Before teaching, run a silent self-review for alignment with the learner-owned
+objective, prerequisite evidence, vocabulary readiness and cognitive load, the
+smallest useful next step, whether a perspective contributes distinct value,
+whether factual currency or uncertainty requires research, and whether the
+response asks the learner to make a decision they lack the basis to evaluate.
+Do not narrate this silent self-review.
+
 ## Responsive Socratic dialogue
 
 Use Socratic mode when the next step is discoverable. Each question derives
@@ -27,6 +54,11 @@ exposition, return control through an active application or an active question.
 """,
     "core/session-protocol.md": """# Session Protocol
 
+## Natural learner-facing conversation
+
+Keep protocol orchestration internal. Do not announce stage names, diagnostic
+budgets, or question counters unless the learner explicitly asks.
+
 ## 1. Define an observable outcome
 
 Convert the objective into a performance that can be observed in this session.
@@ -35,13 +67,15 @@ Convert the objective into a performance that can be observed in this session.
 
 Inspect only prerequisites that could block the outcome.
 
-## 3. Present and approve a dependency path
+## 3. Build and preview the learning route
 
-Do not begin teaching until the learner approves or adjusts the path.
+The tutor owns technical route selection. Do not ask the learner to validate a
+technical sequence. Give a brief preview in ordinary language and begin
+teaching without formal approval. The learner may redirect at any time.
 
 ## 4. Teach one node at a time
 
-Teach one approved node at a time.
+Teach one route step at a time.
 
 ## 5. Close and persist
 
@@ -76,6 +110,17 @@ or empirical observation.
 
 Verify each consequential volatile claim against a primary source before
 presenting it as current.
+
+## Autonomous current-information research
+
+Search autonomously for consequential current, volatile, disputed, or uncertain
+claims. Prefer primary sources and include date or version context. External
+queries must exclude private learner data.
+
+## No-web fallback
+
+When research tools are unavailable, the no-web fallback continues with stable
+material.
 """,
     "curricula/mathematics/map.md": "# Mathematics\n\n### algebra — Algebra\n",
     "curricula/ai/map.md": "# AI\n\n### learning — Learning\n",
@@ -120,31 +165,81 @@ class ConformanceTests(unittest.TestCase):
             "bounded-diagnosis",
         )
 
-    def test_requires_explicit_plan_approval_gate(self) -> None:
+    def test_requires_silent_orchestration(self) -> None:
         self.assert_only_code(
             minimal_bundle().replace(
-                "Do not begin teaching until the learner approves or adjusts the path.",
-                "Present the path.",
+                "Keep protocol orchestration internal.",
+                "Describe every protocol stage.",
             ),
-            "plan-approval-before-teaching",
+            "silent-orchestration",
         )
 
-    def test_requires_plan_approval_before_teaching_order(self) -> None:
-        bundle = minimal_bundle()
-        approval = "## 3. Present and approve a dependency path"
-        gate = "Do not begin teaching until the learner approves or adjusts the path."
-        teaching = (
-            "## 4. Teach one node at a time\n\n"
-            "Teach one approved node at a time."
-        )
-        bundle = bundle.replace(
-            f"{approval}\n\n{gate}\n\n{teaching}",
-            f"{approval}\n\n{teaching}\n\n{gate}",
+    def test_requires_vocabulary_readiness(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "The learner used it correctly, demonstrated the\n"
+                "underlying idea, or the tutor introduced it in plain language.",
+                "Use domain terminology immediately.",
+            ),
+            "vocabulary-readiness",
         )
 
-        self.assertIn(gate, bundle)
+    def test_requires_connected_perspectives(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Explicitly\nconnect the views.",
+                "List several views.",
+            ),
+            "connected-perspectives",
+        )
 
-        self.assert_only_code(bundle, "plan-approval-before-teaching")
+    def test_requires_productive_effort(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Require a learner attempt before a complete solution.",
+                "Give the complete solution first.",
+            ),
+            "productive-effort",
+        )
+
+    def test_requires_graduated_support(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Give a small cue, then an\n"
+                "alternative representation or simpler case, then a direct "
+                "explanation, then a\nnew application.",
+                "Repeat the same question.",
+            ),
+            "graduated-support",
+        )
+
+    def test_requires_agent_led_route(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "The tutor owns technical route selection.",
+                "The learner chooses the technical sequence.",
+            ),
+            "agent-led-route",
+        )
+
+    def test_requires_silent_self_review(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Do not narrate this silent self-review.",
+                "Narrate every internal review.",
+            ),
+            "silent-self-review",
+        )
+
+    def test_requires_autonomous_current_research(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Search autonomously for consequential current, volatile, disputed, "
+                "or uncertain\nclaims.",
+                "Wait for the learner to request research.",
+            ),
+            "autonomous-current-research",
+        )
 
     def test_requires_responsive_socratic_follow_up(self) -> None:
         self.assert_only_code(
@@ -184,7 +279,11 @@ class ConformanceTests(unittest.TestCase):
 
     def test_requires_primary_source_verification_for_volatile_claims(self) -> None:
         self.assert_only_code(
-            minimal_bundle().replace("against a primary source", "from memory"),
+            minimal_bundle().replace(
+                "Verify each consequential volatile claim against a primary source "
+                "before\npresenting it as current.",
+                "Recall volatile claims from memory.",
+            ),
             "volatile-primary-source-verification",
         )
 
