@@ -423,6 +423,18 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn("start teaching automatically", normalized_text)
         self.assertIn("redirect at any time", normalized_text)
         self.assertNotIn("learner approval", normalized_text.lower())
+        compact_example = text.split("## A compact example", 1)[1].split(
+            "When the learner can reasonably work out the next step",
+            1,
+        )[0]
+        normalized_example = " ".join(compact_example.split()).lower()
+        self.assertNotIn("we choose a path", normalized_example)
+        self.assertIn("i'll check the starting point first", normalized_example)
+        self.assertIn(
+            "i'll use your answer to set the route",
+            normalized_example,
+        )
+        self.assertIn("you can redirect me at any time", normalized_example)
 
     def test_manifest_reference_documents_current_behavior_contract(self) -> None:
         root = Path(__file__).resolve().parents[1]

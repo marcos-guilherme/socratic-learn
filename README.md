@@ -59,8 +59,9 @@ curricula and rigorous examples, not product boundaries.
 Learner  → I want to understand why attention scales by √dₖ.
 Tutor    → What observable result should you be able to derive or predict?
 Learner  → I want to derive the scaling and predict what changes without it.
-Tutor    → Before we choose a path, compare the variance of one dot-product
-           term with the variance of a sum of dₖ independent terms.
+Tutor    → I'll check the starting point first: compare the variance of one
+           dot-product term with the variance of a sum of dₖ independent terms.
+           I'll use your answer to set the route. You can redirect me at any time.
 ...
 Evidence → The learner derives the variance growth, explains the softmax
            consequence, and transfers the reasoning to a changed dimension.
