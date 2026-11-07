@@ -20,6 +20,16 @@ def write_banner(output: TextIO, environ: Mapping[str, str]) -> None:
         and "NO_COLOR" not in environ
         and environ.get("TERM") != "dumb"
     ):
-        output.write(f"\x1b[32m{BANNER}\x1b[0m\n")
-        return
-    output.write(f"{BANNER}\n")
+        text = f"\x1b[32m{BANNER}\x1b[0m\n"
+    else:
+        text = f"{BANNER}\n"
+
+    try:
+        output.write(text)
+    except UnicodeEncodeError:
+        binary_output = getattr(output, "buffer", None)
+        if binary_output is None:
+            raise
+        output.flush()
+        binary_output.write(text.encode("utf-8"))
+    output.flush()
