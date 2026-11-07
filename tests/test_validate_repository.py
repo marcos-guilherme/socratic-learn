@@ -174,6 +174,30 @@ VERSIONED_INSTALLER_URLS = (
 )
 
 
+def requirement_pattern(requirement: str) -> re.Pattern[str]:
+    words = re.split(r"[ \t\r\n]+", requirement.strip())
+    return re.compile(
+        r"[ \t\r\n]+".join(re.escape(word) for word in words)
+    )
+
+
+def replace_requirement_once(
+    text: str,
+    requirement: str,
+    replacement: str,
+) -> str:
+    updated, count = requirement_pattern(requirement).subn(
+        replacement,
+        text,
+        count=1,
+    )
+    if count != 1:
+        raise AssertionError(
+            f"Expected a whitespace-tolerant match for {requirement!r}"
+        )
+    return updated
+
+
 def parse_curriculum_nodes(text: str) -> list[tuple[str, dict[str, str]]]:
     headings = list(CURRICULUM_HEADING_RE.finditer(text))
     nodes: list[tuple[str, dict[str, str]]] = []
@@ -661,6 +685,89 @@ class RepositoryValidationTests(unittest.TestCase):
                     validate(root),
                 )
 
+    def test_validator_rejects_indented_markdown_opening_blocks(self) -> None:
+        blocks = (
+            ("heading", "### Learn any subject"),
+            ("blockquote", "> learn any subject"),
+            ("unordered_list", "- learn any subject"),
+            ("ordered_list", "1. learn any subject"),
+            ("html_block", "<section>learn any subject</section>"),
+        )
+        for spaces in (1, 2, 3):
+            for name, block in blocks:
+                with self.subTest(spaces=spaces, block=name):
+                    temp, root = self.make_root()
+                    self.addCleanup(temp.cleanup)
+                    readme = root / "README.md"
+                    text = readme.read_text(encoding="utf-8")
+                    tagline = f"**{README_TAGLINE}**"
+                    opening, heading, remainder = text.partition(
+                        "## Why I built this"
+                    )
+                    before, separator, after = opening.partition(tagline)
+                    self.assertEqual(separator, tagline)
+                    first_paragraph, paragraph_break, later = (
+                        after.lstrip("\r\n").partition("\n\n")
+                    )
+                    self.assertEqual(paragraph_break, "\n\n")
+                    first_paragraph = first_paragraph.replace(
+                        README_OPENING_PROMISE,
+                        "study selected topics",
+                    )
+                    indented_block = " " * spaces + block
+                    readme.write_text(
+                        before
+                        + tagline
+                        + "\n\n"
+                        + indented_block
+                        + "\n\n"
+                        + first_paragraph
+                        + "\n\nCompatible agents can still help people "
+                        "learn any subject.\n\n"
+                        + later
+                        + heading
+                        + remainder,
+                        encoding="utf-8",
+                    )
+
+                    self.assertIn(
+                        "Narrow product positioning in README.md",
+                        validate(root),
+                    )
+
+    def test_validator_accepts_inline_html_or_autolink_opening_prose(self) -> None:
+        paragraphs = (
+            "<https://example.com> helps people learn any subject.",
+            "<span>Visible</span> agents help people learn any subject.",
+        )
+        for paragraph in paragraphs:
+            with self.subTest(paragraph=paragraph):
+                temp, root = self.make_root()
+                self.addCleanup(temp.cleanup)
+                readme = root / "README.md"
+                text = readme.read_text(encoding="utf-8")
+                tagline = f"**{README_TAGLINE}**"
+                before, separator, after = text.partition(tagline)
+                self.assertEqual(separator, tagline)
+                _, paragraph_break, later = after.lstrip(
+                    "\r\n"
+                ).partition("\n\n")
+                self.assertEqual(paragraph_break, "\n\n")
+                readme.write_text(
+                    before
+                    + tagline
+                    + "\n\n"
+                    + paragraph
+                    + paragraph_break
+                    + later,
+                    encoding="utf-8",
+                )
+
+                self.assertNotIn(
+                    "Narrow product positioning in README.md",
+                    validate(root),
+                )
+
     def test_validator_rejects_unfriendly_readme_dash_punctuation(self) -> None:
         for dash in README_UNFRIENDLY_DASHES:
             with self.subTest(dash=dash):
@@ -720,15 +827,49 @@ class RepositoryValidationTests(unittest.TestCase):
                 self.addCleanup(temp.cleanup)
                 readme = root / "README.md"
                 text = readme.read_text(encoding="utf-8")
-                self.assertIn(requirement, text)
+                while requirement_pattern(requirement).search(text):
+                    text = replace_requirement_once(
+                        text,
+                        requirement,
+                        "removed portfolio requirement",
+                    )
                 readme.write_text(
-                    text.replace(requirement, "removed portfolio requirement"),
+                    text,
                     encoding="utf-8",
                 )
                 self.assertIn(
                     "README.md is missing portfolio narrative",
                     validate(root),
                 )
+
+    def test_portfolio_mutation_tolerates_wrapped_requirement(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        readme = root / "README.md"
+        requirement = "three unchanged-protocol Antigravity sessions"
+        text = readme.read_text(encoding="utf-8").replace(
+            requirement,
+            "three unchanged-protocol\nAntigravity sessions",
+            1,
+        )
+        readme.write_text(text, encoding="utf-8")
+        self.assertNotIn(
+            "README.md is missing portfolio narrative",
+            validate(root),
+        )
+
+        readme.write_text(
+            replace_requirement_once(
+                text,
+                requirement,
+                "removed portfolio requirement",
+            ),
+            encoding="utf-8",
+        )
+        self.assertIn(
+            "README.md is missing portfolio narrative",
+            validate(root),
+        )
 
     def test_validator_rejects_unsupported_effectiveness_claim(self) -> None:
         claims = (

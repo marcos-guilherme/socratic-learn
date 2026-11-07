@@ -394,16 +394,103 @@ def _opening_visible_markdown(text: str) -> str:
     return "".join(visible)
 
 
+_MARKDOWN_HTML_BLOCK_TAGS = (
+    "address",
+    "article",
+    "aside",
+    "base",
+    "basefont",
+    "blockquote",
+    "body",
+    "caption",
+    "center",
+    "col",
+    "colgroup",
+    "dd",
+    "details",
+    "dialog",
+    "dir",
+    "div",
+    "dl",
+    "dt",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "form",
+    "frame",
+    "frameset",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "head",
+    "header",
+    "hr",
+    "html",
+    "iframe",
+    "legend",
+    "li",
+    "link",
+    "main",
+    "menu",
+    "menuitem",
+    "nav",
+    "noframes",
+    "ol",
+    "optgroup",
+    "option",
+    "p",
+    "param",
+    "pre",
+    "script",
+    "search",
+    "section",
+    "style",
+    "summary",
+    "table",
+    "tbody",
+    "td",
+    "textarea",
+    "tfoot",
+    "th",
+    "thead",
+    "title",
+    "tr",
+    "track",
+    "ul",
+)
+_MARKDOWN_HTML_BLOCK_RE = re.compile(
+    r"^[ ]{0,3}</?(?:"
+    + "|".join(_MARKDOWN_HTML_BLOCK_TAGS)
+    + r")(?=[ \t/>]|$)",
+    re.IGNORECASE,
+)
+
+
+def _starts_markdown_html_block(line: str) -> bool:
+    return bool(
+        _MARKDOWN_HTML_BLOCK_RE.match(line)
+        or re.match(r"^[ ]{0,3}(?:<\?|<![A-Z]|<!\[CDATA\[)", line)
+    )
+
+
 def _is_ordinary_markdown_paragraph(block: str) -> bool:
     lines = block.splitlines()
     if not lines:
         return False
     first = lines[0]
+    if re.match(r"^(?:[ ]{4}|\t)", first):
+        return False
     if re.match(
-        r"^(?:[ \t]{4}|\t|#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+|"
-        r"\d+[.)][ \t]+|<)",
+        r"^[ ]{0,3}(?:#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+|"
+        r"\d+[.)][ \t]+)",
         first,
     ):
+        return False
+    if _starts_markdown_html_block(first):
         return False
     if re.fullmatch(
         r"[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|"
