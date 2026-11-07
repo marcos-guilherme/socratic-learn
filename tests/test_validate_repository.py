@@ -13,6 +13,7 @@ from unittest.mock import patch
 from tests.validate_repository import (
     UNSAFE_INSTALLER_PATTERNS,
     main,
+    readme_opening_prose_paragraph,
     semantic_runtime_errors,
     validate,
     without_fenced_code,
@@ -359,18 +360,8 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertTrue(text.startswith("# Socratic Learn\n"))
         tagline = f"**{README_TAGLINE}**"
         self.assertIn(tagline, text)
-        after_tagline = text.split(tagline, 1)[1]
-        first_prose_paragraph = next(
-            (
-                paragraph.strip()
-                for paragraph in re.split(
-                    r"\r?\n[ \t]*\r?\n",
-                    after_tagline,
-                )
-                if paragraph.strip()
-            ),
-            "",
-        )
+        opening = text.split("## Why I built this", 1)[0]
+        first_prose_paragraph = readme_opening_prose_paragraph(opening)
         self.assertIn(
             README_OPENING_PROMISE,
             first_prose_paragraph.lower(),
@@ -394,9 +385,10 @@ class RepositoryValidationTests(unittest.TestCase):
                     remaining_headings,
                     f"Missing or out-of-order README heading: {required_heading}",
                 )
+        normalized_text = " ".join(text.split())
         for requirement in README_PORTFOLIO_REQUIREMENTS:
             with self.subTest(portfolio_requirement=requirement):
-                self.assertIn(requirement, text)
+                self.assertIn(" ".join(requirement.split()), normalized_text)
         self.assertIn("███████╗", text)
         self.assertNotRegex(text, r"!\[[^\]]*\]\(https?://")
         for command in README_WORKSPACE_COMMANDS:
@@ -582,6 +574,92 @@ class RepositoryValidationTests(unittest.TestCase):
             "Narrow product positioning in README.md",
             validate(root),
         )
+
+    def test_validator_ignores_hidden_opening_contract_in_html_comment(
+        self,
+    ) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        readme = root / "README.md"
+        text = readme.read_text(encoding="utf-8")
+        tagline = f"**{README_TAGLINE}**"
+        hidden_contract = (
+            "<!--\n"
+            f"{tagline}\n\n"
+            "Hidden agents help people learn any subject.\n"
+            "-->\n\n"
+        )
+        text = text.replace(
+            README_OPENING_PROMISE,
+            "study selected topics",
+            1,
+        ).replace(
+            tagline,
+            hidden_contract + "**A portable Socratic learning protocol.**",
+            1,
+        )
+        readme.write_text(text, encoding="utf-8")
+
+        self.assertIn(
+            "Narrow product positioning in README.md",
+            validate(root),
+        )
+
+    def test_validator_rejects_non_prose_first_opening_block(self) -> None:
+        first_blocks = (
+            ("blockquote", "> learn any subject"),
+            ("fenced_code", "```text\nlearn any subject\n```"),
+            ("heading", "### Learn any subject"),
+            ("html_block", "<div>learn any subject</div>"),
+            ("indented_code", "    learn any subject"),
+            ("ordered_list", "1. learn any subject"),
+            (
+                "table",
+                "Promise | Status\n--- | ---\nlearn any subject | present",
+            ),
+            ("thematic_break", "---"),
+            ("unordered_list", "- learn any subject"),
+        )
+        for name, first_block in first_blocks:
+            with self.subTest(block=name):
+                temp, root = self.make_root()
+                self.addCleanup(temp.cleanup)
+                readme = root / "README.md"
+                text = readme.read_text(encoding="utf-8")
+                opening, heading, remainder = text.partition("## Why I built this")
+                tagline = f"**{README_TAGLINE}**"
+                before_tagline, separator, after_tagline = opening.partition(
+                    tagline
+                )
+                self.assertEqual(separator, tagline)
+                first_paragraph, paragraph_break, later_opening = (
+                    after_tagline.lstrip("\r\n").partition("\n\n")
+                )
+                self.assertEqual(paragraph_break, "\n\n")
+                first_paragraph = first_paragraph.replace(
+                    README_OPENING_PROMISE,
+                    "study selected topics",
+                )
+                mutated_opening = (
+                    before_tagline
+                    + tagline
+                    + "\n\n"
+                    + first_block
+                    + "\n\n"
+                    + first_paragraph
+                    + "\n\nCompatible agents can still help people "
+                    "learn any subject.\n\n"
+                    + later_opening
+                )
+                readme.write_text(
+                    mutated_opening + heading + remainder,
+                    encoding="utf-8",
+                )
+
+                self.assertIn(
+                    "Narrow product positioning in README.md",
+                    validate(root),
+                )
 
     def test_validator_rejects_unfriendly_readme_dash_punctuation(self) -> None:
         for dash in README_UNFRIENDLY_DASHES:

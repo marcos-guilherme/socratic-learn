@@ -66,8 +66,7 @@ Evidence → The learner derives the variance growth, explains the softmax
            consequence, and transfers the reasoning to a changed dimension.
 ```
 
-Socratic Learn does not turn every explanation into another question. When a
-step is reasonable to work out from what the learner already knows, it asks.
+When the learner can reasonably work out the next step, Socratic Learn asks.
 When the learner cannot work out the information yet, it explains directly
 and then asks the learner to use it.
 
@@ -135,13 +134,10 @@ report](evaluation/reports/2026-11-06-antigravity-baseline.md).
 
 ## Evaluation status
 
-The first semantic baseline tried three unchanged-protocol Antigravity
-sessions, one each for conceptual physics, practical programming, and
+The first semantic baseline tried three unchanged-protocol Antigravity sessions,
+one each for conceptual physics, practical programming, and
 communication writing. All three stopped before a learner response because
 Antigravity headless mode denied the same workspace-inspection command.
-
-In other words, all three unchanged-protocol Antigravity sessions ended in
-the same infrastructure failure before the learner could respond.
 
 Because no learner could respond, no pedagogy score was assigned. Socratic
 Learn does not convert runtime failure, engagement, or self-reported
@@ -192,10 +188,10 @@ SmartScreen or macOS Gatekeeper warnings. A checksum verifies downloaded
 bytes. It is not a substitute for code signing. This documentation does not
 claim that a public release or tag already exists.
 
-The x86-64 native build is the preferred way to install it once. On another
-architecture, or if you prefer a Python-managed environment, use Python 3.11+
-and pipx after package publication. The pipx command is available only after
-socratic-learn 0.1.0 is published on PyPI.
+The x86-64 native build is the preferred one-time installation method. For
+other architectures, or if you prefer a Python-managed environment, use Python
+3.11+ and pipx after package publication. The pipx command is available only
+after socratic-learn 0.1.0 is published on PyPI.
 
 ```text
 pipx install socratic-learn

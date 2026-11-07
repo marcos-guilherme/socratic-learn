@@ -368,21 +368,83 @@ def normalize(text: str) -> str:
     return " ".join(text.split())
 
 
-def first_markdown_paragraph_after(text: str, marker: str) -> str:
-    _, found, remainder = text.partition(marker)
-    if not found:
+def _opening_visible_markdown(text: str) -> str:
+    text = re.sub(r"<!--.*?(?:-->|$)", "", text, flags=re.DOTALL)
+    visible: list[str] = []
+    fence_character = ""
+    fence_length = 0
+    for line in text.splitlines(keepends=True):
+        match = FENCE_RE.match(line)
+        if not fence_character:
+            if match:
+                fence = match.group(1)
+                fence_character = fence[0]
+                fence_length = len(fence)
+                visible.append("\n<README_FENCED_BLOCK>\n\n")
+            else:
+                visible.append(line)
+            continue
+        if re.fullmatch(
+            rf"[ ]{{0,3}}{re.escape(fence_character)}{{{fence_length},}}"
+            r"[ \t]*(?:\r?\n)?",
+            line,
+        ):
+            fence_character = ""
+            fence_length = 0
+    return "".join(visible)
+
+
+def _is_ordinary_markdown_paragraph(block: str) -> bool:
+    lines = block.splitlines()
+    if not lines:
+        return False
+    first = lines[0]
+    if re.match(
+        r"^(?:[ \t]{4}|\t|#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+|"
+        r"\d+[.)][ \t]+|<)",
+        first,
+    ):
+        return False
+    if re.fullmatch(
+        r"[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|"
+        r"(?:_[ \t]*){3,})",
+        first,
+    ):
+        return False
+    if len(lines) > 1 and re.fullmatch(
+        r"[ \t]{0,3}(?:=+|-+)[ \t]*",
+        lines[1],
+    ):
+        return False
+    if len(lines) > 1 and re.fullmatch(
+        r"[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*"
+        r"(?:\|[ \t]*:?-{3,}:?[ \t]*)+\|?[ \t]*",
+        lines[1],
+    ):
+        return False
+    if any(re.match(r"^[ \t]*:[ \t]+", line) for line in lines[1:]):
+        return False
+    return True
+
+
+def readme_opening_prose_paragraph(text: str) -> str:
+    visible = _opening_visible_markdown(text)
+    tagline = f"**{README_TAGLINE}**"
+    lines = visible.splitlines()
+    try:
+        tagline_index = lines.index(tagline)
+    except ValueError:
         return ""
-    return next(
+    remainder = "\n".join(lines[tagline_index + 1 :])
+    first_block = next(
         (
-            paragraph.strip()
-            for paragraph in re.split(
-                r"\r?\n[ \t]*\r?\n",
-                remainder,
-            )
-            if paragraph.strip()
+            block.strip("\r\n")
+            for block in re.split(r"\n[ \t]*\n", remainder)
+            if block.strip()
         ),
         "",
     )
+    return first_block if _is_ordinary_markdown_paragraph(first_block) else ""
 
 
 def contains_unsupported_effectiveness_claim(text: str) -> bool:
@@ -1077,29 +1139,25 @@ def validate(root: Path) -> list[str]:
     if readme.is_file():
         readme_text = readme.read_text(encoding="utf-8")
         readme_opening = readme_text.split("## Why I built this", 1)[0]
-        tagline = f"**{README_TAGLINE}**"
-        first_prose_paragraph = first_markdown_paragraph_after(
-            readme_opening,
-            tagline,
-        )
+        first_prose_paragraph = readme_opening_prose_paragraph(readme_opening)
         if not all(
             phrase.lower() in readme_text.lower()
             for phrase in README_POSITIONING_REQUIREMENTS
-        ) or tagline not in readme_opening or (
+        ) or (
             README_OPENING_PROMISE
             not in first_prose_paragraph.lower()
         ):
             errors.append("Narrow product positioning in README.md")
         if any(dash in readme_text for dash in README_UNFRIENDLY_DASHES):
             errors.append("README.md uses unfriendly dash punctuation")
+        normalized_readme = normalize(readme_text).lower()
         if not all(
-            requirement.lower() in readme_text.lower()
+            normalize(requirement).lower() in normalized_readme
             for requirement in README_PORTFOLIO_REQUIREMENTS
         ):
             errors.append("README.md is missing portfolio narrative")
         if contains_unsupported_effectiveness_claim(readme_text):
             errors.append("README.md contains an unsupported effectiveness claim")
-        normalized_readme = normalize(readme_text).lower()
         if not all(
             requirement in normalized_readme
             for requirement in README_LAUNCHER_REQUIREMENTS
