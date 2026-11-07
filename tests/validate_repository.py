@@ -92,10 +92,14 @@ POSITIONING_SKILL_PATHS = (
     "socratic_learn/templates/pi-skill.md",
 )
 README_POSITIONING_REQUIREMENTS = (
-    "A portable, evidence-aware Socratic protocol for learning anything.",
     "any subject or skill",
     "starter curricula",
 )
+README_OPENING_REQUIREMENTS = (
+    "A portable, evidence-aware Socratic protocol for learning any subject.",
+    "learn any subject",
+)
+README_UNFRIENDLY_DASHES = ("—", "–")
 README_PORTFOLIO_REQUIREMENTS = (
     "I built Socratic Learn out of a recurring need in my work as an AI researcher",
     "objective → prerequisites → approved path → application → evidence",
@@ -283,6 +287,13 @@ POSIX_THREAT_MODEL_TERMS = (
     "cooperating socratic learn processes",
     "same os principal",
     "leaf-entry toctou",
+)
+POSIX_THREAT_MODEL_README_TERMS = (
+    "ordinary collisions",
+    "accidental concurrent changes",
+    "cooperating socratic learn processes",
+    "same os user",
+    "final-path toctou",
 )
 IMPOSSIBLE_SAFETY_CLAIM = "no external data was deleted"
 LOCAL_RELEASE_PLAN = (
@@ -1048,11 +1059,17 @@ def validate(root: Path) -> list[str]:
     readme = root / "README.md"
     if readme.is_file():
         readme_text = readme.read_text(encoding="utf-8")
+        readme_opening = readme_text.split("## Why I built this", 1)[0]
         if not all(
             phrase.lower() in readme_text.lower()
             for phrase in README_POSITIONING_REQUIREMENTS
+        ) or not all(
+            phrase.lower() in readme_opening.lower()
+            for phrase in README_OPENING_REQUIREMENTS
         ):
             errors.append("Narrow product positioning in README.md")
+        if any(dash in readme_text for dash in README_UNFRIENDLY_DASHES):
+            errors.append("README.md uses unfriendly dash punctuation")
         if not all(
             requirement.lower() in readme_text.lower()
             for requirement in README_PORTFOLIO_REQUIREMENTS
@@ -1170,8 +1187,13 @@ def validate(root: Path) -> list[str]:
         if not path.is_file():
             continue
         text = normalize(path.read_text(encoding="utf-8")).lower()
+        required_terms = (
+            POSIX_THREAT_MODEL_README_TERMS
+            if relative == "README.md"
+            else POSIX_THREAT_MODEL_TERMS
+        )
         missing = [
-            term for term in POSIX_THREAT_MODEL_TERMS if term not in text
+            term for term in required_terms if term not in text
         ]
         if missing:
             errors.append(

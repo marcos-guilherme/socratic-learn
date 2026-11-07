@@ -120,6 +120,11 @@ README_HEADINGS = (
     "## Development and documentation",
     "## License",
 )
+README_TAGLINE = (
+    "A portable, evidence-aware Socratic protocol for learning any subject."
+)
+README_OPENING_PROMISE = "learn any subject"
+README_UNFRIENDLY_DASHES = ("—", "–")
 README_PORTFOLIO_REQUIREMENTS = (
     "I built Socratic Learn out of a recurring need in my work as an AI researcher",
     "objective → prerequisites → approved path → application → evidence",
@@ -352,10 +357,12 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertTrue(readme.exists(), "README.md must exist")
         text = readme.read_text(encoding="utf-8")
         self.assertTrue(text.startswith("# Socratic Learn\n"))
-        self.assertIn(
-            "A portable, evidence-aware Socratic protocol for learning anything.",
-            text,
-        )
+        self.assertIn(README_TAGLINE, text)
+        opening = text.split("## Why I built this", 1)[0].lower()
+        self.assertIn(README_OPENING_PROMISE, opening)
+        for dash in README_UNFRIENDLY_DASHES:
+            with self.subTest(dash=dash):
+                self.assertNotIn(dash, text)
         self.assertIn("any subject or skill", text.lower())
         self.assertIn("starter curricula", text.lower())
         headings = tuple(
@@ -489,7 +496,7 @@ class RepositoryValidationTests(unittest.TestCase):
         readme = root / "README.md"
         text = readme.read_text(encoding="utf-8")
         text = text.replace(
-            "A portable, evidence-aware Socratic protocol for learning anything.",
+            README_TAGLINE,
             "A portable Socratic learning protocol for mathematics and AI.",
         ).replace("any subject or skill", "mathematics and AI")
         readme.write_text(text, encoding="utf-8")
@@ -498,6 +505,48 @@ class RepositoryValidationTests(unittest.TestCase):
             "Narrow product positioning in README.md",
             validate(root),
         )
+
+    def test_validator_requires_any_subject_in_readme_opening(self) -> None:
+        replacements = (
+            (
+                "A portable, evidence-aware Socratic protocol for learning any subject.",
+                "A portable Socratic protocol.",
+            ),
+            ("learn any subject", "study selected topics"),
+        )
+        for original, replacement in replacements:
+            with self.subTest(original=original):
+                temp, root = self.make_root()
+                self.addCleanup(temp.cleanup)
+                readme = root / "README.md"
+                opening, marker, remainder = readme.read_text(
+                    encoding="utf-8"
+                ).partition("## Why I built this")
+                self.assertIn(original, opening)
+                readme.write_text(
+                    opening.replace(original, replacement) + marker + remainder,
+                    encoding="utf-8",
+                )
+                self.assertIn(
+                    "Narrow product positioning in README.md",
+                    validate(root),
+                )
+
+    def test_validator_rejects_unfriendly_readme_dash_punctuation(self) -> None:
+        for dash in README_UNFRIENDLY_DASHES:
+            with self.subTest(dash=dash):
+                temp, root = self.make_root()
+                self.addCleanup(temp.cleanup)
+                readme = root / "README.md"
+                readme.write_text(
+                    readme.read_text(encoding="utf-8")
+                    + f"\nA friendly sentence{dash}with an unfriendly dash.\n",
+                    encoding="utf-8",
+                )
+                self.assertIn(
+                    "README.md uses unfriendly dash punctuation",
+                    validate(root),
+                )
 
     def test_validator_rejects_missing_portfolio_narrative(self) -> None:
         temp, root = self.make_root()
