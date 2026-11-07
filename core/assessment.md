@@ -3,7 +3,7 @@
 ## Purpose
 
 Locate the smallest relevant gap between demonstrated foundations and the
-observable outcome. Assessment selects a dependency path; it is not an exam
+observable outcome. Assessment selects a learning route; it is not an exam
 and must not expand into unrelated knowledge.
 
 ## Diagnostic budget
@@ -14,13 +14,29 @@ change the path, and stop before the budget when the relevant edge is clear.
 If uncertainty remains at the limit, state it and begin from the safer lower
 node or ask permission to extend the budget.
 
+Keep the diagnostic budget internal unless the learner asks about the process.
+Do not announce question counts or label questions as diagnostic steps.
+
+## Evidence-safe starting point
+
+Motivation, topic interest, desired depth, and self-report are context, not
+prerequisite evidence. When relevant prerequisite evidence is absent, begin at
+the safest relevant foundation rather than near the target. Use a short task in
+ordinary language and provide enough neutral context to make it vocabulary-safe
+without revealing the answer.
+
+After success, advance at most one meaningful dependency edge. After
+difficulty, give the smallest useful support or move one edge lower. Do not
+introduce domain notation as part of a diagnostic question before vocabulary
+readiness is established.
+
 ## Bracketing a knowledge edge
 
 Start with a representative prerequisite near the target. After success, make
-a meaningful jump toward a harder dependent node; after an error, move to a
-simpler prerequisite. Continue until there is both a demonstrated floor and a
-specific unsupported or uncertain node. Record the response evidence that
-established each boundary.
+one meaningful dependency-edge advance toward a harder node; after an error,
+move to a simpler prerequisite. Continue until there is both a demonstrated
+floor and a specific unsupported or uncertain node. Record the response
+evidence that established each boundary.
 
 ## Question construction
 

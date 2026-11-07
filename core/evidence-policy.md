@@ -17,6 +17,20 @@ verify each consequential volatile claim against a primary source before
 presenting it as current. Include the version or date context. Do not turn an
 unverified recollection into a fact.
 
+## Autonomous current-information research
+
+When research tools are available, search autonomously for consequential
+current, volatile, disputed, or uncertain claims before presenting them. Also
+search when the learner asks for the latest state or requests sources. Stable
+concepts and directly checkable derivations do not require external search
+merely to appear authoritative.
+
+Prefer primary sources and include date or version context for time-sensitive
+claims and consequential conflicts. Construct external search queries that
+exclude private learner data: send only the technical topic needed for
+verification, never learner-profile content, session records, or identifying
+context.
+
 ## Source priority
 
 Prefer official specifications, maintainers' documentation, release notes,
@@ -41,8 +55,8 @@ resolve the uncertainty and do not use confident wording to hide a limitation.
 
 ## No-web fallback
 
-Proceed with stable concepts and derivations that can be checked from supplied
-material. Mark volatile details as unverified, provide the exact primary source
-or documentation area the learner should check, and avoid version-specific
-instructions when a stable alternative exists. Lack of web access never ends
-the session; it narrows claims and is recorded as uncertainty.
+When web access is unavailable, the tutor continues with stable material and
+marks time-sensitive details unverified. Narrow claims, provide the exact
+primary source or documentation area the learner should check, and avoid
+version-specific instructions when a stable alternative exists. Lack of web
+access never ends the session; it narrows claims and is recorded as uncertainty.

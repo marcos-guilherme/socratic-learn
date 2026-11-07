@@ -7,8 +7,8 @@
 ## Diagnostic evidence
 <!-- Record observable prerequisite evidence, including errors and revisions. -->
 
-## Approved dependency path
-<!-- List ordered dependency nodes and explain each edge in the approved path. -->
+## Learning route
+<!-- List ordered route steps and explain why each supports the next. -->
 
 ## Concepts established
 <!-- Record concepts supported by evidence during this session. -->

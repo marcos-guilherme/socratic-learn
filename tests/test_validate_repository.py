@@ -13,6 +13,7 @@ from unittest.mock import patch
 from tests.validate_repository import (
     UNSAFE_INSTALLER_PATTERNS,
     main,
+    normalize,
     readme_opening_prose_paragraph,
     semantic_runtime_errors,
     validate,
@@ -100,7 +101,7 @@ PI_PACKAGE_DIRECTORY = ".socratic-learn"
 SESSION_H2_HEADINGS = (
     "## Outcome",
     "## Diagnostic evidence",
-    "## Approved dependency path",
+    "## Learning route",
     "## Concepts established",
     "## Application evidence",
     "## Remaining gaps",
@@ -1460,6 +1461,176 @@ class RepositoryValidationTests(unittest.TestCase):
                         section,
                         f"Missing {contract} contract clause: {clause}",
                     )
+
+    def test_canonical_tutor_keeps_orchestration_internal(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        protocol = normalize(
+            (root / "core/session-protocol.md").read_text(encoding="utf-8")
+        ).lower()
+        entry = normalize((root / "AGENTS.md").read_text(encoding="utf-8")).lower()
+        for clause in (
+            "keep protocol orchestration internal",
+            "do not announce stage names",
+            "diagnostic budgets",
+            "question counters",
+            "successful file writes",
+            "unless the learner explicitly asks",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, protocol)
+        self.assertIn("hide orchestration by default", entry)
+        self.assertIn("persist approved context silently", entry)
+
+    def test_canonical_tutor_requires_vocabulary_readiness_and_concept_ramp(
+        self,
+    ) -> None:
+        root = Path(__file__).resolve().parents[1]
+        pedagogy = normalize(
+            (root / "core/pedagogy.md").read_text(encoding="utf-8")
+        ).lower()
+        for clause in (
+            "vocabulary readiness",
+            "the learner used it correctly",
+            "demonstrated the underlying idea",
+            "introduced it in plain language",
+            "hidden prerequisites",
+            "experience or intuitive problem",
+            "concrete example",
+            "conventional name",
+            "formal notation or definition",
+            "learner application",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, pedagogy)
+
+    def test_canonical_tutor_connects_perspectives_and_productive_effort(
+        self,
+    ) -> None:
+        root = Path(__file__).resolve().parents[1]
+        pedagogy = normalize(
+            (root / "core/pedagogy.md").read_text(encoding="utf-8")
+        ).lower()
+        for clause in (
+            "one primary explanation",
+            "up to two additional perspectives",
+            "explicitly connect",
+            "learner attempt before",
+            "paper and pen",
+            "do not include the solution",
+            "small cue",
+            "alternative representation or simpler case",
+            "direct explanation",
+            "new application",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, pedagogy)
+
+    def test_assessment_starts_from_safe_evidence_not_topic_interest(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        assessment = normalize(
+            (root / "core/assessment.md").read_text(encoding="utf-8")
+        ).lower()
+        for clause in (
+            "motivation, topic interest, desired depth, and self-report are context",
+            "not prerequisite evidence",
+            "safest relevant foundation",
+            "one meaningful dependency edge",
+            "vocabulary-safe",
+            "keep the diagnostic budget internal",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, assessment)
+        self.assertNotIn("make a meaningful jump", assessment)
+
+    def test_protocol_contrasts_premature_and_natural_opening(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        protocol = (root / "core/session-protocol.md").read_text(encoding="utf-8")
+        bad = "Bad shape: turn broad motivation directly into a technical formula"
+        good = 'Learner: "I want to study transformers."'
+        response = (
+            'Tutor: "What would you like to be able to do: explain the general '
+            'idea, follow a small worked example, or build a simple version?"'
+        )
+        self.assertIn(bad, protocol)
+        self.assertIn(good, protocol)
+        self.assertIn(response, protocol)
+        self.assertLess(protocol.index(bad), protocol.index(good))
+
+    def test_canonical_tutor_owns_agent_led_route(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        protocol = normalize(
+            (root / "core/session-protocol.md").read_text(encoding="utf-8")
+        ).lower()
+        entry = normalize((root / "AGENTS.md").read_text(encoding="utf-8")).lower()
+        for clause in (
+            "the tutor owns technical route selection",
+            "do not ask the learner to validate a technical sequence",
+            "brief preview in ordinary language",
+            "begin teaching without formal approval",
+            "the learner may redirect at any time",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, protocol)
+        self.assertIn("the tutor owns technical route selection", entry)
+        self.assertIn("begin teaching without formal approval", entry)
+
+    def test_canonical_tutor_runs_silent_self_review(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        pedagogy = normalize(
+            (root / "core/pedagogy.md").read_text(encoding="utf-8")
+        ).lower()
+        for clause in (
+            "silent self-review",
+            "alignment with the learner-owned objective",
+            "prerequisite evidence",
+            "vocabulary readiness and cognitive load",
+            "the smallest useful next step",
+            "whether a perspective contributes distinct value",
+            "whether factual currency or uncertainty requires research",
+            "whether the response asks the learner to make a decision they lack "
+            "the basis to evaluate",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, pedagogy)
+
+    def test_evidence_policy_requires_autonomous_private_research(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        evidence = normalize(
+            (root / "core/evidence-policy.md").read_text(encoding="utf-8")
+        ).lower()
+        for clause in (
+            "search autonomously",
+            "consequential current, volatile, disputed, or uncertain claims",
+            "primary sources",
+            "date or version context",
+            "external search queries",
+            "exclude private learner data",
+            "continues with stable material",
+            "time-sensitive details unverified",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, evidence)
+
+    def test_canonical_route_removes_technical_approval_gate(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        sources = {
+            "agent entry": (root / "AGENTS.md").read_text(encoding="utf-8"),
+            "pedagogy": (root / "core/pedagogy.md").read_text(encoding="utf-8"),
+            "session protocol": (
+                root / "core/session-protocol.md"
+            ).read_text(encoding="utf-8"),
+        }
+        for source, text in sources.items():
+            normalized = normalize(text).lower()
+            for clause in (
+                "present and approve a dependency path",
+                "do not begin teaching until the learner approves",
+                "obtain learner approval before teaching",
+                "obtain approval again",
+                "confirm the objective and proposed route",
+            ):
+                with self.subTest(source=source, clause=clause):
+                    self.assertNotIn(clause, normalized)
 
     def test_session_contract_template_and_example_share_exact_headings(self) -> None:
         root = Path(__file__).resolve().parents[1]
