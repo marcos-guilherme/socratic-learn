@@ -468,11 +468,24 @@ _MARKDOWN_HTML_BLOCK_RE = re.compile(
     + r")(?=[ \t/>]|$)",
     re.IGNORECASE,
 )
+_HTML_TAG_NAME = r"[A-Za-z][A-Za-z0-9-]*"
+_HTML_ATTRIBUTE = (
+    r"[A-Za-z_:][A-Za-z0-9_.:-]*"
+    r"(?:[ \t]*=[ \t]*(?:\"[^\"]*\"|'[^']*'|[^\s\"'=<>`]+))?"
+)
+_MARKDOWN_COMPLETE_HTML_TAG_RE = re.compile(
+    r"^[ ]{0,3}(?:"
+    rf"</{_HTML_TAG_NAME}[ \t]*>"
+    r"|"
+    rf"<{_HTML_TAG_NAME}(?:[ \t]+{_HTML_ATTRIBUTE})*[ \t]*/?>"
+    r")[ \t]*$"
+)
 
 
 def _starts_markdown_html_block(line: str) -> bool:
     return bool(
         _MARKDOWN_HTML_BLOCK_RE.match(line)
+        or _MARKDOWN_COMPLETE_HTML_TAG_RE.match(line)
         or re.match(r"^[ ]{0,3}(?:<\?|<![A-Z]|<!\[CDATA\[)", line)
     )
 
@@ -485,7 +498,7 @@ def _is_ordinary_markdown_paragraph(block: str) -> bool:
     if re.match(r"^(?:[ ]{4}|\t)", first):
         return False
     if re.match(
-        r"^[ ]{0,3}(?:#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+|"
+        r"^[ ]{0,3}(?:#{1,6}(?:[ \t]+|$)|>[ \t]?|[-+*][ \t]+|"
         r"\d+[.)][ \t]+)",
         first,
     ):

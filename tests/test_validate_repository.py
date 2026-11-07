@@ -735,6 +735,57 @@ class RepositoryValidationTests(unittest.TestCase):
                         validate(root),
                     )
 
+    def test_validator_rejects_empty_atx_and_complete_html_blocks(self) -> None:
+        blocks = (
+            ("empty_atx", "###"),
+            ("span_open", "<span>"),
+            ("span_close", "</span>"),
+            ("custom_open", '<x-note role="note">'),
+            ("custom_close", "</x-note>"),
+        )
+        for spaces in (0, 1, 2, 3):
+            for name, block in blocks:
+                with self.subTest(spaces=spaces, block=name):
+                    temp, root = self.make_root()
+                    self.addCleanup(temp.cleanup)
+                    readme = root / "README.md"
+                    text = readme.read_text(encoding="utf-8")
+                    tagline = f"**{README_TAGLINE}**"
+                    opening, heading, remainder = text.partition(
+                        "## Why I built this"
+                    )
+                    before, separator, after = opening.partition(tagline)
+                    self.assertEqual(separator, tagline)
+                    first_paragraph, paragraph_break, later = (
+                        after.lstrip("\r\n").partition("\n\n")
+                    )
+                    self.assertEqual(paragraph_break, "\n\n")
+                    first_paragraph = first_paragraph.replace(
+                        README_OPENING_PROMISE,
+                        "study selected topics",
+                    )
+                    first_block = (
+                        " " * spaces + block + "\nlearn any subject"
+                    )
+                    readme.write_text(
+                        before
+                        + tagline
+                        + "\n\n"
+                        + first_block
+                        + "\n\n"
+                        + first_paragraph
+                        + paragraph_break
+                        + later
+                        + heading
+                        + remainder,
+                        encoding="utf-8",
+                    )
+
+                    self.assertIn(
+                        "Narrow product positioning in README.md",
+                        validate(root),
+                    )
+
     def test_validator_accepts_inline_html_or_autolink_opening_prose(self) -> None:
         paragraphs = (
             "<https://example.com> helps people learn any subject.",
