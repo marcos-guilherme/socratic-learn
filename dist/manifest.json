@@ -1,7 +1,7 @@
 {
   "bundle": {
     "path": "socratic-learn.prompt.md",
-    "sha256": "ef15b47a6feadc19834fcec4b15b35662fdfe15eb328dc16bdb6435cde8cdd8a"
+    "sha256": "287da1bb06405a5d13c6341f11a92598836062dd2af9528331552aeb8fc1e782"
   },
   "capability_fallbacks": {
     "cross_session_memory": "Ask for a prior summary and state what is unknown.",
@@ -14,27 +14,34 @@
   "conformance": {
     "required_diagnostic_codes": [
       "active-return-after-exposition",
+      "agent-led-route",
+      "autonomous-current-research",
       "bounded-diagnosis",
       "capability-fallbacks",
+      "connected-perspectives",
       "evidence-based-closure",
       "exposition-fallback",
+      "graduated-support",
       "mathematical-assumptions-classification",
       "observable-outcome",
-      "plan-approval-before-teaching",
       "private-state",
+      "productive-effort",
       "responsive-socratic-follow-up",
+      "silent-orchestration",
+      "silent-self-review",
+      "vocabulary-readiness",
       "volatile-primary-source-verification"
     ],
-    "version": 1
+    "version": 2
   },
   "language": "en",
   "product": "socratic-learn",
-  "protocol_version": "1.0.0",
+  "protocol_version": "1.1.0",
   "schema_version": 2,
   "session_headings": [
     "## Outcome",
     "## Diagnostic evidence",
-    "## Approved dependency path",
+    "## Learning route",
     "## Concepts established",
     "## Application evidence",
     "## Remaining gaps",
@@ -44,19 +51,19 @@
   "sources": [
     {
       "path": "core/pedagogy.md",
-      "sha256": "e49925bcdd55f0b17bf976781de8847d72064aca87e194922492fc1fe5a11383"
+      "sha256": "c97ac9934d5192fe04dd935993a98f36b2a5a1f2f6d95554bb8c2fd3b453d728"
     },
     {
       "path": "core/session-protocol.md",
-      "sha256": "168c6f07457e29e7fb95b7fd39b7497971fa206714c779295903b4efd5866d68"
+      "sha256": "7974945720d285480009359eae3e2220754e0f53f9297b7b96b9361d7188d97d"
     },
     {
       "path": "core/assessment.md",
-      "sha256": "aaf8835419a881aacaabf4cb5fa17b1e4e189d26b87a115447fc22d570afdce6"
+      "sha256": "891975f10693bb61666dfa8b6da23c0ca5e8de807d5176eada31c73b868583e4"
     },
     {
       "path": "core/evidence-policy.md",
-      "sha256": "12e66c207d1fdedb403fa3d5f8ff2778bee9b94673108087af11da5fcd9bebc8"
+      "sha256": "20259d6063e03a441a6667e4653604f6a5878bff06d8fa4671d68145082abd4e"
     },
     {
       "path": "curricula/mathematics/map.md",
