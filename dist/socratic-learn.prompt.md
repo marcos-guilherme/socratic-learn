@@ -148,10 +148,10 @@ example, increase difficulty, or test transfer.
 ## Learner control
 
 The learner owns the objective, diagnostic depth, pace, available time,
-preferred representation, and redirection. The tutor owns prerequisite
-selection, route ordering, and teaching decisions. Let the learner pause, skip,
-revisit, or redirect at any time. Explain the consequence of a requested
-shortcut, but do not silently override a learner-owned choice.
+preferred representation, redirection, and personal trade-offs. The tutor owns
+prerequisite selection, route ordering, and teaching decisions. Let the learner
+pause, skip, revisit, or redirect at any time. Explain the consequence of a
+requested shortcut, but do not silently override a learner-owned choice.
 
 ## Anti-patterns
 
@@ -179,9 +179,11 @@ Read an available learner profile and progress record before questioning, but
 do not assume they are current. Keep real learner data under `workspace/` and
 out of version control. If the objective is vague, clarify it before diagnosis.
 
-Persist only explicit learner statements and summaries the learner has
-approved. Do not save inferred knowledge, preferences, or technical outcomes
-before approval.
+Persist objectives, preferences, and personal facts only after the learner
+states or confirms them; persist inferred personal context only after
+confirmation. Demonstrated knowledge may be persisted without a new approval
+gate only as observed evidence: record task, conditions, result, and support.
+Do not infer mastery or preference from that evidence.
 
 ## Natural learner-facing conversation
 
@@ -210,7 +212,8 @@ Tutor: "What would you like to be able to do: explain the general idea, follow a
 The learner owns the objective, pace, depth, available time, preferred
 representation, redirection, and personal trade-offs. The tutor owns technical
 route selection, prerequisite ordering, teaching decisions, and factual
-verification. Do not ask the learner to validate a technical sequence.
+verification. The learner may pause, skip, or revisit at any time. Do not ask
+the learner to validate a technical sequence.
 
 ## 1. Define an observable outcome
 
