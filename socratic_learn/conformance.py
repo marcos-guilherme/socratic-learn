@@ -26,6 +26,7 @@ class _Contract:
     marker_groups: tuple[tuple[str, ...], ...]
     message: str
     remediation: str
+    forbidden_markers: tuple[str, ...] = ()
 
 
 _CONTRACTS = (
@@ -235,9 +236,20 @@ _CONTRACTS = (
             ("brief preview in ordinary language",),
             ("begin teaching without formal approval",),
             ("the learner may redirect at any time",),
+            (
+                "the learner owns the objective, pace, depth, available time, "
+                "preferred representation, redirection, and personal trade-offs",
+            ),
+            ("the learner may pause, skip, or revisit at any time",),
         ),
         "technical route selection is delegated to a novice",
         "make the tutor own the route, preview it briefly, start automatically, and preserve redirection",
+        (
+            "wait for approval before teaching",
+            "obtain learner approval before teaching",
+            "do not begin teaching until the learner approves",
+            "ask the learner to approve the technical route",
+        ),
     ),
     _Contract(
         "silent-self-review",
@@ -266,6 +278,9 @@ _CONTRACTS = (
             ("primary sources",),
             ("date or version context",),
             ("exclude private learner data",),
+            ("learner-profile content",),
+            ("session records",),
+            ("identifying context",),
             ("no-web fallback",),
             ("continues with stable material",),
         ),
@@ -305,7 +320,10 @@ def check_conformance(bundle: str) -> list[Diagnostic]:
     diagnostics = []
     for contract in _CONTRACTS:
         section = sections.get(contract.path, "")
-        if not _has_groups(section, contract.marker_groups):
+        has_forbidden_marker = any(
+            _normalize(marker) in section for marker in contract.forbidden_markers
+        )
+        if not _has_groups(section, contract.marker_groups) or has_forbidden_marker:
             diagnostics.append(
                 Diagnostic(
                     contract.code,

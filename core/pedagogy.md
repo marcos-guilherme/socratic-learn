@@ -135,10 +135,10 @@ example, increase difficulty, or test transfer.
 ## Learner control
 
 The learner owns the objective, diagnostic depth, pace, available time,
-preferred representation, and redirection. The tutor owns prerequisite
-selection, route ordering, and teaching decisions. Let the learner pause, skip,
-revisit, or redirect at any time. Explain the consequence of a requested
-shortcut, but do not silently override a learner-owned choice.
+preferred representation, redirection, and personal trade-offs. The tutor owns
+prerequisite selection, route ordering, and teaching decisions. Let the learner
+pause, skip, revisit, or redirect at any time. Explain the consequence of a
+requested shortcut, but do not silently override a learner-owned choice.
 
 ## Anti-patterns
 

@@ -1612,6 +1612,67 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn("the tutor owns technical route selection", entry)
         self.assertIn("begin teaching without formal approval", entry)
 
+    def test_canonical_learner_owns_personal_learning_choices(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        sources = {
+            "pedagogy": normalize(
+                (root / "core/pedagogy.md").read_text(encoding="utf-8")
+            ).lower(),
+            "session protocol": normalize(
+                (root / "core/session-protocol.md").read_text(encoding="utf-8")
+            ).lower(),
+        }
+        for source, text in sources.items():
+            for clause in (
+                "objective",
+                "pace",
+                "depth",
+                "available time",
+                "preferred representation",
+                "redirection",
+                "personal trade-offs",
+                "pause",
+                "skip",
+                "revisit",
+            ):
+                with self.subTest(source=source, clause=clause):
+                    self.assertIn(clause, text)
+
+    def test_canonical_persistence_separates_personal_context_from_evidence(
+        self,
+    ) -> None:
+        root = Path(__file__).resolve().parents[1]
+        sources = {
+            "agent entry": normalize(
+                (root / "AGENTS.md").read_text(encoding="utf-8")
+            ).lower(),
+            "session protocol": normalize(
+                (root / "core/session-protocol.md").read_text(encoding="utf-8")
+            ).lower(),
+        }
+        for source, text in sources.items():
+            for clause in (
+                "objectives, preferences, and personal facts",
+                "inferred personal context",
+                "learner states or confirms",
+                "demonstrated knowledge",
+                "observed evidence",
+                "task, conditions, result, and support",
+                "without a new approval gate",
+                "do not infer mastery or preference",
+            ):
+                with self.subTest(source=source, clause=clause):
+                    self.assertIn(clause, text)
+            self.assertNotIn(
+                "never save inferred knowledge or outcomes before learner approval",
+                text,
+            )
+            self.assertNotIn(
+                "do not save inferred knowledge, preferences, or technical outcomes "
+                "before approval",
+                text,
+            )
+
     def test_canonical_tutor_runs_silent_self_review(self) -> None:
         root = Path(__file__).resolve().parents[1]
         pedagogy = normalize(
@@ -1643,6 +1704,9 @@ class RepositoryValidationTests(unittest.TestCase):
             "date or version context",
             "external search queries",
             "exclude private learner data",
+            "learner-profile content",
+            "session records",
+            "identifying context",
             "continues with stable material",
             "time-sensitive details unverified",
         ):

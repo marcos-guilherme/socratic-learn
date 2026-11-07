@@ -72,6 +72,9 @@ Inspect only prerequisites that could block the outcome.
 The tutor owns technical route selection. Do not ask the learner to validate a
 technical sequence. Give a brief preview in ordinary language and begin
 teaching without formal approval. The learner may redirect at any time.
+The learner owns the objective, pace, depth, available time, preferred
+representation, redirection, and personal trade-offs. The learner may pause,
+skip, or revisit at any time.
 
 ## 4. Teach one node at a time
 
@@ -115,7 +118,8 @@ presenting it as current.
 
 Search autonomously for consequential current, volatile, disputed, or uncertain
 claims. Prefer primary sources and include date or version context. External
-queries must exclude private learner data.
+queries must exclude private learner data, including learner-profile content,
+session records, and identifying context.
 
 ## No-web fallback
 
@@ -222,6 +226,41 @@ class ConformanceTests(unittest.TestCase):
             "agent-led-route",
         )
 
+    def test_rejects_forbidden_agent_led_approval_markers(self) -> None:
+        for marker in (
+            "wait for approval before teaching",
+            "obtain learner approval before teaching",
+            "do not begin teaching until the learner approves",
+            "ask the learner to approve the technical route",
+        ):
+            with self.subTest(marker=marker):
+                self.assert_only_code(
+                    minimal_bundle().replace(
+                        "The learner may redirect at any time.",
+                        f"The learner may redirect at any time. {marker}.",
+                    ),
+                    "agent-led-route",
+                )
+
+    def test_requires_learner_owned_choices(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "The learner owns the objective, pace, depth, available time, preferred\n"
+                "representation, redirection, and personal trade-offs.",
+                "The tutor decides every learning preference.",
+            ),
+            "agent-led-route",
+        )
+
+    def test_requires_pause_skip_and_revisit_controls(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "The learner may pause,\nskip, or revisit at any time.",
+                "The learner must continue.",
+            ),
+            "agent-led-route",
+        )
+
     def test_requires_silent_self_review(self) -> None:
         self.assert_only_code(
             minimal_bundle().replace(
@@ -240,6 +279,18 @@ class ConformanceTests(unittest.TestCase):
             ),
             "autonomous-current-research",
         )
+
+    def test_requires_explicit_external_query_privacy_categories(self) -> None:
+        for marker in (
+            "learner-profile content",
+            "session records",
+            "identifying context",
+        ):
+            with self.subTest(marker=marker):
+                self.assert_only_code(
+                    minimal_bundle().replace(marker, "private data"),
+                    "autonomous-current-research",
+                )
 
     def test_requires_responsive_socratic_follow_up(self) -> None:
         self.assert_only_code(
