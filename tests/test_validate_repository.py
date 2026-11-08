@@ -1,4 +1,5 @@
 from contextlib import redirect_stdout
+import errno
 from io import StringIO
 import json
 from pathlib import Path
@@ -235,6 +236,26 @@ class RepositoryValidationTests(unittest.TestCase):
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+
+    def require_symlink(
+        self,
+        link: Path,
+        target: Path,
+        *,
+        target_is_directory: bool,
+    ) -> None:
+        try:
+            link.symlink_to(
+                target,
+                target_is_directory=target_is_directory,
+            )
+        except OSError as error:
+            if (
+                getattr(error, "winerror", None) == 1314
+                or error.errno in {errno.EACCES, errno.EPERM, errno.ENOSYS}
+            ):
+                self.skipTest(f"symbolic links are unavailable: {error}")
+            raise
 
     def make_root(
         self, nested_under_workspace: bool = False
@@ -2978,7 +2999,11 @@ class RepositoryValidationTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         target = Path(temp.name) / "external-runtime-root"
         (target / "home/learning").mkdir(parents=True)
-        (root / ".semantic-runs").symlink_to(target, target_is_directory=True)
+        self.require_symlink(
+            root / ".semantic-runs",
+            target,
+            target_is_directory=True,
+        )
 
         self.assertEqual(
             ["Unsafe symlink under .semantic-runs: ."],
@@ -2992,7 +3017,11 @@ class RepositoryValidationTests(unittest.TestCase):
         raw_root.mkdir()
         target = Path(temp.name) / "external-runtime"
         (target / "home/learning").mkdir(parents=True)
-        (raw_root / "suite").symlink_to(target, target_is_directory=True)
+        self.require_symlink(
+            raw_root / "suite",
+            target,
+            target_is_directory=True,
+        )
 
         with patch("builtins.open", side_effect=AssertionError("raw content read")):
             errors = semantic_runtime_errors(root)
@@ -3064,7 +3093,11 @@ class RepositoryValidationTests(unittest.TestCase):
                     root / "evaluation/fixtures/antigravity/tracked-link.json"
                 )
                 guarded.parent.mkdir(parents=True)
-                guarded.symlink_to(target)
+                self.require_symlink(
+                    guarded,
+                    target,
+                    target_is_directory=False,
+                )
                 subprocess.run(["git", "init", "-q"], cwd=root, check=True)
                 subprocess.run(
                     [
@@ -3126,7 +3159,11 @@ class RepositoryValidationTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 shutil.rmtree(guarded.parent)
-                guarded.parent.symlink_to(target, target_is_directory=True)
+                self.require_symlink(
+                    guarded.parent,
+                    target,
+                    target_is_directory=True,
+                )
                 original_read_text = Path.read_text
 
                 def reject_guarded_read(
