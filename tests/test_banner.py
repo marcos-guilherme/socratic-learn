@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import io
+import os
 import unittest
 from pathlib import Path
 
-from socratic_learn.banner import BANNER, write_banner
+from socratic_learn.banner import ASCII_BANNER, BANNER, write_banner
 
 
 class _TerminalStream(io.StringIO):
@@ -75,16 +76,16 @@ class BannerTests(unittest.TestCase):
 
         self.assertEqual(1, output.flush_calls)
 
-    def test_cp1252_stream_writes_complete_utf8_banner(self) -> None:
+    def test_cp1252_stream_writes_readable_ascii_fallback(self) -> None:
         binary_output = io.BytesIO()
         output = io.TextIOWrapper(binary_output, encoding="cp1252")
 
-        try:
-            write_banner(output, {})
-        except UnicodeEncodeError as error:
-            self.fail(f"banner aborted on a CP1252 stream: {error}")
+        write_banner(output, {})
 
-        self.assertEqual(f"{BANNER}\n".encode("utf-8"), binary_output.getvalue())
+        self.assertEqual(
+            f"{ASCII_BANNER}\n".replace("\n", os.linesep).encode("cp1252"),
+            binary_output.getvalue(),
+        )
 
     def test_cp1252_binary_fallback_is_flushed(self) -> None:
         binary_output = io.BytesIO()
@@ -92,7 +93,11 @@ class BannerTests(unittest.TestCase):
 
         write_banner(output, {})
 
-        self.assertEqual(2, output.flush_calls)
+        self.assertEqual(1, output.flush_calls)
+        self.assertEqual(
+            f"{ASCII_BANNER}\n".replace("\n", os.linesep).encode("cp1252"),
+            binary_output.getvalue(),
+        )
 
 
 if __name__ == "__main__":

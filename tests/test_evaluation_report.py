@@ -485,6 +485,9 @@ class EvaluationReportTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             repository = Path(directory)
+            runtime_root = (
+                repository.parent / "fictitious-semantic-runtime"
+            ).resolve()
             fixtures = repository / "evaluation" / "fixtures"
             fixtures.mkdir(parents=True)
             shutil.copy2(fixture_root() / "rubric.json", fixtures / "rubric.json")
@@ -515,7 +518,7 @@ class EvaluationReportTests(unittest.TestCase):
                 (run_dir / "runtime-context.json").write_text(
                     json.dumps(
                         {
-                            "runtime_root": "/tmp/fictitious-semantic-runtime",
+                            "runtime_root": str(runtime_root),
                             "runtime_outside_repository": True,
                             "local_rule_check_passed": True,
                             "rule_boundary": "user_home",
