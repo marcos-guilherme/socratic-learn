@@ -13,6 +13,10 @@ BANNER = """  ███████╗ ██████╗  ██████
 
   objective → prerequisites → guided route → application → evidence"""
 
+ASCII_BANNER = """SOCRATIC LEARN
+
+  objective -> prerequisites -> guided route -> application -> evidence"""
+
 
 def write_banner(output: TextIO, environ: Mapping[str, str]) -> None:
     if (
@@ -24,12 +28,12 @@ def write_banner(output: TextIO, environ: Mapping[str, str]) -> None:
     else:
         text = f"{BANNER}\n"
 
-    try:
-        output.write(text)
-    except UnicodeEncodeError:
-        binary_output = getattr(output, "buffer", None)
-        if binary_output is None:
-            raise
-        output.flush()
-        binary_output.write(text.encode("utf-8"))
+    encoding = getattr(output, "encoding", None)
+    if encoding is not None:
+        try:
+            text.encode(encoding)
+        except (LookupError, UnicodeEncodeError):
+            text = f"{ASCII_BANNER}\n"
+
+    output.write(text)
     output.flush()

@@ -36,6 +36,8 @@ class UniversalSmokeTests(unittest.TestCase):
     def _isolated_environment() -> dict[str, str]:
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
+        environment.pop("PYTHONIOENCODING", None)
+        environment.pop("PYTHONUTF8", None)
         return environment
 
     def _run_cli(
@@ -211,7 +213,7 @@ class UniversalSmokeTests(unittest.TestCase):
                 "wheel and fake-host setup must not mutate the source repository",
             )
 
-            run_environment = os.environ.copy()
+            run_environment = self._isolated_environment()
             run_environment.update(
                 {
                     "FAKE_PI_RECORD": str(record),
