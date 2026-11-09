@@ -8,6 +8,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
+READ_MODE_DELIMITER = "\n\n--- SOCRATIC LEARN SOURCE STUDY ---\n"
 
 AgentName = Literal["pi", "claude", "antigravity"]
 
@@ -16,7 +17,7 @@ AgentName = Literal["pi", "claude", "antigravity"]
 class HostAdapter:
     name: AgentName
     executable_names: tuple[str, ...]
-    build_argv: Callable[[str, Path, str], tuple[str, ...]]
+    build_argv: Callable[..., tuple[str, ...]]
 
 
 @dataclass(frozen=True)
@@ -25,19 +26,42 @@ class DetectedHost:
     executable: str
 
 
-def _pi(executable: str, protocol: Path, goal: str) -> tuple[str, ...]:
-    return executable, "--append-system-prompt", str(protocol), goal
+def _pi(
+    executable: str,
+    protocol: Path,
+    goal: str,
+    source_study_payload: str | None = None,
+) -> tuple[str, ...]:
+    final_prompt = source_study_payload if source_study_payload is not None else goal
+    return executable, "--append-system-prompt", str(protocol), final_prompt
 
 
-def _claude(executable: str, protocol: Path, goal: str) -> tuple[str, ...]:
-    return executable, "--append-system-prompt-file", str(protocol), goal
+def _claude(
+    executable: str,
+    protocol: Path,
+    goal: str,
+    source_study_payload: str | None = None,
+) -> tuple[str, ...]:
+    final_prompt = source_study_payload if source_study_payload is not None else goal
+    return executable, "--append-system-prompt-file", str(protocol), final_prompt
 
 
-def _antigravity(executable: str, protocol: Path, goal: str) -> tuple[str, ...]:
-    bootstrap = (
-        f"Before responding, read and follow the Socratic Learn protocol at "
-        f"{protocol}. The learner's initial objective is: {goal}"
-    )
+def _antigravity(
+    executable: str,
+    protocol: Path,
+    goal: str,
+    source_study_payload: str | None = None,
+) -> tuple[str, ...]:
+    if source_study_payload is not None:
+        bootstrap = (
+            f"Before responding, read and follow the Socratic Learn protocol at "
+            f"{protocol}.{READ_MODE_DELIMITER}{source_study_payload}"
+        )
+    else:
+        bootstrap = (
+            f"Before responding, read and follow the Socratic Learn protocol at "
+            f"{protocol}. The learner's initial objective is: {goal}"
+        )
     return executable, "--prompt-interactive", bootstrap
 
 
@@ -69,6 +93,7 @@ def command_for(
     executable: str,
     protocol: Path,
     goal: str,
+    source_study_payload: str | None = None,
 ) -> tuple[str, ...]:
     """Build an argument vector without invoking a process."""
-    return adapter.build_argv(executable, protocol, goal)
+    return adapter.build_argv(executable, protocol, goal, source_study_payload)

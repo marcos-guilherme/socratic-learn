@@ -28,6 +28,7 @@ from socratic_learn.sources.normalize import (
     chunk_section,
     normalize_text,
 )
+from socratic_learn.sources.payload import build_source_study_payload
 
 __all__ = [
     "DEFAULT_SECTION_CHUNK_LIMIT",
@@ -37,6 +38,7 @@ __all__ = [
     "MIN_NON_WHITESPACE_CODE_POINTS",
     "SOCKET_TIMEOUT_SECONDS",
     "build_bundle_tree",
+    "build_source_study_payload",
     "BundleMetadata",
     "ExtractedDocument",
     "ExtractedSection",

@@ -65,3 +65,30 @@ whole operating system.
 
 For project-local discovery files instead, follow
 [Adding an Adapter](adding-an-adapter.md).
+
+## Source study (read mode)
+
+Read-mode sessions build one shared `source_study_payload` string (learner goal,
+absolute `index.md` and `metadata.json` paths, and untrusted-source rules). The
+launcher does not embed normalized source text in argv.
+
+When `source_study_payload` is omitted, every host uses the normal vectors above
+unchanged.
+
+When it is supplied:
+
+- Pi: `pi --append-system-prompt PROTOCOL SOURCE_STUDY_PAYLOAD`
+- Claude Code: `claude --append-system-prompt-file PROTOCOL SOURCE_STUDY_PAYLOAD`
+- Antigravity: `agy --prompt-interactive READ_BOOTSTRAP`
+
+For Antigravity read mode, `READ_BOOTSTRAP` is exactly the protocol-path
+instruction without the normal goal sentence:
+
+```text
+Before responding, read and follow the Socratic Learn protocol at PROTOCOL.
+```
+
+followed by `\n\n--- SOCRATIC LEARN SOURCE STUDY ---\n` and the exact
+`SOURCE_STUDY_PAYLOAD` once. Pi and Claude still receive the canonical protocol
+through their system-prompt file options; the payload is the final positional
+argument instead of the bare goal.

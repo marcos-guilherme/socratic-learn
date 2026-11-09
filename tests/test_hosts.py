@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from socratic_learn.hosts import ADAPTERS, command_for, detect_hosts
+from socratic_learn.sources.payload import build_source_study_payload
 
 
 class HostAdapterTests(unittest.TestCase):
@@ -77,3 +78,96 @@ class HostAdapterTests(unittest.TestCase):
         self.assertEqual(["pi", "claude", "agy"], looked_up)
         self.assertEqual("C:/bin/agy.exe", detected["antigravity"].executable)
         self.assertIs(ADAPTERS["antigravity"], detected["antigravity"].adapter)
+
+    def test_none_payload_preserves_normal_argv_byte_for_byte(self) -> None:
+        protocol = Path("C:/Learning Home/protocol.md")
+        goal = "learn probability"
+        baseline_pi = command_for(ADAPTERS["pi"], "pi", protocol, goal)
+        baseline_claude = command_for(
+            ADAPTERS["claude"], "claude", protocol, goal
+        )
+        baseline_agy = command_for(ADAPTERS["antigravity"], "agy", protocol, goal)
+        self.assertEqual(
+            baseline_pi,
+            command_for(
+                ADAPTERS["pi"],
+                "pi",
+                protocol,
+                goal,
+                source_study_payload=None,
+            ),
+        )
+        self.assertEqual(
+            baseline_claude,
+            command_for(
+                ADAPTERS["claude"],
+                "claude",
+                protocol,
+                goal,
+                source_study_payload=None,
+            ),
+        )
+        self.assertEqual(
+            baseline_agy,
+            command_for(
+                ADAPTERS["antigravity"],
+                "agy",
+                protocol,
+                goal,
+                source_study_payload=None,
+            ),
+        )
+
+    def test_read_mode_envelopes_use_exact_payload_and_delimiter(self) -> None:
+        protocol = Path("C:/Learning Home/protocol.md")
+        goal = "read critically"
+        index = Path("C:/home/.socratic-learn/sources/x/index.md")
+        metadata = Path("C:/home/.socratic-learn/sources/x/metadata.json")
+        payload = build_source_study_payload(
+            learner_goal=goal,
+            index_path=index,
+            metadata_path=metadata,
+        )
+        self.assertEqual(
+            ("pi", "--append-system-prompt", str(protocol), payload),
+            command_for(
+                ADAPTERS["pi"],
+                "pi",
+                protocol,
+                goal,
+                source_study_payload=payload,
+            ),
+        )
+        self.assertEqual(
+            ("claude", "--append-system-prompt-file", str(protocol), payload),
+            command_for(
+                ADAPTERS["claude"],
+                "claude",
+                protocol,
+                goal,
+                source_study_payload=payload,
+            ),
+        )
+        read_prefix = (
+            "Before responding, read and follow the Socratic Learn protocol at "
+            f"{protocol}."
+        )
+        delimiter = "\n\n--- SOCRATIC LEARN SOURCE STUDY ---\n"
+        read_bootstrap = f"{read_prefix}{delimiter}{payload}"
+        agy_argv = command_for(
+            ADAPTERS["antigravity"],
+            "agy",
+            protocol,
+            goal,
+            source_study_payload=payload,
+        )
+        self.assertEqual(
+            ("agy", "--prompt-interactive", read_bootstrap),
+            agy_argv,
+        )
+        self.assertEqual(1, agy_argv[2].count(delimiter))
+        self.assertEqual(1, agy_argv[2].count(payload))
+        self.assertNotIn(
+            f"The learner's initial objective is: {goal}",
+            agy_argv[2],
+        )
