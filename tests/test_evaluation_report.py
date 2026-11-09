@@ -21,6 +21,7 @@ from evaluation.report import (
 from evaluation.sanitize import RedactionRule
 from evaluation.schema import (
     Finding,
+    RUN_SCHEMA_V1,
     RUN_SCHEMA_V2,
     fixture_root,
     load_rubric,
@@ -620,6 +621,110 @@ class EvaluationReportTests(unittest.TestCase):
             self.assertIn("Semantic baseline report written.", output.getvalue())
             self.assertIn("Semantic baseline report is valid.", output.getvalue())
 
+
+    def test_report_rejects_mixed_schema_identities(self) -> None:
+        suite, records, scorecards, runtime_disclosures = self.report_triplet()
+        mixed = [
+            replace(
+                records[0],
+                schema_version=RUN_SCHEMA_V1,
+                scenario_sha256=None,
+                rubric_sha256=None,
+                suite_sha256=None,
+            ),
+            records[1],
+            records[2],
+        ]
+        with self.assertRaisesRegex(ValueError, "schema 2"):
+            render_baseline_report(
+                suite,
+                baseline_rubric(),
+                mixed,
+                scorecards,
+                [],
+                runtime_disclosures=runtime_disclosures,
+                rules=(),
+            )
+
+    def test_report_rejects_wrong_fixture_hashes_independently(self) -> None:
+        suite, records, scorecards, runtime_disclosures = self.report_triplet()
+        cases = {
+            "suite hash": (
+                tuple(replace(record, suite_sha256="f" * 64) for record in records),
+                "unexpected suite hash",
+            ),
+            "rubric hash": (
+                tuple(replace(record, rubric_sha256="f" * 64) for record in records),
+                "unexpected rubric hash",
+            ),
+            "conceptual-physics scenario hash": (
+                (
+                    replace(records[0], scenario_sha256="f" * 64),
+                    records[1],
+                    records[2],
+                ),
+                "unexpected scenario hash",
+            ),
+            "practical-programming scenario hash": (
+                (
+                    records[0],
+                    replace(records[1], scenario_sha256="f" * 64),
+                    records[2],
+                ),
+                "unexpected scenario hash",
+            ),
+            "communication-writing scenario hash": (
+                (
+                    records[0],
+                    records[1],
+                    replace(records[2], scenario_sha256="f" * 64),
+                ),
+                "unexpected scenario hash",
+            ),
+        }
+        for label, (invalid, pattern) in cases.items():
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, pattern):
+                render_baseline_report(
+                    suite,
+                    baseline_rubric(),
+                    invalid,
+                    scorecards,
+                    [],
+                    runtime_disclosures=runtime_disclosures,
+                    rules=(),
+                )
+
+    def test_report_rejects_wrong_category_maximum(self) -> None:
+        suite, records, scorecards, runtime_disclosures = self.report_triplet()
+        rubric = baseline_rubric()
+        short_rubric = replace(rubric, categories=rubric.categories[:-1])
+        with self.assertRaisesRegex(ValueError, "category"):
+            render_baseline_report(
+                suite,
+                short_rubric,
+                records,
+                scorecards,
+                [],
+                runtime_disclosures=runtime_disclosures,
+                rules=(),
+            )
+
+    def test_report_scenario_sections_follow_manifest_order(self) -> None:
+        suite, records, scorecards, runtime_disclosures = self.report_triplet()
+        reversed_records = list(reversed(records))
+        report = render_baseline_report(
+            suite,
+            baseline_rubric(),
+            reversed_records,
+            scorecards,
+            [],
+            runtime_disclosures=runtime_disclosures,
+            rules=(),
+        )
+        positions = [
+            report.index(f"### {scenario_id}") for scenario_id in suite.scenario_ids
+        ]
+        self.assertEqual(sorted(positions), positions)
 
     def test_historical_tracked_baseline_report_still_validates(self) -> None:
         path = (

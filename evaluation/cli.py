@@ -76,7 +76,7 @@ RUN_FAILURE_MESSAGE = "BLOCKED: Semantic evaluation run failed.\n"
 ISOLATION_FAILURE_MESSAGE = (
     "BLOCKED: Post-run isolation verification failed.\n"
 )
-_IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 
 
 class CliRefusal(ValueError):

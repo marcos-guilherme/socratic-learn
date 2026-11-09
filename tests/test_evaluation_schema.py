@@ -19,6 +19,7 @@ from evaluation.schema import (
     load_run_record,
     load_scenario,
     load_stream_contract,
+    identities_for_scenario,
     load_suite_manifest,
     manifest_fixture_identities,
     validate_run_record,
@@ -378,3 +379,12 @@ class EvaluationSchemaVersionTwoTests(unittest.TestCase):
             fixture_sha256(fixture_root() / "suites/baseline-v1.json"),
             suite_hash,
         )
+
+    def test_identities_for_scenario_refuses_reserved_article_without_fixture(
+        self,
+    ) -> None:
+        manifest = load_suite_manifest(
+            fixture_root() / "suites/article-reading-v1.json"
+        )
+        with self.assertRaisesRegex(ValueError, "not yet available"):
+            identities_for_scenario(manifest, "article-reading")

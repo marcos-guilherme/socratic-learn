@@ -1275,6 +1275,74 @@ class EvaluationCliTests(unittest.TestCase):
             error.getvalue(),
         )
 
+    def test_run_refuses_scenario_outside_suite_before_mutation(self) -> None:
+        from evaluation import cli
+
+        process_calls = 0
+
+        def forbidden_process(argv, **kwargs):
+            nonlocal process_calls
+            process_calls += 1
+            raise AssertionError("out-of-suite run must refuse before subprocess")
+
+        error = io.StringIO()
+        with (
+            mock.patch.object(cli, "load_scenario", return_value=scenario()),
+            mock.patch.object(cli, "_preflight") as preflight,
+            mock.patch.object(cli, "create_run_layout") as create,
+            mock.patch.object(cli, "identities_for_scenario") as identities,
+        ):
+            result = cli.main(
+                [
+                    "run",
+                    "--suite-id",
+                    "baseline-v1",
+                    "--scenario",
+                    "synthetic",
+                    "--model-file",
+                    ".semantic-runs/contract/model.txt",
+                ],
+                output=io.StringIO(),
+                error=error,
+                run_process=forbidden_process,
+            )
+
+        self.assertEqual(2, result)
+        self.assertEqual(0, process_calls)
+        preflight.assert_not_called()
+        create.assert_not_called()
+        identities.assert_not_called()
+        self.assertEqual(
+            "BLOCKED: Semantic evaluation precheck refused.\n",
+            error.getvalue(),
+        )
+
+    def test_identifier_refuses_leading_digit_before_suite_lookup(self) -> None:
+        from evaluation import cli
+
+        error = io.StringIO()
+        with mock.patch.object(cli, "load_scenario") as load_scenario:
+            result = cli.main(
+                [
+                    "run",
+                    "--suite-id",
+                    "1illegal-suite",
+                    "--scenario",
+                    "synthetic",
+                    "--model-file",
+                    ".semantic-runs/contract/model.txt",
+                ],
+                output=io.StringIO(),
+                error=error,
+            )
+
+        self.assertEqual(2, result)
+        load_scenario.assert_not_called()
+        self.assertEqual(
+            "BLOCKED: Semantic evaluation precheck refused.\n",
+            error.getvalue(),
+        )
+
     def test_usage_errors_do_not_echo_unsafe_arguments(self) -> None:
         from evaluation import cli
 
