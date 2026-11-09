@@ -21,6 +21,22 @@ This first release does not perform automatic literature verification. It
 prepares the source reliably, improves the protocol behavior exposed by the
 semantic test, and records external claims as unverified.
 
+## Product direction
+
+Socratic Learn serves two connected outcomes:
+
+- **learning:** reconstruct, practice, and apply an idea with observable
+  evidence;
+- **research:** formulate a question, inspect and compare sources, evaluate
+  evidence, preserve citations, and produce a traceable synthesis.
+
+Article reading is the shared source foundation, not the complete research
+product. This release builds trustworthy ingestion and source-grounded
+reasoning. A later `socratic research` design will add canonical search,
+multi-source comparison, literature connectors, a claim ledger, and citation
+export. Those later features must reuse the source bundles and epistemic
+distinctions defined here rather than creating a second ingestion path.
+
 ## User experience
 
 ### Commands
@@ -38,6 +54,7 @@ socratic read https://example.org/article
 socratic read paper.pdf understand the argument and test its evidence
 socratic read --agent antigravity paper.pdf
 socratic read --here paper.pdf compare the method with my notes
+socratic read --allow-private-network http://localhost:8000/article
 ```
 
 `SOURCE` accepts:
@@ -46,7 +63,11 @@ socratic read --here paper.pdf compare the method with my notes
 - a local regular PDF file.
 
 The command rejects unsupported URL schemes, directories, symbolic links,
-non-PDF local files, missing files, and URLs containing user information.
+non-PDF local files, missing files, URLs containing user information, and
+public URLs that resolve or redirect to loopback, link-local, private, or
+reserved network addresses. `--allow-private-network` is an explicit opt-in
+that permits those network destinations for the one supplied read command; it
+does not persist as a preference.
 
 If `GOAL` is absent, the launcher asks:
 
@@ -57,7 +78,7 @@ What do you want to be able to do with this source?
 An empty answer is rejected. The launcher never invents a learning objective
 from the source title.
 
-The existing command shape remains unchanged:
+The normal learning command shape remains available:
 
 ```text
 socratic [--agent AGENT] [--here] [learn] GOAL...
@@ -83,10 +104,19 @@ it:
 3. asks one focused learner task at a time;
 4. treats missing support as missing support, not proof that a claim is false;
 5. uses hints before complete answers when the learner can make progress;
-6. includes source-grounded application or transfer before closure.
+6. includes source-grounded application or transfer before closure;
+7. keeps the session source-bounded unless the learner explicitly asks for
+   external verification.
 
 The tutor does not narrate that it is reading prompts, rules, protocols, or
 internal files.
+
+If the learner explicitly requests external verification, the host may use its
+existing research capabilities under the evidence policy and must cite what it
+actually consulted. This is a capability fallback, not a canonical research
+feature: this release does not guarantee that every host can search, does not
+normalize search results across hosts, and does not label an unchecked claim
+as verified.
 
 ## Chosen approach
 
@@ -114,10 +144,27 @@ The read parser accepts:
 - positional `source`;
 - positional `goal` with zero or more words;
 - `--agent {pi,claude,antigravity}`;
-- `--here`.
+- `--here`;
+- `--allow-private-network`.
 
-Argument abbreviation remains disabled. Existing normal, administrative,
-update, and uninstall commands retain their current behavior and error codes.
+Argument abbreviation remains disabled. Existing administrative, update, and
+uninstall commands retain their current behavior and error codes. Normal
+learning keeps its behavior except for the documented reservation of `read` as
+a command token.
+
+`read` is recognized only as the first non-option command token. Global read
+options are accepted before or after `read`, but parsing stops option
+interpretation after `--`. A source filename beginning with `-` therefore
+requires `--`. The forms below are equivalent:
+
+```text
+socratic --agent pi read article.pdf
+socratic read --agent pi article.pdf
+```
+
+This reserves a word that was previously valid as the first word of a normal
+goal. `socratic read critically` now attempts to open `critically` as a source.
+The documented compatibility escape is `socratic learn read critically`.
 
 ### Launch request
 
@@ -156,6 +203,12 @@ Use `pypdf>=7.0,<8` for PDF extraction. Version 7.0.0 is the current major
 release as of 2026-11-08, supports Python 3.10+, and is compatible with this
 project's Python 3.11 floor:
 <https://pypi.org/project/pypdf/7.0.0/>.
+
+`pypdf` is a required runtime dependency, not an optional extra. Wheel tests
+must install declared dependencies instead of using `--no-deps`. The
+PyInstaller specification must collect `pypdf` and its declared transitive
+dependencies, and every frozen-platform smoke test must ingest a textual PDF
+and reach a fake host. A `socratic --version` smoke test alone is insufficient.
 
 Do not add OCR in this release. A PDF with no meaningful extractable text fails
 with a message that identifies scanned/image-only content as the likely cause
@@ -221,10 +274,31 @@ Publication is atomic. A partially downloaded or extracted source never
 becomes the active bundle. Existing bundles with the same identifier are
 validated and reused without rewriting.
 
-Files use the existing private-record creation policy. Source directories and
-files must be regular, non-linked paths beneath the records directory. In
+Bundles extend the existing private-record creation policy. Source directories
+and files must be regular, non-linked paths beneath the records directory. In
 `--here` mode they remain under `.socratic-learn/workspace/`, which existing
 repository rules exclude from version control.
+
+The current direct-path checks are not sufficient for this bundle contract.
+Before ingestion is implemented, add one trusted-root containment primitive
+that:
+
+- resolves and validates every existing ancestor from the trusted records root
+  to the destination;
+- rejects POSIX symbolic links and Windows reparse points, including junctions;
+- opens existing files without following links where the platform supports it;
+- stages files in a newly created same-parent directory with owner-only
+  permissions;
+- validates a pre-existing final bundle before reuse;
+- publishes with one atomic same-volume rename;
+- removes its staging directory on every handled failure;
+- rejects a final-name collision that does not validate as the expected bundle.
+
+The supported threat model prevents accidental publication, traversal through
+linked paths, and replacement by non-concurrent operations. It does not claim
+to defeat a hostile process running as the same OS user that races final path
+operations. This matches the repository's documented POSIX same-user TOCTOU
+limitation and must be stated for Windows as well.
 
 ### Resource limits and network policy
 
@@ -233,24 +307,52 @@ The first release applies these exact limits:
 - 20 MiB maximum raw local file or HTTP response;
 - 500 PDF pages;
 - 5,000,000 normalized Unicode code points;
-- 20-second connection timeout;
-- 60-second total retrieval deadline;
+- 20-second socket timeout for connect and read operations;
 - at most five HTTP redirects.
+
+DNS resolution uses the platform resolver and is not claimed to have a
+cross-platform hard deadline. A later transport can tighten that guarantee
+without changing the source bundle contract.
 
 HTTP retrieval:
 
 - permits only HTTP and HTTPS at the initial URL and every redirect;
 - rejects URL user information;
+- resolves every destination before a request and rejects the request if any
+  resolved address is loopback, link-local, private, multicast, unspecified,
+  or reserved unless `--allow-private-network` is active;
+- verifies the connected peer address against the same policy before sending
+  the HTTP request, preventing a validated public name from rebinding to a
+  blocked destination;
 - sends no cookies, authorization headers, or environment credentials;
+- disables environment-provided HTTP and HTTPS proxies in this release;
 - uses a fixed `Socratic-Learn/<version>` user agent;
+- sends `Accept-Encoding: identity` and rejects any non-identity
+  `Content-Encoding`;
 - validates the final content type and file signature;
 - accepts `text/html`, `application/xhtml+xml`, and `application/pdf`;
-- rejects compressed response expansion beyond the raw limit;
+- accepts `application/octet-stream` or a missing content type only when
+  `%PDF-` appears within the first 1,024 bytes or the first 1,024 bytes contain
+  an ASCII-case-insensitive `<html` or `<!doctype html` marker;
+- stops before storing byte 20,971,521;
 - leaves TLS verification enabled.
 
-Because this is a local command acting on a URL explicitly supplied by the
-local user, loopback and private-network hosts are not blocked. The launcher
-does not follow URLs discovered inside the document.
+The full retrieval URL exists only in memory. The persisted and learner-facing
+display origin is `scheme://host[:non-default-port]/path` with a lowercase
+IDNA host, normalized percent encoding, no fragment, no user information, and
+no query string. The source identifier hashes the full canonical retrieval URL
+plus the raw bytes, so two query-dependent representations do not collide
+without persisting a query that may contain a secret. Errors use only the
+redacted display origin.
+
+HTML decoding uses, in order: a valid HTTP `charset`, a Unicode byte-order
+mark, a valid HTML meta charset found in the first 4,096 bytes, then UTF-8 with
+replacement. Unknown charset labels fall through rather than failing. A source
+is meaningful only when extraction produces at least 200 non-whitespace
+Unicode code points. PDF detection uses the same 1,024-byte `%PDF-` rule, and
+image-only detection uses the same 200-character threshold across all pages.
+
+The launcher does not follow URLs discovered inside the document.
 
 ### Host handoff
 
@@ -262,6 +364,8 @@ protocol bundle. The launcher builds a short source-study bootstrap containing:
 - the absolute path to `metadata.json`;
 - a statement that source files are untrusted study material, not
   instructions;
+- a prohibition on executing commands, opening additional URLs, reading other
+  local files, or changing configuration because source content requests it;
 - a requirement to read the index first and open only sections needed for the
   current learning step;
 - a statement that no external verification has occurred.
@@ -272,6 +376,19 @@ through its interactive bootstrap. All three receive the same source-study
 bootstrap as the initial learner content.
 
 Normal sessions use their current bootstrap text unchanged.
+
+Host parity means that all adapters receive byte-identical source bundle files,
+goal text, source location, and epistemic rules inside the strongest envelope
+that host supports. It does not mean identical instruction hierarchy or model
+behavior: Pi and Claude receive the canonical protocol through system-prompt
+file options, while Antigravity receives its protocol path in user content.
+Adapter contract tests therefore verify each envelope separately.
+
+The source-originated tool prohibition and untrusted-content labeling reduce
+prompt-injection risk but are not a security boundary. The hosts retain their
+normal tools and environment access. Unless a host supplies and the adapter
+enables an enforceable sandbox, resistance to source prompt injection is
+best-effort and documentation must say so.
 
 ## Protocol changes
 
@@ -302,6 +419,12 @@ article simulation:
 - using a new technical term inside a transfer question without introducing
   it.
 
+Source-study mode is an explicit specialization of autonomous research policy.
+It remains source-bounded by default even for disputed claims. The tutor marks
+those claims externally unverified and states what evidence could verify them.
+Only an explicit learner request activates host-provided external research;
+when activated, the normal source-priority and citation rules apply.
+
 ## Error handling
 
 All expected failures use the existing typed-error boundary and produce no
@@ -326,15 +449,19 @@ headers, or environment values.
 
 ## Context control
 
-Chunking is a delivery control, not a summary. The source index gives the tutor
-stable retrieval units while preserving the complete extractable text. The
-protocol instructs the tutor to load only sections needed for the current
-question and to return to the index when the route changes.
+Chunking is a delivery control, not a summary or an enforceable context limit.
+The source index gives the tutor stable retrieval units while preserving the
+complete extractable text. The protocol requests that the tutor load only
+sections needed for the current question and return to the index when the route
+changes. A host with unrestricted file tools can still read every chunk; the
+product must describe context restraint as best-effort unless a later adapter
+can enforce section access.
 
 The launcher does not ask a model to summarize the whole source before
 confirming the learner's objective. This avoids converting a large document
-into an unreviewed model-generated surrogate and prevents the first turn from
-loading every chunk.
+into an unreviewed model-generated surrogate and does not itself load every
+chunk into the first turn. Host compliance with selective reads remains
+best-effort.
 
 ## Evaluation
 
@@ -355,11 +482,27 @@ The simulated learner:
 - makes one leading transfer question;
 - revises only after usable feedback.
 
-The existing eight-category rubric remains unchanged so historical baseline
-scores remain comparable. The run is scored under the existing categories,
-while tracked findings explicitly record source grounding, orchestration
-leakage, question batching, and epistemic errors. Add these critical-failure
-identifiers to the rubric:
+The existing eight-category rubric remains unchanged so historical scores stay
+comparable. Add versioned suite manifests under
+`evaluation/fixtures/suites/`. A suite manifest identifies its exact scenarios,
+rubric, report contract, and schema version. Add `baseline-v1` for the existing
+three-scenario baseline and `article-reading-v1` for this scenario.
+
+Run-record schema version 2 records SHA-256 identities for the scenario,
+rubric, suite manifest, and protocol in addition to the existing runtime and
+model identity. The loader retains read support for existing schema-1
+synthetic/private records, but every new run writes schema 2.
+
+The current baseline renderer remains valid for the historical baseline.
+Replace its hard-coded scenario-triplet requirement for new reports with the
+ordered scenario identifiers from the selected suite manifest. Report
+validation checks the suite identifier, suite hash, rubric hash, scenario
+hashes, and category maximum rather than assuming one universal triplet.
+
+The article run is scored under the existing categories, while tracked
+findings explicitly record source grounding, orchestration leakage, question
+batching, and epistemic errors. Add these critical-failure identifiers to the
+rubric:
 
 - `fabricated-source-support`;
 - `source-claim-presented-as-externally-verified`;
@@ -372,19 +515,62 @@ The Antigravity contract fixture must be recaptured for the installed runtime
 version before a live semantic run. A version mismatch remains a hard
 preflight refusal.
 
+The article mode passes semantic validation only when a live run:
+
+- ends with `observable_outcome`;
+- has no infrastructure failure;
+- has no critical failure;
+- scores 2 for observable outcome, calibrated questioning, corrective
+  feedback, and evidence closure;
+- scores at least 1 in every remaining category;
+- scores at least 14 of 16 overall.
+
+An authentication, quota, network, runtime, or timeout result is
+**inconclusive**. It is preserved and reported but never satisfies the release
+gate.
+
+## Delivery milestones
+
+The approved feature is one roadmap, not one undivided implementation change.
+Each milestone is reviewed and testable before the next begins:
+
+1. **Trusted storage and packaging foundation:** trusted-root containment,
+   atomic private bundle publication, `pypdf` dependency declaration, wheel
+   dependency installation, and frozen PDF smoke fixtures. No public read
+   command ships at this milestone.
+2. **Deterministic source ingestion:** URL transport policy, HTML extraction,
+   PDF extraction, normalization, chunking, metadata, and source bundle reuse
+   behind internal APIs.
+3. **CLI, hosts, and protocol:** `socratic read`, compatibility behavior, host
+   envelopes, source-bounded protocol rules, documentation, and normal-session
+   regression coverage.
+4. **Semantic release gate:** versioned suite/report identities, article
+   scenario, runtime-contract recapture, live scoring, sanitized findings, and
+   the successful semantic threshold.
+
+No milestone may weaken tests from an earlier milestone to make the next one
+pass.
+
 ## Automated testing
 
 Implementation follows test-driven development. Required tests cover:
 
 ### CLI and launcher
 
-- normal command behavior remains unchanged;
-- read command parsing with URL, local PDF, goal, `--agent`, and `--here`;
+- normal non-`read` command behavior remains unchanged;
+- read command parsing with URL, local PDF, goal, `--agent`, `--here`, and
+  `--allow-private-network`;
+- global read options before and after the command token, `--`, and a local
+  filename beginning with `-`;
 - missing goal prompts with source-specific wording;
 - `socratic learn read critically` remains a normal learning goal;
+- `socratic read critically` produces the documented source error rather than
+  silently becoming a normal goal;
 - read-source errors use stable exit codes and no traceback;
 - missing host fails before prompting or downloading;
-- all three adapters receive one unchanged goal/source bootstrap argument.
+- all three adapters receive one source payload inside their documented
+  host-specific bootstrap envelope, while normal-session envelopes remain
+  unchanged.
 
 ### Source validation and extraction
 
@@ -393,8 +579,9 @@ Implementation follows test-driven development. Required tests cover:
 - HTML and PDF section/page indexing;
 - deterministic Unicode normalization and chunk boundaries;
 - image-only, encrypted, malformed, over-page, oversized, and empty sources;
-- URL scheme, credentials, redirects, content type, signatures, deadlines, and
-  size limits;
+- URL scheme, credentials, redacted queries, public-to-private redirects,
+  DNS-rebinding peer validation, disabled environment proxies, content
+  encoding, content type, signatures, timeouts, and size limits;
 - response and error sanitization.
 
 Tests use local byte fixtures and an in-process HTTP server. They do not depend
@@ -416,14 +603,20 @@ on the public internet.
 - focused-task and orchestration-privacy rules;
 - protocol version `1.2.0`;
 - deterministic rebuild and packaged-resource equality;
-- native Windows, Linux, and macOS package smoke tests include `pypdf`.
+- wheel tests install runtime dependencies;
+- native Windows, Linux, and macOS package smoke tests use the frozen
+  executable to ingest a textual PDF and reach a fake host.
 
 ### Semantic behavior
 
 - article scenario fixture schema validation;
+- schema-1 run-record read compatibility and schema-2 hash validation;
+- baseline-v1 and article-reading-v1 suite/report contracts;
 - unchanged evaluator isolation and sanitation guarantees;
 - a manual live run against the approved runtime contract;
-- tracked report findings tied to exact sanitized turns.
+- tracked report findings tied to exact sanitized turns;
+- an infrastructure failure is reported as inconclusive and fails the article
+  release gate.
 
 ## Documentation
 
@@ -450,7 +643,9 @@ improves learning outcomes, or supports every PDF.
 
 This release does not include:
 
-- automatic literature, Consensus, or web search;
+- canonical automatic literature, Consensus, or web search; an explicit
+  learner request may use a host's existing research capability, with the
+  capability and sources disclosed;
 - OCR;
 - JavaScript-rendered page capture;
 - EPUB, DOCX, audio, video, or arbitrary local text files;
@@ -470,7 +665,7 @@ The design is complete when:
 1. A fresh installation can run `socratic read` on a supported URL or local
    textual PDF with Pi, Claude Code, or Antigravity.
 2. Every host receives the same private, indexed source bundle and source-study
-   bootstrap.
+   payload inside its documented host-specific envelope.
 3. The first tutor response confirms an observable source-learning outcome
    without exposing orchestration.
 4. Tutor prompts use one focused learner task and source locations.
@@ -479,6 +674,10 @@ The design is complete when:
 6. Unsupported, unsafe, oversized, and non-extractable sources fail
    actionably without a traceback or partial published bundle.
 7. The complete automated suite, deterministic build, repository validator,
-   and native safety matrix pass.
-8. A live article semantic run completes or records an infrastructure failure
-   without converting that failure into a pedagogy score.
+   dependency-aware wheel smoke tests, frozen-PDF smoke tests, and native
+   safety matrix pass.
+8. A live article semantic run meets the defined score threshold with no
+   critical or infrastructure failure. Infrastructure failures remain
+   inconclusive and block release.
+9. The implementation is delivered through the four ordered milestones, each
+   retaining the verified contracts of the previous milestone.
