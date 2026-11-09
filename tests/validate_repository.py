@@ -1183,10 +1183,7 @@ def validate_release_automation(root: Path) -> list[str]:
             or pyinstaller not in native
             or native.index(suite) > native.index(pyinstaller)
             or "python tests/validate_repository.py" not in native
-            or (
-                "--version" not in native
-                and "run_frozen_read_smoke" not in native
-            )
+            or "run_frozen_read_smoke" not in native
         ):
             errors.append(
                 "Every native release build must test and validate before PyInstaller"
@@ -1301,9 +1298,7 @@ def validate_release_automation(root: Path) -> list[str]:
             or normal.index(install) > normal.index(suite)
         ):
             errors.append("Native safety matrix must install .[build] before tests")
-        if "python -m build --wheel" not in normal or (
-            "run_wheel_read_smoke" not in normal and "--version" not in normal
-        ):
+        if "python -m build --wheel" not in normal or "run_wheel_read_smoke" not in normal:
             errors.append(
                 "Native safety matrix must build and smoke-test an installed wheel"
             )

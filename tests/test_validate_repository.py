@@ -2044,6 +2044,48 @@ class RepositoryValidationTests(unittest.TestCase):
             validate(root),
         )
 
+    def test_native_matrix_rejects_version_only_installed_read_smoke(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        source_root = Path(__file__).resolve().parents[1]
+        normal = root / ".github/workflows/native-python.yml"
+        shutil.copy2(source_root / ".github/workflows/native-python.yml", normal)
+        normal.write_text(
+            normal.read_text(encoding="utf-8")
+            .replace("from tests.read_smoke import run_wheel_read_smoke", "")
+            .replace("run_wheel_read_smoke(root)", 'subprocess.run(["socratic", "--version"], check=True)')
+            + "\nimport subprocess\n",
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+        self.assertTrue(
+            any("smoke-test installed socratic read" in error for error in errors),
+            errors,
+        )
+
+    def test_native_release_job_rejects_version_only_frozen_smoke(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        source_root = Path(__file__).resolve().parents[1]
+        release = root / ".github/workflows/release.yml"
+        shutil.copy2(source_root / ".github/workflows/release.yml", release)
+        release.write_text(
+            release.read_text(encoding="utf-8")
+            .replace("from tests.read_smoke import run_frozen_read_smoke", "")
+            .replace(
+                "run_frozen_read_smoke(destination.resolve(), root)",
+                'subprocess.run([str(destination.resolve()), "--version"], check=True)',
+            ),
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+        self.assertTrue(
+            any("frozen socratic read" in error for error in errors),
+            errors,
+        )
+
     def test_release_workflow_rejects_interpreter_only_pdf_smoke(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)

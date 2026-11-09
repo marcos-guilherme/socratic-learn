@@ -119,6 +119,26 @@ class ReadSmokeLayout:
     wheelhouse: Path
 
 
+@dataclass(frozen=True)
+class PrivateBoundaryContext:
+    isolated_home: Path
+    repository: Path
+    sibling_sentinel: Path
+    sentinel_before: bytes
+    package_artifacts: tuple[Path, ...] = ()
+
+
+def prepare_sibling_sentinel(smoke_root: Path) -> tuple[Path, bytes]:
+    sibling = smoke_root / "untouched-sibling" / "nested" / "sentinel.bin"
+    sibling.parent.mkdir(parents=True, exist_ok=True)
+    sentinel = b"\x00UNCHANGED\xff\n"
+    sibling.write_bytes(sentinel)
+    return sibling, sentinel
+
+
+_LEARNER_BUNDLE_IN_ARCHIVE = re.compile(r"(?:^|/)sources/[0-9a-f]{64}/")
+
+
 def _scripts_directory(environment: Path) -> Path:
     return environment / ("Scripts" if os.name == "nt" else "bin")
 
@@ -378,37 +398,86 @@ def assert_no_repository_mutation(
         raise AssertionError("read smoke must not mutate the source repository")
 
 
-def assert_private_bundle_boundary(
+def _scan_package_artifacts(package_artifacts: tuple[Path, ...]) -> None:
+    import zipfile
+
+    for artifact in package_artifacts:
+        if not artifact.is_file():
+            continue
+        if artifact.suffix.lower() == ".whl":
+            with zipfile.ZipFile(artifact) as archive:
+                learner_bundles = [
+                    name
+                    for name in archive.namelist()
+                    if _LEARNER_BUNDLE_IN_ARCHIVE.search(name)
+                ]
+                if learner_bundles:
+                    raise AssertionError(
+                        "package artifact must not contain private source bundles"
+                    )
+
+
+def assert_private_bundle_boundary(context: PrivateBoundaryContext) -> None:
+    if context.sibling_sentinel.read_bytes() != context.sentinel_before:
+        raise AssertionError("sibling tree must remain untouched")
+    bundle_roots = list(context.isolated_home.rglob("sources"))
+    if not bundle_roots:
+        raise AssertionError("expected a private source bundle under isolated home")
+    home = context.isolated_home.resolve()
+    for bundle_root in bundle_roots:
+        resolved = bundle_root.resolve()
+        if home not in resolved.parents and resolved != home:
+            raise AssertionError(f"bundle outside isolated home: {resolved}")
+    isolated = context.isolated_home.resolve()
+    repository_sources = [
+        path
+        for path in context.repository.rglob(".socratic-learn/workspace/sources")
+        if isolated not in path.resolve().parents
+    ]
+    if repository_sources:
+        raise AssertionError("repository must not gain learner source bundles")
+    _scan_package_artifacts(context.package_artifacts)
+
+
+def boundary_context_for_wheel_layout(
     layout: ReadSmokeLayout,
     *,
     repository: Path,
     sibling_sentinel: Path,
     sentinel_before: bytes,
-) -> None:
-    if sibling_sentinel.read_bytes() != sentinel_before:
-        raise AssertionError("sibling tree must remain untouched")
-    bundle_roots = list(layout.home.rglob("sources"))
-    if not bundle_roots:
-        raise AssertionError("expected a private source bundle under isolated home")
-    for bundle_root in bundle_roots:
-        resolved = bundle_root.resolve()
-        home = layout.home.resolve()
-        if home not in resolved.parents and resolved != home:
-            raise AssertionError(f"bundle outside isolated home: {resolved}")
-    repository_sources = list(repository.rglob(".socratic-learn/workspace/sources"))
-    if repository_sources:
-        raise AssertionError("repository must not gain learner source bundles")
-    for path in layout.wheelhouse.glob("*.whl"):
-        import zipfile
+) -> PrivateBoundaryContext:
+    wheels = tuple(layout.wheelhouse.glob("*.whl"))
+    return PrivateBoundaryContext(
+        isolated_home=layout.home,
+        repository=repository,
+        sibling_sentinel=sibling_sentinel,
+        sentinel_before=sentinel_before,
+        package_artifacts=wheels,
+    )
 
-        with zipfile.ZipFile(path) as archive:
-            learner_bundles = [
-                name
-                for name in archive.namelist()
-                if re.search(r"(?:^|/)sources/[0-9a-f]{64}/", name)
-            ]
-            if learner_bundles:
-                raise AssertionError("wheel must not package private source bundles")
+
+def boundary_context_for_frozen_run(
+    *,
+    home: Path,
+    repository: Path,
+    sibling_sentinel: Path,
+    sentinel_before: bytes,
+    frozen_binary: Path,
+) -> PrivateBoundaryContext:
+    return PrivateBoundaryContext(
+        isolated_home=home,
+        repository=repository,
+        sibling_sentinel=sibling_sentinel,
+        sentinel_before=sentinel_before,
+        package_artifacts=(frozen_binary,),
+    )
+
+
+def enforce_repository_clean_after_smoke(
+    repository: Path,
+    before: tuple[bytes, bytes, bytes],
+) -> None:
+    assert_no_repository_mutation(repository, before)
 
 
 def run_wheel_read_smoke(
@@ -429,10 +498,7 @@ def run_wheel_read_smoke(
         pdf.write_bytes(fixture.read_bytes())
         layout = prepare_installed_read_smoke(root, smoke_root)
         fake_bin = smoke_root / "fake-bin"
-        sibling = smoke_root / "untouched-sibling" / "nested" / "sentinel.bin"
-        sibling.parent.mkdir(parents=True)
-        sentinel = b"\x00UNCHANGED\xff\n"
-        sibling.write_bytes(sentinel)
+        sibling, sentinel = prepare_sibling_sentinel(smoke_root)
         before_repo = repository_state(root)
         result = run_installed_read(
             layout,
@@ -454,12 +520,14 @@ def run_wheel_read_smoke(
                 f"expected child exit 17, got {result.returncode}: "
                 f"{result.stdout}\n{result.stderr}"
             )
-        assert_no_repository_mutation(root, before_repo)
+        enforce_repository_clean_after_smoke(root, before_repo)
         assert_private_bundle_boundary(
-            layout,
-            repository=root,
-            sibling_sentinel=sibling,
-            sentinel_before=sentinel,
+            boundary_context_for_wheel_layout(
+                layout,
+                repository=root,
+                sibling_sentinel=sibling,
+                sentinel_before=sentinel,
+            )
         )
 
 
@@ -485,6 +553,8 @@ def run_frozen_read_smoke(
         record = smoke_root / "read-smoke-record.json"
         home = smoke_root / "home"
         home.mkdir()
+        sibling, sentinel = prepare_sibling_sentinel(smoke_root)
+        before_repo = repository_state(root)
         _, fake_python, _ = create_virtualenv(smoke_root / "fake-venv")
         install_fake_agents(
             python=fake_python,
@@ -529,6 +599,16 @@ def run_frozen_read_smoke(
                 f"expected child exit 17, got {result.returncode}: "
                 f"{result.stdout}\n{result.stderr}"
             )
+        enforce_repository_clean_after_smoke(root, before_repo)
+        assert_private_bundle_boundary(
+            boundary_context_for_frozen_run(
+                home=home,
+                repository=root,
+                sibling_sentinel=sibling,
+                sentinel_before=sentinel,
+                frozen_binary=binary.resolve(),
+            )
+        )
 
 
 if __name__ == "__main__":

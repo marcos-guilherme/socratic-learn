@@ -109,6 +109,7 @@ jobs:
           import os
           import pathlib
           import shutil
+          import subprocess
           import sys
 
           root = pathlib.Path.cwd()
@@ -126,6 +127,19 @@ jobs:
           destination.parent.mkdir()
           shutil.move(source, destination)
           run_frozen_read_smoke(destination.resolve(), root)
+          subprocess.run(["git", "diff", "--check"], cwd=root, check=True)
+          subprocess.run(["git", "diff", "--exit-code"], cwd=root, check=True)
+          status = subprocess.run(
+              ["git", "status", "--porcelain", "--untracked-files=all"],
+              cwd=root,
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout
+          if status.strip():
+              raise SystemExit(
+                  f"repository is dirty after frozen read smoke:\n{status}"
+              )
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.platform }}

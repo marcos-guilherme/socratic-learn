@@ -189,6 +189,7 @@ class PackagingTests(unittest.TestCase):
             AgentName,
             assert_no_repository_mutation,
             assert_private_bundle_boundary,
+            boundary_context_for_wheel_layout,
             assert_read_receipt_contract,
             load_receipt,
             prepare_installed_read_smoke,
@@ -240,10 +241,12 @@ class PackagingTests(unittest.TestCase):
 
             assert_no_repository_mutation(repository, before_launch)
             assert_private_bundle_boundary(
-                layout,
-                repository=repository,
-                sibling_sentinel=sibling,
-                sentinel_before=sentinel,
+                boundary_context_for_wheel_layout(
+                    layout,
+                    repository=repository,
+                    sibling_sentinel=sibling,
+                    sentinel_before=sentinel,
+                )
             )
 
         self.assertEqual(before_repository, repository_state(repository))
