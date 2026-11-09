@@ -178,6 +178,30 @@ class HtmlTitleTests(unittest.TestCase):
     self.assertEqual("Hint From Caller", document.title)
 
 
+class HtmlHeadingSectionTests(unittest.TestCase):
+  def test_groups_blocks_under_nearest_headings(self) -> None:
+    html = _pad(
+      "<html><head><title>Doc Title</title></head><body><article>"
+      "<p>Intro text before any heading appears.</p>"
+      "<h2>First Heading</h2><p>First section body with enough words.</p>"
+      "<h2>Second Heading</h2><p>Second section body with enough words.</p>"
+      "</article></body></html>"
+    )
+    document = extract_html(html.encode("utf-8"), content_type="text/html", title_hint="fallback")
+    self.assertEqual("Doc Title", document.title)
+    self.assertEqual(3, len(document.sections))
+    self.assertEqual("Doc Title", document.sections[0].label)
+    self.assertIn("Intro text", document.sections[0].text)
+    self.assertEqual("First Heading", document.sections[1].label)
+    self.assertEqual("Second Heading", document.sections[2].label)
+
+  def test_committed_fixture_uses_heading_label(self) -> None:
+    raw = (FIXTURES / "article.html").read_bytes()
+    document = extract_html(raw, content_type="text/html", title_hint="hint")
+    self.assertGreaterEqual(len(document.sections), 1)
+    self.assertEqual("Evidence Overview", document.sections[0].label)
+
+
 class HtmlRejectionTests(unittest.TestCase):
   def test_rejects_under_two_hundred_characters_with_actionable_error(self) -> None:
     html = "<html><body><article><p>Too short.</p></article></body></html>"

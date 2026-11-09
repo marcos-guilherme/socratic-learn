@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
+import subprocess
 import tempfile
 import unicodedata
 import unittest
@@ -227,6 +229,125 @@ class BundleLayoutTests(unittest.TestCase):
             json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
             encoding="utf-8",
         )
+        with self.assertRaises(IntegrityError):
+            validate_source_bundle(bundle_path, bundle_path.name)
+
+    def test_accepts_legitimate_title_with_token_substring(self) -> None:
+        raw = build_text_pdf((_meaningful_page(), _meaningful_page("More")))
+        source_id = source_id_for_local(raw)
+        bundle_root = self.root / "title-token"
+        bundle_root.mkdir()
+        document = ExtractedDocument(
+            title="Token Economy Primer",
+            media_type="application/pdf",
+            sections=(
+                ExtractedSection(label="Page 1", text=_meaningful_page()),
+                ExtractedSection(label="Page 2", text=_meaningful_page("More")),
+            ),
+        )
+        build_bundle_tree(
+            bundle_root,
+            raw=raw,
+            document=document,
+            source_id=source_id,
+            display_origin="token-primer.pdf",
+            extracted_at=datetime(2026, 11, 8, 12, 0, tzinfo=timezone.utc),
+        )
+        metadata = validate_source_bundle(bundle_root, source_id)
+        self.assertEqual("Token Economy Primer", metadata.title)
+
+    def test_rejects_tampered_normalized_character_count(self) -> None:
+        bundle_path = self._write_minimal_bundle()
+        payload = json.loads((bundle_path / "metadata.json").read_text("utf-8"))
+        payload["normalized_characters"] = payload["normalized_characters"] + 10
+        (bundle_path / "metadata.json").write_text(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaises(IntegrityError) as context:
+            validate_source_bundle(bundle_path, bundle_path.name)
+        self.assertIn("normalized_characters", str(context.exception))
+
+    def test_rejects_tampered_section_count(self) -> None:
+        bundle_path = self._write_minimal_bundle()
+        payload = json.loads((bundle_path / "metadata.json").read_text("utf-8"))
+        payload["section_count"] = payload["section_count"] + 1
+        (bundle_path / "metadata.json").write_text(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaises(IntegrityError) as context:
+            validate_source_bundle(bundle_path, bundle_path.name)
+        self.assertIn("section_count", str(context.exception))
+
+    def test_rejects_index_sequence_not_starting_at_one(self) -> None:
+        bundle_path = self._write_minimal_bundle()
+        index_path = bundle_path / "index.md"
+        index_text = index_path.read_text("utf-8")
+        index_path.write_text(
+            index_text.replace("Page 1 / 1", "Page 1 / 2", 1),
+            encoding="utf-8",
+        )
+        with self.assertRaises(IntegrityError):
+            validate_source_bundle(bundle_path, bundle_path.name)
+
+    def test_rejects_index_sequence_gap_within_section(self) -> None:
+        raw = build_text_pdf((_meaningful_page("One"),))
+        long_text = _meaningful_page("Chunky") + (" overflow " * 2500)
+        source_id = source_id_for_local(raw)
+        bundle_path = self.root / "sequence-gap" / source_id
+        bundle_path.mkdir(parents=True)
+        document = ExtractedDocument(
+            title="chunky.pdf",
+            media_type="application/pdf",
+            sections=(ExtractedSection(label="Page 1", text=long_text),),
+        )
+        build_bundle_tree(
+            bundle_path,
+            raw=raw,
+            document=document,
+            source_id=source_id,
+            display_origin="chunky.pdf",
+            extracted_at=datetime(2026, 11, 8, 12, 0, tzinfo=timezone.utc),
+        )
+        index = (bundle_path / "index.md").read_text("utf-8")
+        (bundle_path / "index.md").write_text(
+            index.replace("Page 1 / 2", "Page 1 / 4", 1),
+            encoding="utf-8",
+        )
+        with self.assertRaises(IntegrityError) as context:
+            validate_source_bundle(bundle_path, source_id)
+        self.assertIn("contiguous", str(context.exception))
+
+    @unittest.skipUnless(os.name != "nt", "POSIX symlink regression")
+    def test_rejects_symlinked_chunk_file(self) -> None:
+        bundle_path = self._write_minimal_bundle()
+        real = bundle_path / "sections" / "0001.txt"
+        payload = real.read_text("utf-8")
+        real.unlink()
+        decoy = bundle_path / "sections" / "decoy.txt"
+        decoy.write_text(payload, encoding="utf-8")
+        (bundle_path / "sections" / "0001.txt").symlink_to(decoy)
+        with self.assertRaises(IntegrityError):
+            validate_source_bundle(bundle_path, bundle_path.name)
+
+    @unittest.skipUnless(os.name == "nt", "Windows reparse-point regression")
+    def test_rejects_reparse_backed_sections_directory(self) -> None:
+        bundle_path = self._write_minimal_bundle()
+        external = self.root / "external-sections"
+        external.mkdir()
+        for chunk in (bundle_path / "sections").iterdir():
+            shutil.copy2(chunk, external / chunk.name)
+        shutil.rmtree(bundle_path / "sections")
+        junction = bundle_path / "sections"
+        junction_result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(junction), str(external)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if junction_result.returncode != 0:
+            self.skipTest("junction creation unavailable")
         with self.assertRaises(IntegrityError):
             validate_source_bundle(bundle_path, bundle_path.name)
 

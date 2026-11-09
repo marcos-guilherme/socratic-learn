@@ -215,6 +215,112 @@ class IngestFailureTests(unittest.TestCase):
                 )
         self.assertTrue(any((self.records / "sources").glob(".staging-*")))
 
+    def test_preserves_staging_when_cleanup_identity_changes(self) -> None:
+        from socratic_learn.safe_fs import IdentityMismatchError
+
+        pdf_path = self.records / "paper.pdf"
+        pdf_path.write_bytes(build_text_pdf((_meaningful_page(), _meaningful_page("More"))))
+        with mock.patch(
+            "socratic_learn.sources.ingest.publish_tracked_directory",
+            side_effect=OSError("disk full"),
+        ), mock.patch(
+            "socratic_learn.sources.ingest.remove_tracked_tree",
+            side_effect=IdentityMismatchError("staging changed"),
+        ):
+            with self.assertRaises(IntegrityError) as context:
+                ingest_source(
+                    self.records,
+                    SourceRequest(str(pdf_path), "local_pdf"),
+                )
+        self.assertIn("staging", str(context.exception).lower())
+        self.assertTrue(any((self.records / "sources").glob(".staging-*")))
+
+
+class LocalPdfIdentityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        self.records = Path(self._temporary.name) / "records"
+        self.records.mkdir()
+
+    def tearDown(self) -> None:
+        self._temporary.cleanup()
+
+    @unittest.skipUnless(os.name != "nt", "POSIX symlink identity regression")
+    def test_rejects_symlink_path_without_following(self) -> None:
+        target = self.records / "real.pdf"
+        target.write_bytes(build_text_pdf((_meaningful_page(), _meaningful_page("More"))))
+        link = self.records / "linked.pdf"
+        link.symlink_to(target)
+        with self.assertRaises(SourceError):
+            ingest_source(self.records, SourceRequest(str(link), "local_pdf"))
+
+    @unittest.skipUnless(os.name == "nt", "Windows reparse-point regression")
+    def test_rejects_reparse_backed_local_pdf(self) -> None:
+        vault = self.records / "vault"
+        vault.mkdir()
+        pdf_path = vault / "paper.pdf"
+        pdf_path.write_bytes(build_text_pdf((_meaningful_page(), _meaningful_page("More"))))
+        junction = self.records / "linked"
+        import _winapi
+
+        try:
+            _winapi.CreateJunction(str(vault), str(junction))
+        except OSError as error:
+            self.skipTest(f"junction creation unavailable: {error}")
+        with self.assertRaises(SourceError):
+            ingest_source(self.records, SourceRequest(str(junction / "paper.pdf"), "local_pdf"))
+
+    def test_rejects_identity_change_before_read(self) -> None:
+        from socratic_learn.safe_fs import PathIdentity
+        from socratic_learn.sources import ingest as ingest_module
+
+        pdf_path = self.records / "paper.pdf"
+        raw = build_text_pdf((_meaningful_page(), _meaningful_page("More")))
+        pdf_path.write_bytes(raw)
+        bogus = PathIdentity(0, 1)
+
+        with mock.patch.object(ingest_module, "status_identity", return_value=bogus):
+            with self.assertRaises(SourceError) as context:
+                ingest_source(self.records, SourceRequest(str(pdf_path), "local_pdf"))
+        self.assertIn("changed", str(context.exception).lower())
+
+
+class HtmlBundleHeadingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        self.records = Path(self._temporary.name) / "records"
+        self.records.mkdir()
+
+    def tearDown(self) -> None:
+        self._temporary.cleanup()
+
+    def test_url_bundle_uses_heading_labels_and_chunk_sequences(self) -> None:
+        html = _pad_html(
+            "<html><head><title>URL Article</title></head><body><article>"
+            "<p>Lead paragraph before headings for the title section.</p>"
+            "<h2>Section Alpha</h2><p>Alpha body with enough words for extraction.</p>"
+            "<h2>Section Beta</h2><p>Beta body with enough words for extraction.</p>"
+            "</article></body></html>"
+        )
+        raw = html.encode("utf-8")
+        fetched = FetchedBytes(
+            raw=raw,
+            canonical_url="http://example.com/article",
+            display_origin="http://example.com/article",
+            media_type="text/html",
+        )
+        with mock.patch("socratic_learn.sources.ingest.fetch_url", return_value=fetched):
+            result = ingest_source(
+                self.records,
+                SourceRequest("http://example.com/article", "url"),
+            )
+        index = (result.bundle_path / "index.md").read_text("utf-8")
+        self.assertIn("URL Article / 1", index)
+        self.assertIn("Section Alpha / 1", index)
+        self.assertIn("Section Beta / 1", index)
+        metadata = validate_source_bundle(result.bundle_path, result.source_id)
+        self.assertGreaterEqual(metadata.section_count, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

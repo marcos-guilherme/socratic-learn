@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import secrets
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,14 +12,17 @@ from socratic_learn import __version__
 from socratic_learn.errors import FilesystemError, IntegrityError, SourceError
 from socratic_learn.safe_fs import (
     IdentityMismatchError,
+    PathIdentity,
     PostMutationIdentityError,
     TrackedDirectory,
     identity_bound_mkdir,
     publish_tracked_directory,
     remove_tracked_tree,
     require_trusted_regular_file,
+    status_identity,
     track_directory,
 )
+from socratic_learn.safe_fs import _is_reparse_or_symlink
 from socratic_learn.sources.bundle import build_bundle_tree, validate_source_bundle
 from socratic_learn.sources.html import extract_html
 from socratic_learn.sources.http import MAX_RAW_BYTES, fetch_url
@@ -131,31 +136,33 @@ def _cleanup_staging(staging: TrackedDirectory) -> None:
         ) from error
 
 
+def _lexical_absolute_path(origin: str) -> Path:
+    path = Path(origin)
+    if not path.is_absolute():
+        return path.absolute()
+    return path
+
+
 def _ingest_local_pdf(request: SourceRequest, records_root: Path) -> tuple[bytes, object, str, str]:
-    path = Path(request.origin)
+    path = _lexical_absolute_path(request.origin)
+    trusted_root = Path(path.anchor)
     try:
-        resolved = path.resolve()
-    except OSError as error:
-        raise SourceError(
-            "local PDF could not be resolved",
-            remediation="Provide a readable local PDF path.",
-        ) from error
-    trusted_root = Path(resolved.anchor)
-    try:
-        require_trusted_regular_file(resolved, root=trusted_root)
+        file_identity = require_trusted_regular_file(path, root=trusted_root)
     except IdentityMismatchError as error:
         raise SourceError(
             "local PDF is not a regular file",
             remediation="Provide a readable local PDF file, not a link or directory.",
         ) from error
     try:
-        raw = _read_bounded_file(resolved)
+        raw = _read_bounded_local_file(path, file_identity)
+    except SourceError:
+        raise
     except OSError as error:
         raise FilesystemError(
             "local PDF could not be read",
             remediation="Check file permissions and retry.",
         ) from error
-    filename = resolved.name
+    filename = path.name
     if not filename:
         raise SourceError(
             "local PDF filename is missing",
@@ -202,11 +209,26 @@ def _title_from_display_origin(display_origin: str) -> str:
     return candidate or display_origin
 
 
-def _read_bounded_file(path: Path) -> bytes:
-    data = bytearray()
-    with path.open("rb") as handle:
+def _read_bounded_local_file(path: Path, expected_identity: PathIdentity) -> bytes:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags)
+    try:
+        status = os.fstat(descriptor)
+        if _is_reparse_or_symlink(status) or not stat.S_ISREG(status.st_mode):
+            raise SourceError(
+                "local PDF is not a regular file",
+                remediation="Provide a readable local PDF file, not a link or directory.",
+            )
+        if status_identity(status) != expected_identity:
+            raise SourceError(
+                "local PDF changed before it could be read",
+                remediation="Retry with a stable local PDF path.",
+            )
+        data = bytearray()
         while True:
-            block = handle.read(65536)
+            block = os.read(descriptor, 65536)
             if not block:
                 break
             data.extend(block)
@@ -215,4 +237,6 @@ def _read_bounded_file(path: Path) -> bytes:
                     f"source exceeds {MAX_RAW_BYTES} bytes",
                     remediation="Use a smaller PDF or split the material.",
                 )
-    return bytes(data)
+        return bytes(data)
+    finally:
+        os.close(descriptor)

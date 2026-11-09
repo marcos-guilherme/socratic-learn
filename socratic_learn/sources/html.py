@@ -11,6 +11,7 @@ from socratic_learn.sources.normalize import MIN_NON_WHITESPACE_CODE_POINTS, nor
 
 _MEDIA_TYPE = "text/html"
 _CANDIDATE_TAGS = ("article", "main", "body")
+_HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 _EXCLUDED_TAGS = frozenset(
     {"script", "style", "noscript", "svg", "nav", "header", "footer", "form", "aside"}
 )
@@ -28,6 +29,8 @@ _META_HTTP_CHARSET_RE = re.compile(
     re.IGNORECASE,
 )
 
+_TITLE_SECTION = ""
+
 
 def extract_html(raw: bytes, *, content_type: str | None, title_hint: str) -> ExtractedDocument:
     """Extract reading-order text from static HTML."""
@@ -36,7 +39,8 @@ def extract_html(raw: bytes, *, content_type: str | None, title_hint: str) -> Ex
     parser.feed(html)
     parser.close()
 
-    selected = _select_candidate(parser.candidate_blocks)
+    title = _choose_title(parser.title, title_hint)
+    selected = _select_candidate_sections(parser.candidate_sections, title)
     if selected is None:
         raise SourceError(
             f"HTML has fewer than {MIN_NON_WHITESPACE_CODE_POINTS} extractable characters; "
@@ -44,22 +48,10 @@ def extract_html(raw: bytes, *, content_type: str | None, title_hint: str) -> Ex
             remediation="Save or export static HTML, or provide a PDF.",
         )
 
-    try:
-        normalized = normalize_text(selected, require_meaningful=True)
-    except SourceError as error:
-        if "fewer than" in str(error):
-            raise SourceError(
-                f"HTML has fewer than {MIN_NON_WHITESPACE_CODE_POINTS} extractable characters; "
-                "client-rendered pages are not supported",
-                remediation="Save or export static HTML, or provide a PDF.",
-            ) from None
-        raise
-
-    title = _choose_title(parser.title, title_hint)
     return ExtractedDocument(
         title=title,
         media_type=_MEDIA_TYPE,
-        sections=(ExtractedSection(label=title, text=normalized),),
+        sections=selected,
     )
 
 
@@ -107,16 +99,49 @@ def _try_decode(raw: bytes, charset: str) -> str | None:
         return None
 
 
-def _select_candidate(candidate_blocks: dict[str, list[str]]) -> str | None:
+def _select_candidate_sections(
+    candidate_sections: dict[str, list[tuple[str, list[str]]]],
+    title: str,
+) -> tuple[ExtractedSection, ...] | None:
     for tag in _CANDIDATE_TAGS:
-        blocks = candidate_blocks.get(tag, [])
-        joined = "\n\n".join(block for block in blocks if block.strip())
-        if not joined.strip():
+        sections = candidate_sections.get(tag, [])
+        if not sections:
             continue
+        joined = "\n\n".join("\n\n".join(parts) for _, parts in sections)
         non_whitespace = sum(1 for character in joined if not character.isspace())
-        if non_whitespace >= MIN_NON_WHITESPACE_CODE_POINTS:
-            return joined
+        if non_whitespace < MIN_NON_WHITESPACE_CODE_POINTS:
+            continue
+        try:
+            return _normalize_sections(sections, title)
+        except SourceError as error:
+            if "fewer than" in str(error):
+                raise SourceError(
+                    f"HTML has fewer than {MIN_NON_WHITESPACE_CODE_POINTS} extractable characters; "
+                    "client-rendered pages are not supported",
+                    remediation="Save or export static HTML, or provide a PDF.",
+                ) from None
+            raise
     return None
+
+
+def _normalize_sections(
+    sections: list[tuple[str, list[str]]],
+    title: str,
+) -> tuple[ExtractedSection, ...]:
+    normalized: list[ExtractedSection] = []
+    for label, parts in sections:
+        section_label = title if label == _TITLE_SECTION else label
+        text = normalize_text("\n\n".join(parts), require_meaningful=False)
+        normalized.append(ExtractedSection(label=section_label, text=text))
+    non_whitespace = sum(
+        sum(1 for character in section.text if not character.isspace()) for section in normalized
+    )
+    if non_whitespace < MIN_NON_WHITESPACE_CODE_POINTS:
+        raise SourceError(
+            f"HTML has fewer than {MIN_NON_WHITESPACE_CODE_POINTS} extractable characters",
+            remediation="Save or export static HTML, or provide a PDF.",
+        )
+    return tuple(normalized)
 
 
 def _choose_title(title: str | None, title_hint: str) -> str:
@@ -130,14 +155,51 @@ def _is_meaningful_title(title: str) -> bool:
     return len(collapsed) >= 3
 
 
+class _SectionAccumulator:
+    def __init__(self) -> None:
+        self.sections: list[tuple[str, list[str]]] = []
+        self._current_label: str | None = None
+        self._current_parts: list[str] = []
+
+    def start_heading(self, heading_text: str) -> None:
+        self._flush()
+        normalized_heading = normalize_text(heading_text, require_meaningful=False)
+        self._current_label = normalized_heading
+        self._current_parts = [normalized_heading]
+
+    def add_block(self, text: str) -> None:
+        if self._current_label is None:
+            self._current_label = _TITLE_SECTION
+            self._current_parts = [text]
+            return
+        self._current_parts.append(text)
+
+    def _flush(self) -> None:
+        if self._current_label is None or not self._current_parts:
+            return
+        self.sections.append((self._current_label, list(self._current_parts)))
+        self._current_label = None
+        self._current_parts = []
+
+    def finish(self) -> list[tuple[str, list[str]]]:
+        self._flush()
+        return self.sections
+
+
 class _HtmlTextExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.candidate_blocks: dict[str, list[str]] = {tag: [] for tag in _CANDIDATE_TAGS}
+        self.candidate_sections: dict[str, list[tuple[str, list[str]]]] = {
+            tag: [] for tag in _CANDIDATE_TAGS
+        }
+        self._accumulators: dict[str, _SectionAccumulator] = {
+            tag: _SectionAccumulator() for tag in _CANDIDATE_TAGS
+        }
         self.title: str | None = None
         self._exclude_depth = 0
         self._candidate_depth = {tag: 0 for tag in _CANDIDATE_TAGS}
         self._open_blocks: dict[str, list[str]] = {tag: [] for tag in _CANDIDATE_TAGS}
+        self._open_block_tags: dict[str, str | None] = {tag: None for tag in _CANDIDATE_TAGS}
         self._in_title = False
         self._title_parts: list[str] = []
 
@@ -159,6 +221,7 @@ class _HtmlTextExtractor(HTMLParser):
             self._commit_open_blocks()
             for target in self._capture_targets():
                 self._open_blocks[target] = []
+                self._open_block_tags[target] = lowered
 
     def handle_endtag(self, tag: str) -> None:
         lowered = tag.lower()
@@ -184,12 +247,16 @@ class _HtmlTextExtractor(HTMLParser):
         if self._exclude_depth:
             return
         for target in self._capture_targets():
+            if self._open_block_tags[target] is None:
+                continue
             if not self._open_blocks[target]:
                 self._open_blocks[target] = [""]
             self._open_blocks[target][-1] += data
 
     def close(self) -> None:
         self._commit_open_blocks()
+        for tag in _CANDIDATE_TAGS:
+            self.candidate_sections[tag] = self._accumulators[tag].finish()
         super().close()
 
     def _capture_targets(self) -> tuple[str, ...]:
@@ -204,9 +271,18 @@ class _HtmlTextExtractor(HTMLParser):
     def _commit_open_blocks(self) -> None:
         for target in self._capture_targets():
             parts = self._open_blocks[target]
+            block_tag = self._open_block_tags[target]
             if not parts:
                 continue
             text = normalize_text("".join(parts), require_meaningful=False)
-            if text:
-                self.candidate_blocks[target].append(text)
+            if not text:
+                self._open_blocks[target] = []
+                self._open_block_tags[target] = None
+                continue
+            accumulator = self._accumulators[target]
+            if block_tag in _HEADING_TAGS:
+                accumulator.start_heading(text)
+            else:
+                accumulator.add_block(text)
             self._open_blocks[target] = []
+            self._open_block_tags[target] = None

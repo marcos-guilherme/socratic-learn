@@ -4,12 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import stat
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
 from socratic_learn.errors import IntegrityError
+from socratic_learn.safe_fs import (
+    IdentityMismatchError,
+    TrackedDirectory,
+    TrackedEntry,
+    status_identity,
+    track_directory,
+)
+from socratic_learn.safe_fs import _is_reparse_or_symlink, _verify_tracked_tree
 from socratic_learn.sources.model import BundleMetadata, ExtractedDocument
 from socratic_learn.sources.normalize import DEFAULT_SECTION_CHUNK_LIMIT, chunk_section
 
@@ -38,6 +48,8 @@ _ALLOWED_MEDIA_TYPES = frozenset(
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CHUNK_NAME_RE = re.compile(r"^(\d{4})\.txt$")
 _INDEX_LINE_RE = re.compile(r"^- (.+): sections/(\d{4})\.txt$")
+
+
 def canonical_metadata_bytes(metadata: BundleMetadata) -> bytes:
     if metadata.extracted_at.tzinfo is None:
         raise ValueError("extracted_at must be timezone-aware")
@@ -129,65 +141,148 @@ def validate_source_bundle(path: Path, expected_id: str) -> BundleMetadata:
     if not path.is_dir():
         raise _bundle_invalid("bundle path is not a directory")
 
-    children = sorted(path.iterdir(), key=lambda item: item.name)
-    names = {child.name for child in children}
+    try:
+        tracked = track_directory(path)
+    except IdentityMismatchError as error:
+        raise _bundle_invalid("bundle contains a link or reparse point") from error
+    _verify_tracked_tree(tracked)
+    entries = {entry.relative: entry for entry in tracked.entries}
     required = {"metadata.json", "index.md", "original.bin", "sections"}
-    if names != required:
+    top_level = {relative.split("/", 1)[0] for relative in entries}
+    if top_level != required:
         raise _bundle_invalid("bundle layout is incomplete or contains unexpected entries")
 
-    for child in children:
-        status = child.lstat() if hasattr(child, "lstat") else child.stat()
-        if child.is_symlink():
-            raise _bundle_invalid("bundle contains a symbolic link")
-        if child.name == "sections":
-            if not child.is_dir():
-                raise _bundle_invalid("sections entry is not a directory")
-            continue
-        if not child.is_file():
-            raise _bundle_invalid("bundle contains a non-regular entry")
-
-    metadata = _load_metadata(path / "metadata.json", expected_id)
-    raw = (path / "original.bin").read_bytes()
+    metadata = _load_metadata(path, "metadata.json", entries["metadata.json"], expected_id)
+    _verify_tracked_tree(tracked)
+    raw = _read_tracked_regular_file(path, "original.bin", entries["original.bin"])
     if hashlib.sha256(raw).hexdigest() != metadata.raw_sha256:
         raise _bundle_invalid("original.bin does not match metadata raw_sha256")
 
-    _validate_sections(path / "sections", metadata)
-    _validate_index(path / "index.md", metadata)
+    chunk_texts = _validate_sections(path, "sections", entries["sections"], tracked)
+    _verify_tracked_tree(tracked)
+    derived_counts = _validate_index(
+        path,
+        "index.md",
+        entries["index.md"],
+        metadata,
+        chunk_texts,
+    )
+    _verify_tracked_tree(tracked)
+    if derived_counts.section_count != metadata.section_count:
+        raise _bundle_invalid("metadata section_count does not match the index")
+    if derived_counts.normalized_characters != metadata.normalized_characters:
+        raise _bundle_invalid(
+            "metadata normalized_characters does not match the chunk contents"
+        )
     return metadata
 
 
-def _validate_sections(sections_dir: Path, metadata: BundleMetadata) -> None:
-    chunk_paths = sorted(sections_dir.iterdir(), key=lambda item: item.name)
-    if not chunk_paths:
+def _read_tracked_regular_file(
+    root: Path,
+    relative: str,
+    expected: TrackedEntry,
+) -> bytes:
+    target = root / relative
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(target, flags)
+    try:
+        status = os.fstat(descriptor)
+        if _is_reparse_or_symlink(status) or not stat.S_ISREG(status.st_mode):
+            raise _bundle_invalid("bundle entry is not a regular file")
+        if status_identity(status) != expected.identity:
+            raise _bundle_invalid("bundle entry identity changed during validation")
+        remaining = status.st_size
+        chunks: list[bytes] = []
+        while remaining > 0:
+            block = os.read(descriptor, min(remaining, 65536))
+            if not block:
+                break
+            chunks.append(block)
+            remaining -= len(block)
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _read_tracked_utf8_text(
+    root: Path,
+    relative: str,
+    expected: TrackedEntry,
+) -> str:
+    data = _read_tracked_regular_file(root, relative, expected)
+    if b"\r" in data:
+        raise _bundle_invalid(f"{relative} contains CR bytes")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise _bundle_invalid(f"{relative} is not valid UTF-8") from error
+
+
+def _validate_sections(
+    bundle_root: Path,
+    relative: str,
+    sections_entry: TrackedEntry,
+    tracked: TrackedDirectory,
+) -> dict[str, str]:
+    if not sections_entry.directory:
+        raise _bundle_invalid("sections entry is not a directory")
+    chunk_entries = [
+        entry
+        for entry in tracked.entries
+        if entry.relative.startswith("sections/") and not entry.directory
+    ]
+    chunk_entries.sort(key=lambda entry: entry.relative)
+    if not chunk_entries:
         raise _bundle_invalid("bundle has no chunk files")
+
+    texts: dict[str, str] = {}
     expected_number = 1
-    for chunk_path in chunk_paths:
-        if chunk_path.is_symlink() or not chunk_path.is_file():
-            raise _bundle_invalid("chunk path is not a regular file")
-        match = _CHUNK_NAME_RE.match(chunk_path.name)
+    for entry in chunk_entries:
+        chunk_name = Path(entry.relative).name
+        match = _CHUNK_NAME_RE.match(chunk_name)
         if match is None:
             raise _bundle_invalid("chunk filename is malformed")
         number = int(match.group(1))
         if number != expected_number:
             raise _bundle_invalid("chunk numbering has gaps or is out of order")
         expected_number += 1
-        data = chunk_path.read_bytes()
-        if b"\r" in data:
-            raise _bundle_invalid("chunk file contains CR bytes")
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError as error:
-            raise _bundle_invalid("chunk file is not valid UTF-8") from error
+        text = _read_tracked_utf8_text(bundle_root, entry.relative, entry)
         if text != unicodedata.normalize("NFC", text):
             raise _bundle_invalid("chunk file is not Unicode NFC")
         if len(text) > DEFAULT_SECTION_CHUNK_LIMIT:
             raise _bundle_invalid("chunk file exceeds the code-point limit")
+        texts[chunk_name] = text
+    return texts
 
 
-def _validate_index(index_path: Path, metadata: BundleMetadata) -> None:
-    text = index_path.read_text(encoding="utf-8")
-    if "\r" in text:
-        raise _bundle_invalid("index file contains CR bytes")
+def _parse_index_label(label_body: str) -> tuple[str, int]:
+    if " / " not in label_body:
+        raise _bundle_invalid("index chunk label is missing a sequence separator")
+    source_label, sequence_text = label_body.rsplit(" / ", 1)
+    if not sequence_text.isdigit():
+        raise _bundle_invalid("index chunk sequence is not numeric")
+    sequence = int(sequence_text)
+    if sequence < 1:
+        raise _bundle_invalid("index chunk sequence must start at one")
+    return source_label, sequence
+
+
+class _DerivedIndexCounts:
+    def __init__(self, *, section_count: int, normalized_characters: int) -> None:
+        self.section_count = section_count
+        self.normalized_characters = normalized_characters
+
+
+def _validate_index(
+    bundle_root: Path,
+    relative: str,
+    index_entry: TrackedEntry,
+    metadata: BundleMetadata,
+    chunk_texts: dict[str, str],
+) -> _DerivedIndexCounts:
+    text = _read_tracked_utf8_text(bundle_root, relative, index_entry)
     lines = text.split("\n")
     if not lines or not lines[0].startswith("# "):
         raise _bundle_invalid("index title is missing")
@@ -198,29 +293,51 @@ def _validate_index(index_path: Path, metadata: BundleMetadata) -> None:
         raise _bundle_invalid("index display_origin does not match metadata")
     if f"media_type: {metadata.media_type}" not in lines:
         raise _bundle_invalid("index media_type does not match metadata")
+
     chunk_lines = [line for line in lines if line.startswith("- ")]
-    section_dir = index_path.parent / "sections"
-    chunk_files = sorted(path.name for path in section_dir.iterdir())
-    if len(chunk_lines) != len(chunk_files):
+    chunk_names = sorted(chunk_texts)
+    if len(chunk_lines) != len(chunk_names):
         raise _bundle_invalid("index chunk list does not match sections tree")
-    observed_paths: list[str] = []
-    for line in chunk_lines:
+
+    normalized_characters = 0
+    section_count = 0
+    current_label: str | None = None
+    expected_sequence = 0
+
+    for line, chunk_name in zip(chunk_lines, chunk_names, strict=True):
         match = _INDEX_LINE_RE.match(line)
         if match is None:
             raise _bundle_invalid("index chunk entry is malformed")
-        observed_paths.append(f"sections/{match.group(2)}.txt")
-    expected_paths = [f"sections/{name}" for name in chunk_files]
-    if observed_paths != expected_paths:
-        raise _bundle_invalid("index chunk order does not match section files")
+        source_label, sequence = _parse_index_label(match.group(1))
+        if f"sections/{match.group(2)}.txt" != f"sections/{chunk_name}":
+            raise _bundle_invalid("index chunk order does not match section files")
+        if sequence == 1:
+            section_count += 1
+            current_label = source_label
+            expected_sequence = 1
+        else:
+            if current_label is None or source_label != current_label:
+                raise _bundle_invalid("index chunk sequence breaks section grouping")
+            expected_sequence += 1
+            if sequence != expected_sequence:
+                raise _bundle_invalid("index chunk sequence is not contiguous")
+        normalized_characters += len(chunk_texts[chunk_name])
+
+    if section_count < 1:
+        raise _bundle_invalid("index does not define any sections")
+    return _DerivedIndexCounts(
+        section_count=section_count,
+        normalized_characters=normalized_characters,
+    )
 
 
-def _load_metadata(metadata_path: Path, expected_id: str) -> BundleMetadata:
-    try:
-        raw = metadata_path.read_bytes()
-    except OSError as error:
-        raise _bundle_invalid("metadata.json is unreadable") from error
-    if b"\r" in raw:
-        raise _bundle_invalid("metadata.json contains CR bytes")
+def _load_metadata(
+    bundle_root: Path,
+    relative: str,
+    entry: TrackedEntry,
+    expected_id: str,
+) -> BundleMetadata:
+    raw = _read_tracked_regular_file(bundle_root, relative, entry)
     try:
         document = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -229,7 +346,7 @@ def _load_metadata(metadata_path: Path, expected_id: str) -> BundleMetadata:
         raise _bundle_invalid("metadata.json must contain an object")
     if set(document) != _METADATA_KEYS:
         raise _bundle_invalid("metadata.json has unexpected fields")
-    _reject_private_metadata_strings(document)
+    _reject_private_display_origin(document)
 
     schema_version = document["schema_version"]
     if type(schema_version) is not int or schema_version != BUNDLE_SCHEMA_VERSION:
@@ -289,21 +406,16 @@ def _load_metadata(metadata_path: Path, expected_id: str) -> BundleMetadata:
     return metadata
 
 
-def _reject_private_metadata_strings(document: dict[str, object]) -> None:
-    for key, value in document.items():
-        if not isinstance(value, str):
-            continue
-        if key == "display_origin":
-            if "?" in value:
-                raise _bundle_invalid("metadata display_origin contains a query")
-            if "\\" in value or ("/" in value and "://" not in value):
-                raise _bundle_invalid("metadata display_origin contains a path")
-            if re.search(r"(?i)^[a-z]:", value):
-                raise _bundle_invalid("metadata display_origin contains an absolute path")
-        lowered = value.lower()
-        for marker in ("canonical_url", "cookie", "header", "password", "token", "query"):
-            if marker in lowered:
-                raise _bundle_invalid("metadata contains private retrieval data")
+def _reject_private_display_origin(document: dict[str, object]) -> None:
+    display_origin = document.get("display_origin")
+    if not isinstance(display_origin, str):
+        return
+    if "?" in display_origin:
+        raise _bundle_invalid("metadata display_origin contains a query")
+    if "\\" in display_origin or ("/" in display_origin and "://" not in display_origin):
+        raise _bundle_invalid("metadata display_origin contains a path")
+    if re.search(r"(?i)^[a-z]:", display_origin):
+        raise _bundle_invalid("metadata display_origin contains an absolute path")
 
 
 def _reject_invalid_id(source_id: str) -> None:
