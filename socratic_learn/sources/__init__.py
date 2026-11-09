@@ -1,6 +1,8 @@
 """Source ingestion contracts and normalization utilities."""
 
+from socratic_learn.sources.html import extract_html
 from socratic_learn.sources.ids import source_id_for_local, source_id_for_url
+from socratic_learn.sources.pdf import extract_pdf
 from socratic_learn.sources.model import (
     BundleMetadata,
     ExtractedDocument,
@@ -30,6 +32,8 @@ __all__ = [
     "SourceKind",
     "SourceRequest",
     "chunk_section",
+    "extract_html",
+    "extract_pdf",
     "normalize_text",
     "source_id_for_local",
     "source_id_for_url",
