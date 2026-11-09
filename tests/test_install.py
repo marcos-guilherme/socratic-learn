@@ -24,6 +24,10 @@ from socratic_learn.install import (
     load_receipt,
     plan_install,
 )
+from socratic_learn.conformance import (
+    CONFORMANCE_CONTRACT_VERSION,
+    REQUIRED_DIAGNOSTIC_CODES,
+)
 from socratic_learn.manifest import sha256_bytes
 from socratic_learn.resources import packaged_distribution_root, resource_bytes
 from socratic_learn.__main__ import main
@@ -65,27 +69,8 @@ class InstallTests(unittest.TestCase):
                 "web": "Mark volatile claims unverified and prefer stable content.",
             },
             "conformance": {
-                "required_diagnostic_codes": [
-                    "active-return-after-exposition",
-                    "agent-led-route",
-                    "autonomous-current-research",
-                    "bounded-diagnosis",
-                    "capability-fallbacks",
-                    "connected-perspectives",
-                    "evidence-based-closure",
-                    "exposition-fallback",
-                    "graduated-support",
-                    "mathematical-assumptions-classification",
-                    "observable-outcome",
-                    "private-state",
-                    "productive-effort",
-                    "responsive-socratic-follow-up",
-                    "silent-orchestration",
-                    "silent-self-review",
-                    "vocabulary-readiness",
-                    "volatile-primary-source-verification",
-                ],
-                "version": 2,
+                "required_diagnostic_codes": list(REQUIRED_DIAGNOSTIC_CODES),
+                "version": CONFORMANCE_CONTRACT_VERSION,
             },
             "language": "en",
             "product": PRODUCT_ID,

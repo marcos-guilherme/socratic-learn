@@ -1,7 +1,7 @@
 {
   "bundle": {
     "path": "socratic-learn.prompt.md",
-    "sha256": "ff6d595946768a1300dd7a759708ead4121ded2e612ba138c0d3bc744bf3201a"
+    "sha256": "e7752fdc4a8613122b45ab189d9b47ba922681446491c815c63f7426ea03b8be"
   },
   "capability_fallbacks": {
     "cross_session_memory": "Ask for a prior summary and state what is unknown.",
@@ -21,6 +21,7 @@
       "connected-perspectives",
       "evidence-based-closure",
       "exposition-fallback",
+      "focused-learner-task",
       "graduated-support",
       "mathematical-assumptions-classification",
       "observable-outcome",
@@ -29,14 +30,22 @@
       "responsive-socratic-follow-up",
       "silent-orchestration",
       "silent-self-review",
+      "source-aware-closure",
+      "source-learner-locations",
+      "source-nonexistence-caution",
+      "source-objective-before-summary",
+      "source-selective-access",
+      "source-study-epistemic-distinction",
+      "source-study-external-verification-gate",
+      "source-untrusted-material",
       "vocabulary-readiness",
       "volatile-primary-source-verification"
     ],
-    "version": 2
+    "version": 3
   },
   "language": "en",
   "product": "socratic-learn",
-  "protocol_version": "1.1.0",
+  "protocol_version": "1.2.0",
   "schema_version": 2,
   "session_headings": [
     "## Outcome",
@@ -51,11 +60,11 @@
   "sources": [
     {
       "path": "core/pedagogy.md",
-      "sha256": "3f642c5d5597881ad8ee349719d1a12a0ec491b4f4f8a7da1333b793f2b6d8a2"
+      "sha256": "cfb6946cdf6a9bffc84eaaae8317ba1dc9f6dd70f091587436282d3f7d273c7e"
     },
     {
       "path": "core/session-protocol.md",
-      "sha256": "20c026bbefd3c09ad676fa0a50352b6293b695db2948394a4f0b6bf892606892"
+      "sha256": "127c5ae2fe87bb64ee69a63d292a51a1cc9fc3217135247627f0dff581d8305d"
     },
     {
       "path": "core/assessment.md",
@@ -63,7 +72,7 @@
     },
     {
       "path": "core/evidence-policy.md",
-      "sha256": "20259d6063e03a441a6667e4653604f6a5878bff06d8fa4671d68145082abd4e"
+      "sha256": "f560d59bcd3fae1fadee3936bc61d01b999b1dce2373cde8c1e97eabe5336ff7"
     },
     {
       "path": "curricula/mathematics/map.md",

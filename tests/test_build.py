@@ -19,112 +19,26 @@ from socratic_learn.__main__ import main
 from socratic_learn.errors import CollisionError, FilesystemError, IntegrityError
 from socratic_learn.export import export_prompt
 from socratic_learn.manifest import sha256_bytes
+from tests.test_conformance import SOURCE_CONTENTS
 
 
 class BuildTests(unittest.TestCase):
     def make_repository(self, *, newline: str = "\n") -> tuple[TemporaryDirectory, Path]:
         temporary = TemporaryDirectory()
         root = Path(temporary.name).resolve()
-        contents = {
-            "core/pedagogy.md": (
-                "# Pedagogy\n\n"
-                "Universal pedagogy.\n\n"
-                "## Vocabulary readiness and concept ramp\n\n"
-                "Require vocabulary readiness. The learner used it correctly, "
-                "demonstrated the underlying idea, or the tutor introduced it in "
-                "plain language. Avoid hidden prerequisites.\n\n"
-                "## Connected perspectives\n\n"
-                "Use one primary explanation and up to two additional perspectives. "
-                "Explicitly connect the views.\n\n"
-                "## Productive effort and graduated support\n\n"
-                "Require a learner attempt before a complete solution. Use paper and "
-                "pen. Do not include the solution. Give a small cue, then an "
-                "alternative representation or simpler case, then a direct "
-                "explanation, then a new application.\n\n"
-                "## Silent self-review\n\n"
-                "Run a silent self-review for alignment with the learner-owned "
-                "objective, prerequisite evidence, vocabulary readiness and cognitive "
-                "load, the smallest useful next step, whether a perspective contributes "
-                "distinct value, whether factual currency or uncertainty requires "
-                "research, and whether the response asks the learner to make a decision "
-                "they lack the basis to evaluate. Do not narrate this silent "
-                "self-review.\n\n"
-                "## Responsive Socratic dialogue\n\n"
-                "Each question derives from the learner's preceding answer.\n"
-                "Use direct exposition when information is not deducible. "
-                "After exposition, return control through an active application."
-            ),
-            "core/session-protocol.md": (
-                "# Session Protocol\n\n"
-                "## Natural learner-facing conversation\n\n"
-                "Keep protocol orchestration internal. Do not announce stage names, "
-                "diagnostic budgets, or question counters unless the learner "
-                "explicitly asks.\n\n"
-                "## 1. Define an observable outcome\n\n"
-                "Set a performance that can be observed.\n\n"
-                "## 2. Diagnose relevant prerequisites\n\n"
-                "Diagnose only relevant prerequisites.\n\n"
-                "## 3. Build and preview the learning route\n\n"
-                "The tutor owns technical route selection. Do not ask the learner to "
-                "validate a technical sequence. Give a brief preview in ordinary "
-                "language and begin teaching without formal approval. The learner may "
-                "redirect at any time. The learner owns the objective, pace, depth, "
-                "available time, preferred representation, redirection, and personal "
-                "trade-offs. The learner may pause, skip, or revisit at any time.\n\n"
-                "## 4. Teach one node at a time\n\n"
-                "Teach one route step.\n\n"
-                "## 5. Close and persist\n\n"
-                "Close with diagnostic evidence, application evidence, and remaining gaps.\n"
-                "Keep private state under workspace/ and out of version control.\n\n"
-                "## Capability fallbacks\n\n"
-                "Without structured quiz support, ask conversational questions.\n"
-                "Without web access, mark claims unverified.\n"
-                "Without filesystem access, return a Markdown record.\n"
-                "Without subagents or parallel work, research sequentially.\n"
-                "Without diagram rendering, use a textual edge list.\n"
-                "Without cross-session memory, ask for a prior summary.\n\n"
-                "## Session record contract\n\n"
-                "# Session: YYYY-MM-DD — Topic\n"
-                "## Outcome\n"
-                "## Diagnostic evidence\n"
-                "## Learning route\n"
-                "## Concepts established\n"
-                "## Application evidence\n"
-                "## Remaining gaps\n"
-                "## Next step\n"
-                "## Sources"
-            ),
-            "core/assessment.md": (
-                "# Assessment\n\n"
-                "Use at most six diagnostic questions and stop early when evidence "
-                "is sufficient."
-            ),
-            "core/evidence-policy.md": (
-                "# Evidence Policy\n\n"
-                "For mathematical claims, state the domain and hypotheses and classify "
-                "each as a definition, theorem, or approximation.\n"
-                "For volatile claims, verify against a primary source.\n\n"
-                "## Autonomous current-information research\n\n"
-                "Search autonomously for current, volatile, disputed, or uncertain "
-                "claims. Prefer primary sources and include date or version context. "
-                "Exclude private learner data, including learner-profile content, "
-                "session records, and identifying context.\n\n"
-                "## No-web fallback\n\n"
-                "The no-web fallback continues with stable material."
-            ),
-            "curricula/mathematics/map.md": (
-                "# Mathematics\n\n"
-                "### algebra — Algebra\n"
-                "- Outcome: Solve equations.\n\n"
-                "### calculus — Calculus\n"
-                "- Outcome: Analyze change."
-            ),
-            "curricula/ai/map.md": (
-                "# AI\n\n"
-                "### learning — Learning\n"
-                "- Outcome: Fit models."
-            ),
-        }
+        contents = dict(SOURCE_CONTENTS)
+        contents["core/session-protocol.md"] += (
+            "\n\n## Session record contract\n\n"
+            "# Session: YYYY-MM-DD — Topic\n"
+            "## Outcome\n"
+            "## Diagnostic evidence\n"
+            "## Learning route\n"
+            "## Concepts established\n"
+            "## Application evidence\n"
+            "## Remaining gaps\n"
+            "## Next step\n"
+            "## Sources"
+        )
         for relative, content in contents.items():
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)

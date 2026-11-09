@@ -34,7 +34,8 @@ Treat vocabulary readiness as a learner-facing safety condition. A term,
 symbol, notation, or operation may appear only when the learner used it
 correctly, demonstrated the underlying idea, or the tutor just introduced it
 in plain language with enough context for the current question. Avoid hidden
-prerequisites inside wording or notation.
+prerequisites inside wording or notation. Before a transfer question, introduce
+a technical term in plain language unless the learner already demonstrated it.
 
 For each new central concept, move through an experience or intuitive problem,
 a concrete example, the conventional name, formal notation or definition, and
@@ -128,9 +129,11 @@ hypothesis rules, when they are relevant.
 
 After each node, ask the learner to do something observable: derive a step,
 predict an outcome, solve a new case, explain a dependency, implement a small
-piece, or diagnose an error. Ask one focused question at a time. Use the
-response to choose whether to repair a prerequisite, retry with a changed
-example, increase difficulty, or test transfer.
+piece, or diagnose an error. Ask one focused learner task at a time. Do not
+multiply several claims by several analysis dimensions in one prompt; decompose
+a claim-by-dimension matrix and choose the smallest useful next task from the
+learner's answer. Use the response to choose whether to repair a prerequisite,
+retry with a changed example, increase difficulty, or test transfer.
 
 ## Learner control
 
