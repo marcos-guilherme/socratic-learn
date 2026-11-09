@@ -14,6 +14,9 @@ from typing import TextIO
 from .config import LauncherConfig, load_config, save_config
 from .errors import FilesystemError, UsageError
 from .hosts import AgentName, DetectedHost, command_for, detect_hosts
+from .sources.ingest import ingest_source
+from .sources.model import SourceRequest
+from .sources.payload import build_source_study_payload
 from .windows_security import (
     safe_regular_windows_file,
     trusted_windows_powershell,
@@ -31,6 +34,7 @@ class LaunchOptions:
     agent: AgentName | None
     here: bool
     cwd: Path
+    source: SourceRequest | None = None
 
 
 def _safe_windows_host_argv(
@@ -106,18 +110,23 @@ def run_learning(
             remediation="install Pi, Claude Code, or Antigravity and retry",
         )
 
-    home = launcher_home(environ)
-    config_path = home / "config.json"
-    config = load_config(config_path)
-
     goal = options.goal
     if goal is None:
-        goal = input_fn("What do you want to learn? ")
+        prompt = (
+            "What do you want to be able to do with this source?"
+            if options.source is not None
+            else "What do you want to learn? "
+        )
+        goal = input_fn(prompt)
     if not goal.strip():
         raise UsageError(
             "a learning goal is required",
             remediation="provide a non-empty learning goal",
         )
+
+    home = launcher_home(environ)
+    config_path = home / "config.json"
+    config = load_config(config_path)
 
     selected = options.agent
     if selected is not None:
@@ -145,8 +154,25 @@ def run_learning(
         if options.here
         else prepare_personal_workspace(home)
     )
+
+    payload: str | None = None
+    if options.source is not None:
+        ingested = ingest_source(workspace.records, options.source)
+        bundle_path = ingested.bundle_path.resolve()
+        payload = build_source_study_payload(
+            learner_goal=goal,
+            index_path=bundle_path / "index.md",
+            metadata_path=bundle_path / "metadata.json",
+        )
+
     host = detected[selected]
-    argv = command_for(host.adapter, host.executable, workspace.protocol, goal)
+    argv = command_for(
+        host.adapter,
+        host.executable,
+        workspace.protocol,
+        goal,
+        source_study_payload=payload,
+    )
     argv = _safe_windows_host_argv(host.executable, argv, environ)
 
     try:
