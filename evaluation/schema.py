@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Literal, NoReturn
 
@@ -27,7 +28,15 @@ FindingClass = Literal[
 ]
 
 SCHEMA_VERSION = 1
+SCENARIO_SCHEMA_V1 = 1
+SCENARIO_SCHEMA_V2 = 2
+RUN_SCHEMA_V1 = 1
+RUN_SCHEMA_V2 = 2
+RUN_WRITE_SCHEMA_VERSION = RUN_SCHEMA_V2
+SUITE_SCHEMA_VERSION = 1
 MAX_LEARNER_RESPONSES = 15
+KNOWN_REPORT_CONTRACTS = frozenset({"baseline-v1", "article-reading-v1"})
+RESERVED_SCENARIO_IDS = frozenset({"article-reading"})
 
 _STOP_REASONS = frozenset(
     {
@@ -54,6 +63,7 @@ class Scenario:
     observable_outcome: tuple[str, ...]
     response_policy: tuple[str, ...]
     max_learner_responses: int
+    source_fixture_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -112,6 +122,25 @@ class RunRecord:
     stop_reason: StopReason
     infrastructure_failure: str | None
     turns: tuple[TurnRecord, ...]
+    scenario_sha256: str | None = None
+    rubric_sha256: str | None = None
+    suite_sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class FixtureIdentities:
+    scenario_sha256: str
+    rubric_sha256: str
+    suite_sha256: str
+
+
+@dataclass(frozen=True)
+class SuiteManifest:
+    schema_version: int
+    identifier: str
+    scenario_ids: tuple[str, ...]
+    rubric_path: str
+    report_contract: str
 
 
 @dataclass(frozen=True)
@@ -155,33 +184,162 @@ def canonical_json(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def load_scenario(path: Path) -> Scenario:
-    label = "scenario"
+def fixture_sha256(path: Path) -> str:
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if not _SHA256.fullmatch(digest):
+        _fail("fixture hash must be 64 lowercase hexadecimal characters")
+    return digest
+
+
+def known_scenario_ids() -> frozenset[str]:
+    scenario_root = fixture_root() / "scenarios"
+    discovered = {
+        path.stem
+        for path in scenario_root.glob("*.json")
+        if path.is_file()
+    }
+    return frozenset(discovered | RESERVED_SCENARIO_IDS)
+
+
+def resolve_fixture_path(relative: str, *, label: str) -> Path:
+    if not isinstance(relative, str) or not relative.strip():
+        _fail(f"{label} must be a non-empty relative POSIX path")
+    if "\\" in relative or relative.startswith("/") or PurePosixPath(relative).is_absolute():
+        _fail(f"{label} must be a canonical relative POSIX path")
+    if any(part in {".", ".."} for part in PurePosixPath(relative).parts):
+        _fail(f"{label} must not contain path traversal")
+    root = fixture_root().resolve(strict=False)
+    candidate = (root / relative).resolve(strict=False)
+    if not _contains_fixture_root(root, candidate):
+        _fail(f"{label} must resolve under the evaluation fixture root")
+    return candidate
+
+
+def _contains_fixture_root(root: Path, candidate: Path) -> bool:
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def suite_manifest_path(identifier: str) -> Path:
+    return fixture_root() / "suites" / f"{identifier}.json"
+
+
+def load_suite_manifest(path: Path) -> SuiteManifest:
+    label = "suite manifest"
     document = _load_object(path, label)
     _require_keys(
         document,
         {
             "schema_version",
             "identifier",
-            "title",
-            "domain",
-            "initial_goal",
-            "persona",
-            "observable_outcome",
-            "response_policy",
-            "max_learner_responses",
+            "scenario_ids",
+            "rubric_path",
+            "report_contract",
         },
         label,
     )
-    _require_schema_version(document, label)
+    version = _integer(document["schema_version"], f"{label}.schema_version")
+    if version != SUITE_SCHEMA_VERSION:
+        _fail(f"{label}.schema_version must be {SUITE_SCHEMA_VERSION}")
+    identifier = _identifier(document["identifier"], f"{label}.identifier")
+    scenario_ids = _identifier_array(document["scenario_ids"], f"{label}.scenario_ids")
+    if not scenario_ids:
+        _fail(f"{label}.scenario_ids must not be empty")
+    known = known_scenario_ids()
+    if any(scenario_id not in known for scenario_id in scenario_ids):
+        _fail(f"{label}.scenario_ids contains an unknown scenario")
+    rubric_path = _string(document["rubric_path"], f"{label}.rubric_path")
+    resolve_fixture_path(rubric_path, label=f"{label}.rubric_path")
+    report_contract = _identifier(
+        document["report_contract"],
+        f"{label}.report_contract",
+    )
+    if report_contract not in KNOWN_REPORT_CONTRACTS:
+        _fail(f"{label}.report_contract must be a known report contract")
+    return SuiteManifest(
+        schema_version=SUITE_SCHEMA_VERSION,
+        identifier=identifier,
+        scenario_ids=scenario_ids,
+        rubric_path=rubric_path,
+        report_contract=report_contract,
+    )
+
+
+def scenario_fixture_sha256(scenario_id: str) -> str:
+    scenario_path = fixture_root() / "scenarios" / f"{scenario_id}.json"
+    if scenario_id in RESERVED_SCENARIO_IDS and not scenario_path.is_file():
+        _fail("reserved scenario fixture is not yet available")
+    if not scenario_path.is_file():
+        _fail("scenario fixture is unavailable")
+    return fixture_sha256(scenario_path)
+
+
+def identities_for_scenario(
+    manifest: SuiteManifest,
+    scenario_id: str,
+) -> FixtureIdentities:
+    if scenario_id not in manifest.scenario_ids:
+        _fail("scenario is not part of the selected suite manifest")
+    rubric = resolve_fixture_path(manifest.rubric_path, label="suite manifest rubric_path")
+    return FixtureIdentities(
+        scenario_sha256=scenario_fixture_sha256(scenario_id),
+        rubric_sha256=fixture_sha256(rubric),
+        suite_sha256=fixture_sha256(suite_manifest_path(manifest.identifier)),
+    )
+
+
+def manifest_fixture_identities(manifest: SuiteManifest) -> tuple[str, str, tuple[str, ...]]:
+    rubric = resolve_fixture_path(manifest.rubric_path, label="suite manifest rubric_path")
+    return (
+        fixture_sha256(suite_manifest_path(manifest.identifier)),
+        fixture_sha256(rubric),
+        tuple(scenario_fixture_sha256(scenario_id) for scenario_id in manifest.scenario_ids),
+    )
+
+
+def load_scenario(path: Path) -> Scenario:
+    label = "scenario"
+    document = _load_object(path, label)
+    version = _integer(document["schema_version"], f"{label}.schema_version")
+    base_keys = {
+        "schema_version",
+        "identifier",
+        "title",
+        "domain",
+        "initial_goal",
+        "persona",
+        "observable_outcome",
+        "response_policy",
+        "max_learner_responses",
+    }
+    if version == SCENARIO_SCHEMA_V1:
+        expected = base_keys
+    elif version == SCENARIO_SCHEMA_V2:
+        expected = base_keys | {"source_fixture_id"}
+    else:
+        _fail(f"{label}.schema_version must be {SCENARIO_SCHEMA_V1} or {SCENARIO_SCHEMA_V2}")
+    _require_keys(document, expected, label)
     domain = _string(document["domain"], f"{label}.domain")
     if domain not in _DOMAINS:
         _fail(f"{label}.domain must be one of {sorted(_DOMAINS)}, got {domain!r}")
     max_responses = _integer(document["max_learner_responses"], f"{label}.max_learner_responses")
     if max_responses != MAX_LEARNER_RESPONSES:
         _fail(f"{label}.max_learner_responses must be {MAX_LEARNER_RESPONSES}")
+    source_fixture_id: str | None = None
+    if version == SCENARIO_SCHEMA_V2:
+        raw_source = document["source_fixture_id"]
+        if raw_source is None:
+            source_fixture_id = None
+        else:
+            source_fixture_id = _identifier(
+                raw_source,
+                f"{label}.source_fixture_id",
+            )
     return Scenario(
-        schema_version=SCHEMA_VERSION,
+        schema_version=version,
         identifier=_identifier(document["identifier"], f"{label}.identifier"),
         title=_string(document["title"], f"{label}.title"),
         domain=domain,  # type: ignore[arg-type]
@@ -192,6 +350,7 @@ def load_scenario(path: Path) -> Scenario:
         ),
         response_policy=_string_array(document["response_policy"], f"{label}.response_policy"),
         max_learner_responses=max_responses,
+        source_fixture_id=source_fixture_id,
     )
 
 
@@ -289,33 +448,38 @@ def load_stream_contract(path: Path) -> StreamContract:
 def load_run_record(path: Path) -> RunRecord:
     label = "run record"
     document = _load_object(path, label)
-    _require_keys(
-        document,
-        {
-            "schema_version",
-            "run_id",
-            "suite_id",
-            "scenario_id",
-            "repository_commit",
-            "protocol_version",
-            "protocol_sha256",
-            "runtime",
-            "runtime_version",
-            "model_identifier",
-            "learner_response_count",
-            "stop_reason",
-            "infrastructure_failure",
-            "turns",
-        },
-        label,
-    )
-    _require_schema_version(document, label)
+    version = _integer(document["schema_version"], f"{label}.schema_version")
+    base_keys = {
+        "schema_version",
+        "run_id",
+        "suite_id",
+        "scenario_id",
+        "repository_commit",
+        "protocol_version",
+        "protocol_sha256",
+        "runtime",
+        "runtime_version",
+        "model_identifier",
+        "learner_response_count",
+        "stop_reason",
+        "infrastructure_failure",
+        "turns",
+    }
+    if version == RUN_SCHEMA_V1:
+        expected = base_keys
+    elif version == RUN_SCHEMA_V2:
+        expected = base_keys | {
+            "scenario_sha256",
+            "rubric_sha256",
+            "suite_sha256",
+        }
+    else:
+        _fail(f"{label}.schema_version must be {RUN_SCHEMA_V1} or {RUN_SCHEMA_V2}")
+    _require_keys(document, expected, label)
     runtime = _string(document["runtime"], f"{label}.runtime")
     if runtime != "antigravity":
         _fail(f"{label}.runtime must be 'antigravity', got {runtime!r}")
-    protocol_sha256 = _string(document["protocol_sha256"], f"{label}.protocol_sha256")
-    if not _SHA256.fullmatch(protocol_sha256):
-        _fail(f"{label}.protocol_sha256 must be 64 lowercase hexadecimal characters")
+    protocol_sha256 = _sha256_field(document["protocol_sha256"], f"{label}.protocol_sha256")
     count = _integer(document["learner_response_count"], f"{label}.learner_response_count")
     if not 0 <= count <= MAX_LEARNER_RESPONSES:
         _fail(
@@ -329,8 +493,24 @@ def load_run_record(path: Path) -> RunRecord:
     if failure is not None:
         failure = _string(failure, f"{label}.infrastructure_failure")
     turns = _array(document["turns"], f"{label}.turns")
+    scenario_sha256: str | None = None
+    rubric_sha256: str | None = None
+    suite_sha256: str | None = None
+    if version == RUN_SCHEMA_V2:
+        scenario_sha256 = _sha256_field(
+            document["scenario_sha256"],
+            f"{label}.scenario_sha256",
+        )
+        rubric_sha256 = _sha256_field(
+            document["rubric_sha256"],
+            f"{label}.rubric_sha256",
+        )
+        suite_sha256 = _sha256_field(
+            document["suite_sha256"],
+            f"{label}.suite_sha256",
+        )
     record = RunRecord(
-        schema_version=SCHEMA_VERSION,
+        schema_version=version,
         run_id=_string(document["run_id"], f"{label}.run_id"),
         suite_id=_string(document["suite_id"], f"{label}.suite_id"),
         scenario_id=_identifier(document["scenario_id"], f"{label}.scenario_id"),
@@ -344,6 +524,9 @@ def load_run_record(path: Path) -> RunRecord:
         stop_reason=stop_reason,  # type: ignore[arg-type]
         infrastructure_failure=failure,
         turns=tuple(_turn(item, f"{label}.turns[{index}]") for index, item in enumerate(turns)),
+        scenario_sha256=scenario_sha256,
+        rubric_sha256=rubric_sha256,
+        suite_sha256=suite_sha256,
     )
     validate_run_record(record)
     return record
@@ -433,6 +616,13 @@ def _require_keys(document: Mapping[str, object], expected: Collection[str], lab
 def _require_schema_version(document: Mapping[str, object], label: str) -> None:
     if _integer(document["schema_version"], f"{label}.schema_version") != SCHEMA_VERSION:
         _fail(f"{label}.schema_version must be {SCHEMA_VERSION}")
+
+
+def _sha256_field(value: object, label: str) -> str:
+    text = _string(value, label)
+    if not _SHA256.fullmatch(text):
+        _fail(f"{label} must be 64 lowercase hexadecimal characters")
+    return text
 
 
 def _integer(value: object, label: str) -> int:

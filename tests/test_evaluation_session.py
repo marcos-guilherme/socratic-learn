@@ -17,10 +17,25 @@ from evaluation.isolation import (
 )
 from evaluation.parser import TutorTurn
 from evaluation.schema import (
+    FixtureIdentities,
+    RUN_SCHEMA_V2,
     RunRecord,
     Scenario,
+    SuiteManifest,
     canonical_json,
+    fixture_root,
+    identities_for_scenario,
     load_run_record,
+    load_suite_manifest,
+)
+
+
+CLI_SUITE_MANIFEST = SuiteManifest(
+    1,
+    "suite",
+    ("synthetic",),
+    "rubric.json",
+    "baseline-v1",
 )
 from evaluation.session import (
     ConsoleEvaluator,
@@ -51,7 +66,17 @@ def scenario() -> Scenario:
         observable_outcome=("Demonstrates a synthetic outcome.",),
         response_policy=("Respond to the latest tutor turn.",),
         max_learner_responses=15,
+        source_fixture_id=None,
     )
+
+
+def fixture_identities() -> FixtureIdentities:
+    return FixtureIdentities("a" * 64, "b" * 64, "c" * 64)
+
+
+def baseline_identities(scenario_id: str) -> FixtureIdentities:
+    manifest = load_suite_manifest(fixture_root() / "suites/baseline-v1.json")
+    return identities_for_scenario(manifest, scenario_id)
 
 
 def identity() -> ProtocolIdentity:
@@ -150,6 +175,7 @@ class EvaluationSessionLoopTests(unittest.TestCase):
             identity(),
             "Synthetic public-launcher bootstrap.",
             "cap-test",
+            fixture_identities=fixture_identities(),
         )
 
         self.assertEqual(15, record.learner_response_count)
@@ -172,6 +198,7 @@ class EvaluationSessionLoopTests(unittest.TestCase):
             identity(),
             "bootstrap",
             "precedence-test",
+            fixture_identities=fixture_identities(),
         )
 
         self.assertEqual(15, record.learner_response_count)
@@ -191,6 +218,7 @@ class EvaluationSessionLoopTests(unittest.TestCase):
                     identity(),
                     "bootstrap",
                     "stop-test",
+                    fixture_identities=fixture_identities(),
                 )
                 self.assertEqual(reason, record.stop_reason)
 
@@ -217,6 +245,7 @@ class EvaluationSessionLoopTests(unittest.TestCase):
             identity(),
             "bootstrap",
             "progress-test",
+            fixture_identities=fixture_identities(),
             progress=progress,
         )
 
@@ -233,6 +262,7 @@ class EvaluationSessionLoopTests(unittest.TestCase):
             identity(),
             "bootstrap",
             "infrastructure-test",
+            fixture_identities=fixture_identities(),
         )
 
         self.assertEqual("infrastructure_failure", record.stop_reason)
@@ -250,6 +280,7 @@ class EvaluationSessionLoopTests(unittest.TestCase):
             identity(),
             "bootstrap",
             "partial-test",
+            fixture_identities=fixture_identities(),
             progress=progress,
         )
 
@@ -266,6 +297,7 @@ class EvaluationSessionLoopTests(unittest.TestCase):
             identity(),
             "bootstrap",
             "empty-turn",
+            fixture_identities=fixture_identities(),
         )
 
         self.assertEqual("infrastructure_failure", record.stop_reason)
@@ -286,6 +318,7 @@ class EvaluationSessionLoopTests(unittest.TestCase):
                 identity(),
                 "bootstrap",
                 "empty-record",
+                fixture_identities=fixture_identities(),
                 record_path=path,
             )
 
@@ -305,6 +338,7 @@ class EvaluationSessionLoopTests(unittest.TestCase):
                     identity(),
                     "bootstrap",
                     "path-test",
+                    fixture_identities=fixture_identities(),
                     record_path=outside,
                 )
 
@@ -320,6 +354,7 @@ class EvaluationSessionLoopTests(unittest.TestCase):
                     identity(),
                     "bootstrap",
                     "path-test",
+                    fixture_identities=fixture_identities(),
                     record_path=record_path,
                 )
             self.assertEqual("sentinel", record_path.read_text(encoding="utf-8"))
@@ -336,10 +371,12 @@ class EvaluationSessionLoopTests(unittest.TestCase):
                 identity(),
                 "bootstrap",
                 "roundtrip",
+                fixture_identities=fixture_identities(),
                 record_path=path,
             )
 
             self.assertEqual(expected, load_run_record(path))
+            self.assertEqual(RUN_SCHEMA_V2, expected.schema_version)
             self.assertEqual("suite-a", expected.suite_id)
 
 
@@ -419,9 +456,11 @@ class InfrastructureRecordTests(unittest.TestCase):
             model_identifier="model",
             kind="runtime",
             progress=progress,
+            fixture_identities=fixture_identities(),
         )
 
         self.assertIs(type(document), dict)
+        self.assertEqual(RUN_SCHEMA_V2, document["schema_version"])
         self.assertEqual(
             {
                 "schema_version",
@@ -438,6 +477,9 @@ class InfrastructureRecordTests(unittest.TestCase):
                 "stop_reason",
                 "infrastructure_failure",
                 "turns",
+                "scenario_sha256",
+                "rubric_sha256",
+                "suite_sha256",
             },
             set(document),
         )
@@ -458,6 +500,7 @@ class InfrastructureRecordTests(unittest.TestCase):
             model_identifier="model",
             kind="authentication",
             progress=SessionProgress([], 0),
+            fixture_identities=fixture_identities(),
         )
         encoded = canonical_json(document).decode("utf-8")
         self.assertNotIn("exception", encoded.lower())
@@ -497,6 +540,7 @@ class IsolatedRunTests(unittest.TestCase):
             evaluator or ScriptedEvaluator([stop()]),  # type: ignore[arg-type]
             identity(),
             "run",
+            fixture_identities=fixture_identities(),
             model_identifier="validated-model",
             runtime_version="1.5.2",
         )
@@ -598,6 +642,7 @@ class IsolatedRunTests(unittest.TestCase):
                 ScriptedEvaluator([stop()]),  # type: ignore[arg-type]
                 identity(),
                 "run",
+                fixture_identities=fixture_identities(),
                 model_identifier="validated-model",
                 runtime_version="1.5.2",
             )
@@ -839,7 +884,7 @@ class EvaluationCliTests(unittest.TestCase):
             {"run_dir": Path(".semantic-runs/suite/synthetic")},
         )()
         record = RunRecord(
-            1,
+            RUN_SCHEMA_V2,
             "suite-synthetic",
             "suite",
             "synthetic",
@@ -853,6 +898,9 @@ class EvaluationCliTests(unittest.TestCase):
             "observable_outcome",
             None,
             (),
+            "a" * 64,
+            "b" * 64,
+            "c" * 64,
         )
 
         with (
@@ -880,6 +928,12 @@ class EvaluationCliTests(unittest.TestCase):
                 side_effect=lambda *args, **kwargs: events.append("verify"),
             ),
             mock.patch.object(cli, "load_scenario", return_value=scenario()),
+            mock.patch.object(cli, "_suite_manifest", return_value=CLI_SUITE_MANIFEST),
+            mock.patch.object(
+                cli,
+                "identities_for_scenario",
+                return_value=fixture_identities(),
+            ),
         ):
             result = cli.main(
                 [
@@ -917,6 +971,12 @@ class EvaluationCliTests(unittest.TestCase):
         with (
             mock.patch.object(cli, "_preflight", return_value=preflight),
             mock.patch.object(cli, "load_scenario", return_value=scenario()),
+            mock.patch.object(cli, "_suite_manifest", return_value=CLI_SUITE_MANIFEST),
+            mock.patch.object(
+                cli,
+                "identities_for_scenario",
+                return_value=fixture_identities(),
+            ),
             mock.patch.object(cli, "create_run_layout", return_value=layout),
             mock.patch.object(
                 cli,
@@ -1040,6 +1100,11 @@ class EvaluationCliTests(unittest.TestCase):
             with self.subTest(load_error=type(load_error).__name__):
                 with (
                     mock.patch.object(cli, "load_scenario", side_effect=load_error),
+                    mock.patch.object(
+                        cli,
+                        "_suite_manifest",
+                        return_value=CLI_SUITE_MANIFEST,
+                    ),
                     mock.patch.object(cli, "create_run_layout") as create,
                 ):
                     error = io.StringIO()
@@ -1078,6 +1143,12 @@ class EvaluationCliTests(unittest.TestCase):
             with (
                 mock.patch.object(cli, "REPOSITORY", repository),
                 mock.patch.object(cli, "load_scenario", return_value=scenario()),
+                mock.patch.object(cli, "_suite_manifest", return_value=CLI_SUITE_MANIFEST),
+                mock.patch.object(
+                    cli,
+                    "identities_for_scenario",
+                    return_value=fixture_identities(),
+                ),
                 mock.patch.object(cli, "create_run_layout") as create,
             ):
                 result = cli.main(
@@ -1170,6 +1241,12 @@ class EvaluationCliTests(unittest.TestCase):
         with (
             mock.patch.object(cli, "_preflight", return_value=preflight),
             mock.patch.object(cli, "load_scenario", return_value=scenario()),
+            mock.patch.object(cli, "_suite_manifest", return_value=CLI_SUITE_MANIFEST),
+            mock.patch.object(
+                cli,
+                "identities_for_scenario",
+                return_value=fixture_identities(),
+            ),
             mock.patch.object(cli, "create_run_layout", return_value=fake_layout),
             mock.patch.object(cli, "execute_isolated_run"),
             mock.patch.object(

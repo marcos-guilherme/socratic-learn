@@ -19,8 +19,37 @@ from evaluation.report import (
     write_sanitized_report,
 )
 from evaluation.sanitize import RedactionRule
-from evaluation.schema import Finding, fixture_root, load_rubric, load_run_record
+from evaluation.schema import (
+    Finding,
+    RUN_SCHEMA_V2,
+    fixture_root,
+    load_rubric,
+    load_run_record,
+    load_suite_manifest,
+    manifest_fixture_identities,
+)
 from evaluation.scoring import interactive_score, scorecard_from_mapping, validate_scorecard
+
+
+def baseline_suite():
+    return load_suite_manifest(fixture_root() / "suites/baseline-v1.json")
+
+
+def baseline_rubric():
+    return load_rubric(fixture_root() / "rubric.json")
+
+
+def with_fixture_identities(record, suite, *, suite_id: str | None = None):
+    suite_hash, rubric_hash, scenario_hashes = manifest_fixture_identities(suite)
+    scenario_hash = scenario_hashes[suite.scenario_ids.index(record.scenario_id)]
+    return replace(
+        record,
+        schema_version=RUN_SCHEMA_V2,
+        suite_id=suite_id or suite.identifier,
+        scenario_sha256=scenario_hash,
+        rubric_sha256=rubric_hash,
+        suite_sha256=suite_hash,
+    )
 
 
 def disclosure(
@@ -73,34 +102,33 @@ class EvaluationReportTests(unittest.TestCase):
 
     def report_triplet(self):
         _rubric, record, scorecard = self.scorecard()
-        scenario_ids = (
-            "conceptual-physics",
-            "practical-programming",
-            "communication-writing",
-        )
+        suite = baseline_suite()
         records = [
-            replace(
-                record,
-                run_id=f"run-{scenario_id}",
-                scenario_id=scenario_id,
-                turns=(
-                    record.turns
-                    if scenario_id == "conceptual-physics"
-                    else tuple(
-                        replace(
-                            turn,
-                            learner=f"{scenario_id}: {turn.learner}",
-                            tutor=f"{scenario_id}: {turn.tutor}",
+            with_fixture_identities(
+                replace(
+                    record,
+                    run_id=f"run-{scenario_id}",
+                    scenario_id=scenario_id,
+                    turns=(
+                        record.turns
+                        if scenario_id == "conceptual-physics"
+                        else tuple(
+                            replace(
+                                turn,
+                                learner=f"{scenario_id}: {turn.learner}",
+                                tutor=f"{scenario_id}: {turn.tutor}",
+                            )
+                            for turn in record.turns
                         )
-                        for turn in record.turns
-                    )
+                    ),
                 ),
+                suite,
             )
-            for scenario_id in scenario_ids
+            for scenario_id in suite.scenario_ids
         ]
         scorecards = [
             replace(scorecard, scenario_id=scenario_id)
-            for scenario_id in scenario_ids
+            for scenario_id in suite.scenario_ids
         ]
         runtime_disclosures = {
             scenario_id: ScenarioRuntimeDisclosure(
@@ -112,13 +140,15 @@ class EvaluationReportTests(unittest.TestCase):
                     above_home_markers=(),
                 ),
             )
-            for scenario_id in scenario_ids
+            for scenario_id in suite.scenario_ids
         }
-        return records, scorecards, runtime_disclosures
+        return suite, records, scorecards, runtime_disclosures
 
     def render(self, runtime_disclosures: dict[str, ScenarioRuntimeDisclosure]) -> str:
-        records, scorecards, _default_disclosures = self.report_triplet()
+        suite, records, scorecards, _default_disclosures = self.report_triplet()
         return render_baseline_report(
+            suite,
+            baseline_rubric(),
             records,
             scorecards,
             [
@@ -148,9 +178,11 @@ class EvaluationReportTests(unittest.TestCase):
         self.assertIn("## Infrastructure results", report)
 
     def test_report_accepts_exact_scenario_model_and_protocol_triplet(self) -> None:
-        records, scorecards, runtime_disclosures = self.report_triplet()
+        suite, records, scorecards, runtime_disclosures = self.report_triplet()
 
         report = render_baseline_report(
+            suite,
+            baseline_rubric(),
             records,
             scorecards,
             [],
@@ -158,19 +190,13 @@ class EvaluationReportTests(unittest.TestCase):
             rules=(),
         )
 
-        self.assertEqual(
-            {
-                "conceptual-physics",
-                "practical-programming",
-                "communication-writing",
-            },
-            {record.scenario_id for record in records},
-        )
+        self.assertEqual(set(suite.scenario_ids), {record.scenario_id for record in records})
         self.assertEqual(1, len({record.model_identifier for record in records}))
         self.assertIn("### communication-writing", report)
+        self.assertIn("- Suite SHA-256:", report)
 
     def test_report_rejects_invalid_scenario_or_identity_triplet(self) -> None:
-        records, scorecards, runtime_disclosures = self.report_triplet()
+        suite, records, scorecards, runtime_disclosures = self.report_triplet()
         cases = {
             "duplicate scenario": [
                 records[0],
@@ -217,6 +243,8 @@ class EvaluationReportTests(unittest.TestCase):
         for label, invalid_records in cases.items():
             with self.subTest(label), self.assertRaises(ValueError):
                 render_baseline_report(
+                    suite,
+                    baseline_rubric(),
                     invalid_records,
                     scorecards[: len(invalid_records)],
                     [],
@@ -341,7 +369,7 @@ class EvaluationReportTests(unittest.TestCase):
         self.assertEqual(first.encode(), second.encode())
         self.assertEqual(1, first.count("> Learner: The same shape and no air resistance."))
 
-        records, scorecards, runtime_disclosures = self.report_triplet()
+        suite, records, scorecards, runtime_disclosures = self.report_triplet()
         scorecards[0] = replace(
             scorecards[0],
             categories=(
@@ -350,6 +378,8 @@ class EvaluationReportTests(unittest.TestCase):
             ),
         )
         report = render_baseline_report(
+            suite,
+            baseline_rubric(),
             records,
             scorecards,
             [],
@@ -360,7 +390,7 @@ class EvaluationReportTests(unittest.TestCase):
         self.assertIn("Sanitized rationale", report)
 
     def test_render_rejects_invalid_findings_and_long_quotations(self) -> None:
-        records, scorecards, runtime_disclosures = self.report_triplet()
+        suite, records, scorecards, runtime_disclosures = self.report_triplet()
         record = records[0]
         invalid_finding = Finding(
             identifier="unsupported",
@@ -373,6 +403,8 @@ class EvaluationReportTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             render_baseline_report(
+                suite,
+                baseline_rubric(),
                 records,
                 scorecards,
                 [invalid_finding],
@@ -396,6 +428,8 @@ class EvaluationReportTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "600"):
             render_baseline_report(
+                suite,
+                baseline_rubric(),
                 [long_record, *records[1:]],
                 [long_scorecard, *scorecards[1:]],
                 [],
@@ -490,27 +524,37 @@ class EvaluationReportTests(unittest.TestCase):
             ).resolve()
             fixtures = repository / "evaluation" / "fixtures"
             fixtures.mkdir(parents=True)
+            shutil.copytree(fixture_root() / "suites", fixtures / "suites")
             shutil.copy2(fixture_root() / "rubric.json", fixtures / "rubric.json")
             source_record = json.loads(
                 (fixture_root() / "synthetic" / "session.json").read_text(
                     encoding="utf-8"
                 )
             )
-            for scenario_id in (
-                "conceptual-physics",
-                "practical-programming",
-                "communication-writing",
+            suite = baseline_suite()
+            suite_hash, rubric_hash, scenario_hashes = manifest_fixture_identities(
+                suite
+            )
+            for scenario_id, scenario_hash in zip(
+                suite.scenario_ids,
+                scenario_hashes,
+                strict=True,
             ):
                 run_dir = (
                     repository
                     / ".semantic-runs"
-                    / "synthetic-suite"
+                    / "baseline-v1"
                     / scenario_id
                 )
                 run_dir.mkdir(parents=True)
                 run_record = dict(source_record)
+                run_record["schema_version"] = RUN_SCHEMA_V2
+                run_record["suite_id"] = suite.identifier
                 run_record["run_id"] = f"run-{scenario_id}"
                 run_record["scenario_id"] = scenario_id
+                run_record["scenario_sha256"] = scenario_hash
+                run_record["rubric_sha256"] = rubric_hash
+                run_record["suite_sha256"] = suite_hash
                 (run_dir / "run-record.json").write_text(
                     json.dumps(run_record),
                     encoding="utf-8",
@@ -544,7 +588,7 @@ class EvaluationReportTests(unittest.TestCase):
                 self.assertEqual(
                     0,
                     cli.main(
-                        ["score", "--suite-id", "synthetic-suite"],
+                        ["score", "--suite-id", "baseline-v1"],
                         output=output,
                         error=io.StringIO(),
                     ),
@@ -556,7 +600,7 @@ class EvaluationReportTests(unittest.TestCase):
                         [
                             "report",
                             "--suite-id",
-                            "synthetic-suite",
+                            "baseline-v1",
                             "--output",
                             str(report_path.relative_to(repository)),
                         ],
@@ -575,6 +619,14 @@ class EvaluationReportTests(unittest.TestCase):
             self.assertIn("Semantic evaluation scoring completed.", output.getvalue())
             self.assertIn("Semantic baseline report written.", output.getvalue())
             self.assertIn("Semantic baseline report is valid.", output.getvalue())
+
+
+    def test_historical_tracked_baseline_report_still_validates(self) -> None:
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "evaluation/reports/2026-11-06-antigravity-baseline.md"
+        )
+        validate_baseline_report(path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

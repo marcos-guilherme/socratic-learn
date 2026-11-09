@@ -18,9 +18,13 @@ from evaluation.isolation import (
 from evaluation.sanitize import RedactionRule, assert_tracked_safe, sanitize_text
 from evaluation.schema import (
     Finding,
+    RUN_SCHEMA_V2,
+    Rubric,
     RunRecord,
     Scorecard,
+    SuiteManifest,
     TurnRecord,
+    manifest_fixture_identities,
     validate_run_record,
 )
 
@@ -76,12 +80,8 @@ _APPROVED_RESEARCH_PATHS = {
     "/papers/details/0cb2208439095e43acfd7e71c4619110/",
     "/papers/details/892841916b2f5030b1f42ccda3ff0adc/",
 }
-_BASELINE_SCENARIO_IDS = frozenset(
-    {
-        "conceptual-physics",
-        "practical-programming",
-        "communication-writing",
-    }
+_IDENTITY_SCENARIO_SHA = re.compile(
+    r"^- Scenario SHA-256 \(([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\): ([0-9a-f]{64})$"
 )
 
 
@@ -261,7 +261,61 @@ def _finding_lines(findings: Sequence[Finding]) -> list[str]:
     return lines
 
 
+def _ordered_records(
+    suite: SuiteManifest,
+    records: Sequence[RunRecord],
+) -> list[RunRecord]:
+    if len(records) != len(suite.scenario_ids):
+        raise ValueError("run records must match the suite scenario count")
+    record_by_scenario = {record.scenario_id: record for record in records}
+    if len(record_by_scenario) != len(records):
+        raise ValueError("run records must have unique scenario IDs")
+    if set(record_by_scenario) != set(suite.scenario_ids):
+        raise ValueError("run records must contain the suite scenarios exactly")
+    ordered = [record_by_scenario[scenario_id] for scenario_id in suite.scenario_ids]
+    if len({record.suite_id for record in records}) != 1:
+        raise ValueError("run records must share suite_id")
+    if records[0].suite_id != suite.identifier:
+        raise ValueError("run records must match the suite identifier")
+    return ordered
+
+
+def _validate_fixture_identities(
+    suite: SuiteManifest,
+    records: Sequence[RunRecord],
+) -> tuple[str, str, tuple[str, ...]]:
+    suite_hash, rubric_hash, scenario_hashes = manifest_fixture_identities(suite)
+    if any(record.schema_version != RUN_SCHEMA_V2 for record in records):
+        raise ValueError("run records must use schema 2 fixture identities")
+    if any(
+        field is None
+        for record in records
+        for field in (
+            record.scenario_sha256,
+            record.rubric_sha256,
+            record.suite_sha256,
+        )
+    ):
+        raise ValueError("run records are missing fixture identity hashes")
+    if len({record.suite_sha256 for record in records}) != 1:
+        raise ValueError("run records must share suite_sha256")
+    if len({record.rubric_sha256 for record in records}) != 1:
+        raise ValueError("run records must share rubric_sha256")
+    first = records[0]
+    if first.suite_sha256 != suite_hash:
+        raise ValueError("run records contain an unexpected suite hash")
+    if first.rubric_sha256 != rubric_hash:
+        raise ValueError("run records contain an unexpected rubric hash")
+    by_id = {record.scenario_id: record for record in records}
+    for scenario_id, expected in zip(suite.scenario_ids, scenario_hashes, strict=True):
+        if by_id[scenario_id].scenario_sha256 != expected:
+            raise ValueError("run records contain an unexpected scenario hash")
+    return suite_hash, rubric_hash, scenario_hashes
+
+
 def render_baseline_report(
+    suite: SuiteManifest,
+    rubric: Rubric,
     records: Sequence[RunRecord],
     scorecards: Sequence[Scorecard],
     findings: Sequence[Finding],
@@ -270,14 +324,12 @@ def render_baseline_report(
     rules: Sequence[RedactionRule],
 ) -> str:
     """Render a deterministic tracked report containing only minimum evidence."""
-    scenario_ids = [record.scenario_id for record in records]
-    if (
-        len(scenario_ids) != len(_BASELINE_SCENARIO_IDS)
-        or set(scenario_ids) != _BASELINE_SCENARIO_IDS
-    ):
-        raise ValueError("run records must contain the exact baseline scenario triplet")
+    ordered_records = _ordered_records(suite, records)
+    suite_hash, rubric_hash, scenario_hashes = _validate_fixture_identities(
+        suite,
+        ordered_records,
+    )
     identity_fields = (
-        "suite_id",
         "repository_commit",
         "protocol_version",
         "protocol_sha256",
@@ -286,11 +338,11 @@ def render_baseline_report(
         "model_identifier",
     )
     for field in identity_fields:
-        if len({getattr(record, field) for record in records}) != 1:
+        if len({getattr(record, field) for record in ordered_records}) != 1:
             raise ValueError(f"run records must share {field}")
 
     record_by_scenario: dict[str, RunRecord] = {}
-    for record in records:
+    for record in ordered_records:
         validate_run_record(record)
         if record.scenario_id in record_by_scenario:
             raise ValueError("run records must have unique scenario IDs")
@@ -306,7 +358,7 @@ def render_baseline_report(
         if record.stop_reason == "infrastructure_failure" or record.infrastructure_failure is not None:
             raise ValueError("infrastructure records must not have a scorecard")
         scorecard_by_scenario[scorecard.scenario_id] = scorecard
-    for record in records:
+    for record in ordered_records:
         is_infrastructure = (
             record.stop_reason == "infrastructure_failure"
             or record.infrastructure_failure is not None
@@ -322,8 +374,8 @@ def render_baseline_report(
         validate_finding(finding, record_by_scenario)
 
     lines = [TITLE, "", HEADINGS[0]]
-    if records:
-        first = records[0]
+    if ordered_records:
+        first = ordered_records[0]
         lines.extend(
             [
                 f"- Suite ID: {first.suite_id}",
@@ -333,13 +385,21 @@ def render_baseline_report(
                 f"- Runtime: {first.runtime}",
                 f"- Runtime version: {first.runtime_version}",
                 f"- Model: {first.model_identifier}",
+                f"- Suite SHA-256: {suite_hash}",
+                f"- Rubric SHA-256: {rubric_hash}",
             ]
         )
+        for scenario_id, scenario_hash in zip(
+            suite.scenario_ids,
+            scenario_hashes,
+            strict=True,
+        ):
+            lines.append(f"- Scenario SHA-256 ({scenario_id}): {scenario_hash}")
     else:
         lines.append("- No run records.")
     lines.extend(["", HEADINGS[1]])
 
-    for record in records:
+    for record in ordered_records:
         lines.extend(
             [
                 f"### {record.scenario_id}",
@@ -358,7 +418,11 @@ def render_baseline_report(
             )
             continue
 
-        maximum = len(scorecard.categories) * 2
+        maximum = rubric.maximum_score
+        if len(scorecard.categories) != len(rubric.categories):
+            raise ValueError("scorecard category count does not match rubric")
+        if maximum != len(scorecard.categories) * max(rubric.allowed_scores):
+            raise ValueError("scorecard category maximum does not match rubric")
         lines.extend([f"- Total: {scorecard.total}/{maximum}", "- Category scores:"])
         referenced_turns: set[int] = set()
         available_turns = {turn.number for turn in record.turns}
@@ -396,7 +460,7 @@ def render_baseline_report(
     lines.append(HEADINGS[4])
     infrastructure_records = [
         record
-        for record in records
+        for record in ordered_records
         if record.stop_reason == "infrastructure_failure"
         or record.infrastructure_failure is not None
     ]
@@ -409,7 +473,7 @@ def render_baseline_report(
         lines.append("- None.")
 
     lines.extend(["", HEADINGS[5], PRIVACY_STATEMENT, "", HEADINGS[6]])
-    for record in records:
+    for record in ordered_records:
         disclosure = _validated_disclosure(record.scenario_id, runtime_disclosures)
         user_rules = ", ".join(disclosure.user_home_rule_paths) or "none"
         marker_text = ", ".join(
@@ -451,10 +515,51 @@ def _validate_identity_section(lines: list[str]) -> None:
         "- Runtime version: ",
         "- Model: ",
     )
+    if len(lines) > len(prefixes) and lines[len(prefixes)].startswith(
+        "- Suite SHA-256: "
+    ):
+        _validate_extended_identity_section(lines)
+        return
     if len(lines) != len(prefixes) + 1 or lines[-1] != "":
         raise ValueError("baseline report evaluation identity is malformed")
     for line, prefix in zip(lines[:-1], prefixes, strict=True):
         _require_prefixed(line, prefix, "evaluation identity")
+
+
+def _validate_extended_identity_section(lines: list[str]) -> None:
+    prefixes = (
+        "- Suite ID: ",
+        "- Repository commit: ",
+        "- Protocol version: ",
+        "- Protocol SHA-256: ",
+        "- Runtime: ",
+        "- Runtime version: ",
+        "- Model: ",
+        "- Suite SHA-256: ",
+        "- Rubric SHA-256: ",
+    )
+    if len(lines) < len(prefixes) + 1:
+        raise ValueError("baseline report evaluation identity is malformed")
+    for line, prefix in zip(lines[: len(prefixes)], prefixes, strict=True):
+        value = _require_prefixed(line, prefix, "evaluation identity")
+        if prefix.endswith("SHA-256: ") and not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError("baseline report evaluation identity hash is malformed")
+    index = len(prefixes)
+    scenario_lines: list[tuple[str, str]] = []
+    while index < len(lines):
+        if lines[index] == "":
+            break
+        match = _IDENTITY_SCENARIO_SHA.fullmatch(lines[index])
+        if match is None:
+            raise ValueError("baseline report scenario identity hash is malformed")
+        scenario_lines.append((match.group(1), match.group(2)))
+        index += 1
+    if index >= len(lines) or lines[index] != "":
+        raise ValueError("baseline report evaluation identity is malformed")
+    if not scenario_lines:
+        raise ValueError("baseline report scenario identity hashes are missing")
+    if len({scenario_id for scenario_id, _hash in scenario_lines}) != len(scenario_lines):
+        raise ValueError("baseline report repeats a scenario identity hash")
 
 
 def _validate_scenario_section(lines: list[str]) -> None:

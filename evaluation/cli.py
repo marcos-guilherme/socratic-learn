@@ -45,12 +45,17 @@ from evaluation.schema import (
     Scenario,
     Scorecard,
     StreamContract,
+    SuiteManifest,
     canonical_json,
     fixture_root,
+    identities_for_scenario,
     load_scenario,
     load_rubric,
     load_run_record,
     load_stream_contract,
+    load_suite_manifest,
+    resolve_fixture_path,
+    suite_manifest_path,
     validate_run_record,
 )
 from evaluation.scoring import interactive_score, scorecard_from_mapping
@@ -251,18 +256,33 @@ def _identifier(value: str, label: str) -> str:
     return value
 
 
-def _scenario(repository: Path, identifier: str) -> Scenario:
+def _scenario_fixture_path(repository: Path, identifier: str) -> Path:
     scenario_id = _identifier(identifier, "Scenario")
-    path = repository / "evaluation" / "fixtures" / "scenarios" / (
-        scenario_id + ".json"
-    )
+    root = (repository / "evaluation" / "fixtures").resolve(strict=False)
+    path = (root / "scenarios" / f"{scenario_id}.json").resolve(strict=False)
+    try:
+        path.relative_to(root)
+    except ValueError:
+        raise CliRefusal("Unknown or invalid evaluation scenario.") from None
+    return path
+
+
+def _scenario(repository: Path, identifier: str) -> Scenario:
+    path = _scenario_fixture_path(repository, identifier)
     try:
         loaded = load_scenario(path)
     except (OSError, UnicodeError, ValueError):
         raise CliRefusal("Unknown or invalid evaluation scenario.") from None
-    if loaded.identifier != scenario_id:
+    if loaded.identifier != _identifier(identifier, "Scenario"):
         raise CliRefusal("Evaluation scenario identity does not match its file.")
     return loaded
+
+
+def _suite_manifest(suite_id: str) -> SuiteManifest:
+    try:
+        return load_suite_manifest(suite_manifest_path(suite_id))
+    except (OSError, UnicodeError, ValueError):
+        raise CliRefusal("Unknown or invalid evaluation suite.") from None
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -301,7 +321,11 @@ def _run_command(
     run_process: RunProcess,
 ) -> int:
     suite_id = _identifier(args.suite_id, "Suite")
+    manifest = _suite_manifest(suite_id)
     selected_scenario = _scenario(repository, args.scenario)
+    if selected_scenario.identifier not in manifest.scenario_ids:
+        raise CliRefusal("Scenario is not part of the selected evaluation suite.")
+    fixture_identities = identities_for_scenario(manifest, selected_scenario.identifier)
     expected_run_dir = (
         repository
         / ".semantic-runs"
@@ -339,6 +363,7 @@ def _run_command(
             ConsoleEvaluator(output=output),
             checked.identity,
             run_id,
+            fixture_identities=fixture_identities,
             model_identifier=checked.model,
             runtime_version=checked.runtime_version,
         )
@@ -443,8 +468,14 @@ def _interactive_findings(records: Mapping[str, RunRecord]) -> tuple[Finding, ..
 
 
 def _score_command(args: argparse.Namespace, *, repository: Path, output: TextIO) -> int:
+    manifest = _suite_manifest(args.suite_id)
     suite = _suite_directory(repository, args.suite_id)
-    rubric = load_rubric(repository / "evaluation" / "fixtures" / "rubric.json")
+    rubric = load_rubric(
+        resolve_fixture_path(
+            manifest.rubric_path,
+            label="suite manifest rubric_path",
+        )
+    )
     run_records = _suite_records(suite, rubric)
     records = {record.scenario_id: record for _, record in run_records}
     scorecards: list[tuple[Path, Scorecard]] = []
@@ -490,10 +521,19 @@ def _tracked_report_path(repository: Path, supplied: str) -> Path:
 
 
 def _report_command(args: argparse.Namespace, *, repository: Path, output: TextIO) -> int:
+    manifest = _suite_manifest(args.suite_id)
     suite = _suite_directory(repository, args.suite_id)
-    rubric = load_rubric(repository / "evaluation" / "fixtures" / "rubric.json")
+    rubric = load_rubric(
+        resolve_fixture_path(
+            manifest.rubric_path,
+            label="suite manifest rubric_path",
+        )
+    )
     run_records = _suite_records(suite, rubric)
     records = [record for _, record in run_records]
+    records.sort(
+        key=lambda record: manifest.scenario_ids.index(record.scenario_id),
+    )
     records_by_scenario = {record.scenario_id: record for record in records}
     scorecards: list[Scorecard] = []
     disclosures: dict[str, ScenarioRuntimeDisclosure] = {}
@@ -521,6 +561,8 @@ def _report_command(args: argparse.Namespace, *, repository: Path, output: TextI
         findings.append(finding_from_mapping(item, records_by_scenario))
 
     text = render_baseline_report(
+        manifest,
+        rubric,
         records,
         scorecards,
         findings,

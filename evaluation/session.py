@@ -28,7 +28,9 @@ from evaluation.parser import TutorTurn
 from evaluation.sanitize import write_private
 from evaluation.schema import (
     MAX_LEARNER_RESPONSES,
+    FixtureIdentities,
     JsonValue,
+    RUN_WRITE_SCHEMA_VERSION,
     RunRecord,
     Scenario,
     StopReason,
@@ -192,9 +194,10 @@ def _run_record(
     progress: SessionProgress,
     stop_reason: StopReason,
     infrastructure_failure: str | None,
+    fixture_identities: FixtureIdentities,
 ) -> RunRecord:
     return RunRecord(
-        schema_version=1,
+        schema_version=RUN_WRITE_SCHEMA_VERSION,
         run_id=run_id,
         suite_id=suite_id,
         scenario_id=scenario.identifier,
@@ -208,6 +211,9 @@ def _run_record(
         stop_reason=stop_reason,
         infrastructure_failure=infrastructure_failure,
         turns=tuple(progress.turns),
+        scenario_sha256=fixture_identities.scenario_sha256,
+        rubric_sha256=fixture_identities.rubric_sha256,
+        suite_sha256=fixture_identities.suite_sha256,
     )
 
 
@@ -219,6 +225,7 @@ def run_session(
     initial_request: str,
     run_id: str,
     *,
+    fixture_identities: FixtureIdentities,
     record_path: Path | None = None,
     progress: SessionProgress | None = None,
 ) -> RunRecord:
@@ -252,6 +259,7 @@ def run_session(
                 progress=collector,
                 stop_reason="infrastructure_failure",
                 infrastructure_failure=failure.kind,
+                fixture_identities=fixture_identities,
             )
             _write_record(destination, record)
             return record
@@ -292,6 +300,7 @@ def run_session(
                 progress=collector,
                 stop_reason=decision.stop_reason,
                 infrastructure_failure=None,
+                fixture_identities=fixture_identities,
             )
             _write_record(destination, record)
             return record
@@ -316,6 +325,7 @@ def run_session(
                 progress=collector,
                 stop_reason="maximum_learner_responses",
                 infrastructure_failure=None,
+                fixture_identities=fixture_identities,
             )
             _write_record(destination, record)
             return record
@@ -334,10 +344,11 @@ def infrastructure_record(
     model_identifier: str,
     kind: Literal["authentication", "quota", "network", "runtime", "timeout"],
     progress: SessionProgress,
+    fixture_identities: FixtureIdentities,
 ) -> dict[str, JsonValue]:
     """Build plain schema data without arbitrary exception or provider text."""
     return {
-        "schema_version": 1,
+        "schema_version": RUN_WRITE_SCHEMA_VERSION,
         "run_id": run_id,
         "suite_id": suite_id,
         "scenario_id": scenario.identifier,
@@ -351,6 +362,9 @@ def infrastructure_record(
         "stop_reason": "infrastructure_failure",
         "infrastructure_failure": kind,
         "turns": [asdict(turn) for turn in progress.turns],
+        "scenario_sha256": fixture_identities.scenario_sha256,
+        "rubric_sha256": fixture_identities.rubric_sha256,
+        "suite_sha256": fixture_identities.suite_sha256,
     }
 
 
@@ -367,6 +381,7 @@ def _save_failure_evidence(
     suite_id: str,
     model_identifier: str,
     runtime_version: str,
+    fixture_identities: FixtureIdentities,
 ) -> None:
     kind: FailureKind = (
         error.kind if isinstance(error, InfrastructureFailure) else "runtime"
@@ -381,6 +396,7 @@ def _save_failure_evidence(
             model_identifier=model_identifier,
             kind=kind,
             progress=progress,
+            fixture_identities=fixture_identities,
         )
         write_private(
             record_path,
@@ -411,6 +427,7 @@ def execute_isolated_run(
     identity: ProtocolIdentity,
     run_id: str,
     *,
+    fixture_identities: FixtureIdentities,
     model_identifier: str,
     runtime_version: str,
 ) -> RunRecord:
@@ -431,6 +448,7 @@ def execute_isolated_run(
             identity,
             initial_bootstrap(layout.protocol, scenario.initial_goal),
             run_id,
+            fixture_identities=fixture_identities,
             record_path=record_path,
             progress=progress,
         )
@@ -449,6 +467,7 @@ def execute_isolated_run(
                 suite_id=suite_id,
                 model_identifier=model_identifier,
                 runtime_version=runtime_version,
+                fixture_identities=fixture_identities,
             )
         except BaseException as evidence_error:
             error.add_note(

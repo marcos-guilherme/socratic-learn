@@ -8,12 +8,19 @@ from pathlib import Path
 from dataclasses import FrozenInstanceError
 
 from evaluation.schema import (
+    RUN_SCHEMA_V1,
+    RUN_SCHEMA_V2,
+    SCENARIO_SCHEMA_V1,
+    SCENARIO_SCHEMA_V2,
     canonical_json,
     fixture_root,
+    fixture_sha256,
     load_rubric,
     load_run_record,
     load_scenario,
     load_stream_contract,
+    load_suite_manifest,
+    manifest_fixture_identities,
     validate_run_record,
 )
 
@@ -26,6 +33,7 @@ class EvaluationSchemaTests(unittest.TestCase):
             load_scenario(path)
             for path in sorted((fixture_root() / "scenarios").glob("*.json"))
         ]
+        self.assertTrue(all(scenario.source_fixture_id is None for scenario in scenarios))
         self.assertEqual(
             ["communication-writing", "conceptual-physics", "practical-programming"],
             sorted(scenario.identifier for scenario in scenarios),
@@ -126,13 +134,16 @@ class EvaluationSchemaStrictnessTests(unittest.TestCase):
                         load_scenario(_write(temporary, "s.json", document))
 
     def test_scenario_rejects_wrong_cap_and_version(self) -> None:
-        for key, value in (("max_learner_responses", 14), ("schema_version", 2)):
-            with self.subTest(key=key):
-                document = _scenario_document()
-                document[key] = value
-                with tempfile.TemporaryDirectory() as temporary:
-                    with self.assertRaisesRegex(ValueError, key):
-                        load_scenario(_write(temporary, "s.json", document))
+        document = _scenario_document()
+        document["max_learner_responses"] = 14
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(ValueError, "max_learner_responses"):
+                load_scenario(_write(temporary, "s.json", document))
+        document = _scenario_document()
+        document["schema_version"] = 99
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(ValueError, "schema_version"):
+                load_scenario(_write(temporary, "s.json", document))
 
     def test_scenario_rejects_bad_identifier_and_empty_arrays(self) -> None:
         cases = (
@@ -283,3 +294,87 @@ class EvaluationSchemaStrictnessTests(unittest.TestCase):
             record = load_run_record(path)
             with self.assertRaisesRegex(ValueError, "infrastructure"):
                 validate_run_record(record, rubric)
+
+
+class EvaluationSchemaVersionTwoTests(unittest.TestCase):
+    def test_schema_v1_scenario_and_run_fixtures_load_unchanged(self) -> None:
+        scenario = load_scenario(fixture_root() / "scenarios/conceptual-physics.json")
+        self.assertEqual(SCENARIO_SCHEMA_V1, scenario.schema_version)
+        self.assertIsNone(scenario.source_fixture_id)
+        record = load_run_record(fixture_root() / "synthetic/session.json")
+        self.assertEqual(RUN_SCHEMA_V1, record.schema_version)
+        self.assertIsNone(record.scenario_sha256)
+
+    def test_schema_v2_scenario_requires_source_fixture_id(self) -> None:
+        document = _scenario_document()
+        document["schema_version"] = SCENARIO_SCHEMA_V2
+        document["source_fixture_id"] = None
+        with tempfile.TemporaryDirectory() as temporary:
+            loaded = load_scenario(_write(temporary, "s.json", document))
+        self.assertEqual(SCENARIO_SCHEMA_V2, loaded.schema_version)
+        self.assertIsNone(loaded.source_fixture_id)
+
+    def test_schema_v2_run_requires_exact_hash_fields(self) -> None:
+        document = _run_document()
+        document.update(
+            {
+                "schema_version": RUN_SCHEMA_V2,
+                "scenario_sha256": SHA256,
+                "rubric_sha256": SHA256,
+                "suite_sha256": SHA256,
+            }
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            record = load_run_record(_write(temporary, "r.json", document))
+        self.assertEqual(RUN_SCHEMA_V2, record.schema_version)
+        self.assertEqual(SHA256, record.scenario_sha256)
+
+    def test_suite_manifests_are_immutable_and_canonical(self) -> None:
+        baseline = load_suite_manifest(fixture_root() / "suites/baseline-v1.json")
+        article = load_suite_manifest(fixture_root() / "suites/article-reading-v1.json")
+        with self.assertRaises(FrozenInstanceError):
+            baseline.identifier = "changed"  # type: ignore[misc]
+        self.assertEqual(
+            (
+                "conceptual-physics",
+                "practical-programming",
+                "communication-writing",
+            ),
+            baseline.scenario_ids,
+        )
+        self.assertEqual(("article-reading",), article.scenario_ids)
+
+    def test_suite_manifest_rejects_invalid_scenarios_paths_and_contracts(self) -> None:
+        base = {
+            "schema_version": 1,
+            "identifier": "baseline-v1",
+            "scenario_ids": ["conceptual-physics"],
+            "rubric_path": "rubric.json",
+            "report_contract": "baseline-v1",
+        }
+        cases = {
+            "duplicate scenario": {
+                **base,
+                "scenario_ids": ["conceptual-physics", "conceptual-physics"],
+            },
+            "unknown scenario": {**base, "scenario_ids": ["missing-scenario"]},
+            "traversal rubric path": {**base, "rubric_path": "../rubric.json"},
+            "unknown report contract": {**base, "report_contract": "unknown"},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            for label, document in cases.items():
+                with self.subTest(label=label), self.assertRaises(ValueError):
+                    load_suite_manifest(_write(temporary, f"{label}.json", document))
+
+    def test_fixture_sha256_matches_file_bytes(self) -> None:
+        path = fixture_root() / "rubric.json"
+        self.assertEqual(len(fixture_sha256(path)), 64)
+        suite_hash, rubric_hash, scenario_hashes = manifest_fixture_identities(
+            load_suite_manifest(fixture_root() / "suites/baseline-v1.json")
+        )
+        self.assertEqual(fixture_sha256(path), rubric_hash)
+        self.assertEqual(3, len(scenario_hashes))
+        self.assertEqual(
+            fixture_sha256(fixture_root() / "suites/baseline-v1.json"),
+            suite_hash,
+        )

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "identifier": "baseline-v1",
+  "scenario_ids": [
+    "conceptual-physics",
+    "practical-programming",
+    "communication-writing"
+  ],
+  "rubric_path": "rubric.json",
+  "report_contract": "baseline-v1"
+}
