@@ -331,6 +331,31 @@ class BundleLayoutTests(unittest.TestCase):
         with self.assertRaises(IntegrityError):
             validate_source_bundle(bundle_path, bundle_path.name)
 
+    def test_rejects_nested_directory_in_sections(self) -> None:
+        bundle_path = self._write_minimal_bundle()
+        nested = bundle_path / "sections" / "nested"
+        nested.mkdir()
+        with self.assertRaises(IntegrityError) as context:
+            validate_source_bundle(bundle_path, bundle_path.name)
+        self.assertIn("nested directory", str(context.exception).lower())
+
+    def test_rejects_nested_file_in_sections(self) -> None:
+        bundle_path = self._write_minimal_bundle()
+        nested_dir = bundle_path / "sections" / "nested"
+        nested_dir.mkdir(parents=True)
+        source = bundle_path / "sections" / "0001.txt"
+        payload = source.read_text("utf-8")
+        (nested_dir / "0001.txt").write_text(payload, encoding="utf-8")
+        with self.assertRaises(IntegrityError):
+            validate_source_bundle(bundle_path, bundle_path.name)
+
+    def test_rejects_extra_file_in_sections(self) -> None:
+        bundle_path = self._write_minimal_bundle()
+        (bundle_path / "sections" / "notes.txt").write_text("extra", encoding="utf-8")
+        with self.assertRaises(IntegrityError) as context:
+            validate_source_bundle(bundle_path, bundle_path.name)
+        self.assertIn("unexpected entry", str(context.exception).lower())
+
     @unittest.skipUnless(os.name == "nt", "Windows reparse-point regression")
     def test_rejects_reparse_backed_sections_directory(self) -> None:
         bundle_path = self._write_minimal_bundle()

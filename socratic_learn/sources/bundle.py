@@ -47,6 +47,7 @@ _ALLOWED_MEDIA_TYPES = frozenset(
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CHUNK_NAME_RE = re.compile(r"^(\d{4})\.txt$")
+_SECTIONS_CHILD_RE = re.compile(r"^sections/\d{4}\.txt$")
 _INDEX_LINE_RE = re.compile(r"^- (.+): sections/(\d{4})\.txt$")
 
 
@@ -228,12 +229,13 @@ def _validate_sections(
 ) -> dict[str, str]:
     if not sections_entry.directory:
         raise _bundle_invalid("sections entry is not a directory")
-    chunk_entries = [
-        entry
-        for entry in tracked.entries
-        if entry.relative.startswith("sections/") and not entry.directory
-    ]
-    chunk_entries.sort(key=lambda entry: entry.relative)
+    section_children = [entry for entry in tracked.entries if entry.relative.startswith("sections/")]
+    for entry in section_children:
+        if entry.directory:
+            raise _bundle_invalid("sections directory contains a nested directory")
+        if not _SECTIONS_CHILD_RE.fullmatch(entry.relative):
+            raise _bundle_invalid("sections directory contains an unexpected entry")
+    chunk_entries = sorted(section_children, key=lambda entry: entry.relative)
     if not chunk_entries:
         raise _bundle_invalid("bundle has no chunk files")
 
