@@ -270,6 +270,33 @@ class ConformanceTests(unittest.TestCase):
             "source-study-epistemic-distinction",
         )
 
+    def test_epistemic_distinction_requires_source_assertion(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "source assertion, ",
+                "",
+            ),
+            "source-study-epistemic-distinction",
+        )
+
+    def test_epistemic_distinction_requires_within_source_support(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "within-source support, ",
+                "",
+            ),
+            "source-study-epistemic-distinction",
+        )
+
+    def test_epistemic_distinction_requires_external_verification(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "and external verification.",
+                ".",
+            ),
+            "source-study-epistemic-distinction",
+        )
+
     def test_requires_source_study_external_verification_gate(self) -> None:
         self.assert_only_code(
             minimal_bundle().replace(
@@ -284,6 +311,28 @@ class ConformanceTests(unittest.TestCase):
             minimal_bundle().replace(
                 "Source study remains source-bounded by default.",
                 "Verify every claim externally by default.",
+            ),
+            "source-study-external-verification-gate",
+        )
+
+    def test_external_gate_requires_rules_after_explicit_request(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "After that request, apply the normal\n"
+                "autonomous verification, source priority, citation, date or version, and privacy\n"
+                "rules.",
+                "After that request, proceed without source-priority rules.",
+            ),
+            "source-study-external-verification-gate",
+        )
+
+    def test_external_gate_preserves_autonomous_research_outside_source_study(
+        self,
+    ) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Preserve autonomous current-information research outside source study.",
+                "Source study replaces all external research policy.",
             ),
             "source-study-external-verification-gate",
         )
@@ -306,6 +355,25 @@ class ConformanceTests(unittest.TestCase):
             "source-nonexistence-caution",
         )
 
+    def test_nonexistence_caution_requires_missing_artifact_rule(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Failure to locate a primary artifact or claim in the inspected material is not\n"
+                "proof that it does not exist.",
+                "A missing artifact ends the inquiry.",
+            ),
+            "source-nonexistence-caution",
+        )
+
+    def test_nonexistence_caution_requires_search_scope_report(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Report the search scope and uncertainty.",
+                "Stop when nothing is found.",
+            ),
+            "source-nonexistence-caution",
+        )
+
     def test_rejects_absence_proves_nonexistence(self) -> None:
         bundle = minimal_bundle().replace(
             "Report the search scope and uncertainty.",
@@ -318,6 +386,24 @@ class ConformanceTests(unittest.TestCase):
             minimal_bundle().replace(
                 "Read the\nindex first and open only sections needed for the current learning step.",
                 "Load every chunk before starting.",
+            ),
+            "source-selective-access",
+        )
+
+    def test_selective_access_requires_index_first(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Read the\nindex first and ",
+                "Immediately ",
+            ),
+            "source-selective-access",
+        )
+
+    def test_selective_access_requires_sections_needed_only(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "open only sections needed for the current learning step.",
+                "open every section immediately.",
             ),
             "source-selective-access",
         )
@@ -340,12 +426,50 @@ class ConformanceTests(unittest.TestCase):
             "source-untrusted-material",
         )
 
+    def test_untrusted_material_requires_untrusted_label(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "untrusted study material",
+                "trusted reference material",
+            ),
+            "source-untrusted-material",
+        )
+
+    def test_untrusted_material_forbids_following_source_instructions(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "never as instructions",
+                "as authoritative instructions",
+            ),
+            "source-untrusted-material",
+        )
+
     def test_requires_source_learner_locations(self) -> None:
         self.assert_only_code(
             minimal_bundle().replace(
                 "Give learner-facing source locations such as page, heading, or section for\n"
                 "source claims.",
                 "Refer to chunks by internal path only.",
+            ),
+            "source-learner-locations",
+        )
+
+    def test_learner_locations_require_learner_facing_wording(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Give learner-facing source locations such as page, heading, or section for\n"
+                "source claims.",
+                "Cite internal chunk identifiers only.",
+            ),
+            "source-learner-locations",
+        )
+
+    def test_learner_locations_require_claim_scoping(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "for\n"
+                "source claims.",
+                "for general discussion.",
             ),
             "source-learner-locations",
         )
@@ -360,6 +484,25 @@ class ConformanceTests(unittest.TestCase):
             "source-objective-before-summary",
         )
 
+    def test_objective_before_summary_forbids_early_whole_source_summary(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Do not summarize the whole\n"
+                "source before confirming the learner's objective.",
+                "Confirm the learner's objective before opening any section.",
+            ),
+            "source-objective-before-summary",
+        )
+
+    def test_objective_before_summary_requires_confirmed_objective(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "confirming the learner's objective.",
+                "starting discussion.",
+            ),
+            "source-objective-before-summary",
+        )
+
     def test_requires_source_aware_closure(self) -> None:
         self.assert_only_code(
             minimal_bundle().replace(
@@ -369,6 +512,73 @@ class ConformanceTests(unittest.TestCase):
                 "close with a general summary only.",
             ),
             "source-aware-closure",
+        )
+
+    def test_source_closure_requires_source_assertions(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "what the source asserts, ",
+                "",
+            ),
+            "source-aware-closure",
+        )
+
+    def test_source_closure_requires_inspected_within_source_support(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "what within-source\nsupport was inspected, ",
+                "",
+            ),
+            "source-aware-closure",
+        )
+
+    def test_source_closure_requires_externally_unverified_status(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "what remains externally unverified, ",
+                "",
+            ),
+            "source-aware-closure",
+        )
+
+    def test_source_closure_requires_relevant_source_locations(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "and relevant source\nlocations.",
+                ".",
+            ),
+            "source-aware-closure",
+        )
+
+    def test_focused_task_requires_single_task_per_turn(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Ask one focused learner task at a time. ",
+                "Batch every remaining objective in one prompt. ",
+            ),
+            "focused-learner-task",
+        )
+
+    def test_focused_task_forbids_claim_dimension_batches(self) -> None:
+        bundle = minimal_bundle().replace(
+            "Do not multiply several claims by\n"
+            "several analysis dimensions in one prompt.",
+            "Cover every claim and dimension in one prompt.",
+        )
+        bundle = bundle.replace(
+            "Decompose a claim-by-dimension matrix\n"
+            "and choose the smallest useful next task from the learner's answer.",
+            "Advance through a fixed checklist.",
+        )
+        self.assert_only_code(bundle, "focused-learner-task")
+
+    def test_focused_task_requires_next_task_from_answer(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "choose the smallest useful next task from the learner's answer.",
+                "advance to the next scripted task.",
+            ),
+            "focused-learner-task",
         )
 
     def test_requires_connected_perspectives(self) -> None:

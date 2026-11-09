@@ -215,7 +215,10 @@ _CONTRACTS = (
                 "failure to locate",
                 "not proof that it does not exist",
             ),
-            ("search scope", "uncertainty"),
+            (
+                "report the search scope",
+                "report the search scope and uncertainty",
+            ),
         ),
         "missing artifacts are treated as proof of nonexistence or without search scope",
         "report search scope and uncertainty when a claim or artifact is not found",
@@ -291,10 +294,7 @@ _CONTRACTS = (
                 "support was inspected",
             ),
             ("externally unverified",),
-            (
-                "relevant source location",
-                "source locations",
-            ),
+            ("relevant source locations",),
         ),
         "source-study closure omits assertions, inspected support, unverified status, or locations",
         "close source study with what the source asserts, inspected within-source support, "

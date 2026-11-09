@@ -465,8 +465,8 @@ class RepositoryValidationTests(unittest.TestCase):
         ).lower()
 
         for clause in (
-            "`protocol_version`: exact protocol version `1.1.0`",
-            "`conformance.version` is integer `2`",
+            "`protocol_version`: exact protocol version `1.2.0`",
+            "`conformance.version` is integer `3`",
             "silent orchestration",
             "vocabulary readiness",
             "connected perspectives",
@@ -475,7 +475,9 @@ class RepositoryValidationTests(unittest.TestCase):
             "agent-led route",
             "silent self-review",
             "autonomous current-information research",
-            "protocol `1.1.0`",
+            "source-study external-verification gate",
+            "source-aware closure",
+            "protocol `1.2.0`",
         ):
             with self.subTest(clause=clause):
                 self.assertIn(clause, text)

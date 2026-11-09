@@ -12,7 +12,7 @@ python -m socratic_learn build
 
 - `schema_version`: integer `2`. Readers reject other schema versions.
 - `product`: exact identifier `socratic-learn`.
-- `protocol_version`: exact protocol version `1.1.0`. Protocol behavior changes
+- `protocol_version`: exact protocol version `1.2.0`. Protocol behavior changes
   require an explicit version change and compatible readers.
 - `language`: `en`, identifying the language of generated instructions.
 - `targets`: the ordered array `generic`, `cursor`, `claude-code`, and `pi`.
@@ -51,14 +51,18 @@ verify the bundle hash before planning any publication.
 
 ## Conformance and session fields
 
-`conformance.version` is integer `2`.
+`conformance.version` is integer `3`.
 `conformance.required_diagnostic_codes` is the exact ordered set of behavioral
 checks enforced by the builder, including observable outcome, bounded
 diagnosis, responsive follow-up, active return after exposition, evidence-based
 closure, private state, capability fallbacks, mathematical and volatile-claim
 evidence rules, silent orchestration, vocabulary readiness, connected
 perspectives, productive effort, graduated support, agent-led route, silent
-self-review, and autonomous current-information research.
+self-review, autonomous current-information research, focused learner task,
+source-study epistemic distinction, source-study external-verification gate,
+source nonexistence caution, selective source access, untrusted source material,
+source learner locations, source objective before summary, and source-aware
+closure.
 
 `session_headings` contains these exact values in order:
 
@@ -77,7 +81,7 @@ self-review, and autonomous current-information research.
 
 Schema version describes the JSON shape and validation rules. Protocol version
 describes tutor behavior. This release accepts only schema `2` and protocol
-`1.1.0`; it does not silently migrate unknown versions. Generated artifacts,
+`1.2.0`; it does not silently migrate unknown versions. Generated artifacts,
 install receipts, and runtime code must agree before installation or update.
 
 Schema-2 installation receipts are separate from the distribution manifest.
