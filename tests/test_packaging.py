@@ -12,10 +12,13 @@ from pathlib import Path
 
 
 class PackagingTests(unittest.TestCase):
-    def test_runtime_declares_supported_pypdf_major(self) -> None:
+    def test_runtime_declares_exact_pypdf_dependency(self) -> None:
         root = Path(__file__).resolve().parents[1]
         project = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))
-        self.assertIn("pypdf>=7.0,<8", project["project"]["dependencies"])
+        self.assertEqual(
+            ["pypdf>=7.0,<8"],
+            project["project"]["dependencies"],
+        )
 
     def test_native_spec_collects_pypdf(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -178,3 +181,69 @@ class PackagingTests(unittest.TestCase):
                 version.stdout,
             )
             self.assertEqual(2, module.returncode, module.stderr)
+
+    def test_installed_wheel_read_smoke_for_each_adapter(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        from tests.read_smoke import (
+            AgentName,
+            assert_no_repository_mutation,
+            assert_private_bundle_boundary,
+            assert_read_receipt_contract,
+            load_receipt,
+            prepare_installed_read_smoke,
+            repository_state,
+            run_installed_read,
+        )
+
+        repository = Path(__file__).resolve().parents[1]
+        before_repository = repository_state(repository)
+        fixture = repository / "tests/fixtures/sources/minimal-text.pdf"
+        goal = "explain its evidence"
+        agents: tuple[AgentName, ...] = ("pi", "claude", "antigravity")
+
+        with TemporaryDirectory() as temporary:
+            smoke_root = Path(temporary)
+            pdf = smoke_root / "minimal-text.pdf"
+            pdf.write_bytes(fixture.read_bytes())
+            layout = prepare_installed_read_smoke(repository, smoke_root)
+            fake_bin = smoke_root / "fake-bin"
+            sibling = smoke_root / "untouched-sibling" / "nested" / "sentinel.bin"
+            sibling.parent.mkdir(parents=True)
+            sentinel = b"\x00UNCHANGED\xff\n"
+            sibling.write_bytes(sentinel)
+            before_launch = repository_state(repository)
+
+            for agent in agents:
+                with self.subTest(agent=agent):
+                    layout.record.unlink(missing_ok=True)
+                    result = run_installed_read(
+                        layout,
+                        agent=agent,
+                        pdf_path=pdf,
+                        goal=goal,
+                        fake_bin=fake_bin,
+                    )
+                    self.assertEqual(
+                        17,
+                        result.returncode,
+                        result.stdout + result.stderr,
+                    )
+                    receipt = load_receipt(layout.record)
+                    workspace = layout.home / "learning"
+                    assert_read_receipt_contract(
+                        receipt,
+                        agent=agent,
+                        goal=goal,
+                        expected_cwd=workspace.resolve(),
+                    )
+
+            assert_no_repository_mutation(repository, before_launch)
+            assert_private_bundle_boundary(
+                layout,
+                repository=repository,
+                sibling_sentinel=sibling,
+                sentinel_before=sentinel,
+            )
+
+        self.assertEqual(before_repository, repository_state(repository))

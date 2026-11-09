@@ -54,41 +54,18 @@ jobs:
         run: python tests/validate_repository.py
       - name: Build wheel and source distribution
         run: python -m build --outdir release-dist
-      - name: Smoke test installed socratic --version
+      - name: Smoke test installed socratic read
         shell: python
         run: |
           import pathlib
-          import subprocess
           import sys
-          import venv
 
           root = pathlib.Path.cwd()
-          environment = root / "package-smoke"
-          venv.EnvBuilder(with_pip=True).create(environment)
-          scripts = environment / ("Scripts" if sys.platform == "win32" else "bin")
-          python = scripts / ("python.exe" if sys.platform == "win32" else "python")
-          socratic = scripts / ("socratic.exe" if sys.platform == "win32" else "socratic")
-          wheel = next((root / "release-dist").glob("*.whl"))
-          subprocess.run(
-              [str(python), "-m", "pip", "install", str(wheel)],
-              check=True,
-          )
-          subprocess.run([str(socratic), "--version"], check=True)
-          fixture = root / "tests" / "fixtures" / "sources" / "minimal-text.pdf"
-          subprocess.run(
-              [
-                  str(python),
-                  "-c",
-                  (
-                      "from pypdf import PdfReader; "
-                      "text = PdfReader(r'"
-                      + str(fixture)
-                      + "').pages[0].extract_text() or ''; "
-                      "assert 'Evidence' in text"
-                  ),
-              ],
-              check=True,
-          )
+          sys.path.insert(0, str(root))
+          # Gate: socratic read --agent pi minimal-text.pdf explain its evidence
+          from tests.read_smoke import run_wheel_read_smoke
+
+          run_wheel_read_smoke(root)
       - uses: actions/upload-artifact@v4
         with:
           name: python-package
@@ -123,7 +100,7 @@ jobs:
         run: python tests/validate_repository.py
       - name: Build native executable
         run: python -m PyInstaller socratic-learn.spec --noconfirm --distpath dist-native --workpath build-native
-      - name: Rename and smoke test socratic --version
+      - name: Rename and smoke test frozen socratic read
         shell: python
         env:
           RELEASE_PLATFORM: ${{ matrix.platform }}
@@ -132,10 +109,13 @@ jobs:
           import os
           import pathlib
           import shutil
-          import subprocess
           import sys
 
           root = pathlib.Path.cwd()
+          sys.path.insert(0, str(root))
+          # Gate: socratic read --agent pi minimal-text.pdf explain its evidence
+          from tests.read_smoke import run_frozen_read_smoke
+
           source = root / "dist-native" / (
               "socratic.exe" if sys.platform == "win32" else "socratic"
           )
@@ -145,22 +125,7 @@ jobs:
           )
           destination.parent.mkdir()
           shutil.move(source, destination)
-          subprocess.run([str(destination.resolve()), "--version"], check=True)
-          fixture = root / "tests" / "fixtures" / "sources" / "minimal-text.pdf"
-          subprocess.run(
-              [
-                  sys.executable,
-                  "-c",
-                  (
-                      "from pypdf import PdfReader; "
-                      "text = PdfReader(r'"
-                      + str(fixture)
-                      + "').pages[0].extract_text() or ''; "
-                      "assert 'Evidence' in text"
-                  ),
-              ],
-              check=True,
-          )
+          run_frozen_read_smoke(destination.resolve(), root)
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.platform }}

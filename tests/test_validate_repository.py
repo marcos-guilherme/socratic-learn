@@ -119,6 +119,7 @@ README_HEADINGS = (
     "## Engineering evidence",
     "## Evaluation status",
     "## Quick start",
+    "## Source-grounded reading",
     "## Supported hosts and project adapters",
     "## Privacy, security, and limitations",
     "## Development and documentation",
@@ -1973,7 +1974,8 @@ class RepositoryValidationTests(unittest.TestCase):
             "python -m unittest discover",
             "python tests/validate_repository.py",
             "python -m PyInstaller socratic-learn.spec",
-            "socratic --version",
+            "run_wheel_read_smoke",
+            "run_frozen_read_smoke",
             "actions/download-artifact@v4",
             "hashlib.sha256",
             "release-manifest.schema.json",
@@ -2012,13 +2014,23 @@ class RepositoryValidationTests(unittest.TestCase):
         tests = "python -m unittest discover"
         self.assertIn(install, normal)
         self.assertIn(wheel, normal)
-        self.assertIn("socratic --version", normal)
+        self.assertIn("run_wheel_read_smoke", normal)
         self.assertLess(normal.index(install), normal.index(tests))
         self.assertNotIn("PyInstaller", normal)
         self.assertNotIn("--no-deps", release)
         self.assertNotIn("--no-deps", normal)
-        self.assertIn("minimal-text.pdf", release)
-        self.assertIn("minimal-text.pdf", normal)
+        for marker in (
+            "run_wheel_read_smoke",
+            "socratic read --agent pi",
+            "minimal-text.pdf",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, release)
+                self.assertIn(marker, normal)
+        for marker in ("run_frozen_read_smoke",):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, release)
+        self.assertNotIn("from pypdf import PdfReader", normal)
 
     def test_pyproject_runtime_dependency_is_validated(self) -> None:
         temp, root = self.make_root()
@@ -2032,16 +2044,35 @@ class RepositoryValidationTests(unittest.TestCase):
             validate(root),
         )
 
+    def test_release_workflow_rejects_interpreter_only_pdf_smoke(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        source_root = Path(__file__).resolve().parents[1]
+        normal = root / ".github/workflows/native-python.yml"
+        shutil.copy2(source_root / ".github/workflows/native-python.yml", normal)
+        normal.write_text(
+            normal.read_text(encoding="utf-8").replace(
+                "run_wheel_read_smoke(root)",
+                'subprocess.run(["python", "-c", "from pypdf import PdfReader"], check=True)',
+            ).replace(
+                "from tests.read_smoke import run_wheel_read_smoke",
+                "import subprocess",
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertIn(
+            "must not rely on interpreter-only PdfReader smoke",
+            "\n".join(validate(root)),
+        )
+
     def test_release_workflow_rejects_no_dependency_wheel_install(self) -> None:
         temp, root = self.make_root()
         self.addCleanup(temp.cleanup)
         release = root / ".github/workflows/release.yml"
         release.write_text(
-            release.read_text(encoding="utf-8").replace(
-                '"install", str(wheel)',
-                '"install", "--no-deps", str(wheel)',
-                1,
-            ),
+            release.read_text(encoding="utf-8")
+            + '\n          subprocess.run(["pip", "install", "--no-deps", "wheel"], check=True)\n',
             encoding="utf-8",
         )
 

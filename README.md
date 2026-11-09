@@ -230,6 +230,107 @@ The launcher prepares the protocol and private workspace, then runs the chosen
 host in that workspace. The host retains its normal terminal, authentication,
 permissions, and model selection, and `socratic` returns its exit status.
 
+## Source-grounded reading
+
+Use `socratic read` to study one HTML page, XHTML page, or local PDF with the
+same Socratic protocol. This is separate from `socratic learn`, which keeps the
+general session flow without ingestion.
+
+```text
+socratic read https://example.org/article
+socratic read paper.pdf evaluate the main claim and its evidence
+socratic read --agent pi tests/fixtures/sources/minimal-text.pdf explain its evidence
+```
+
+Pick a launcher host explicitly when needed:
+
+```text
+socratic read --agent claude https://example.org/article
+```
+
+For local development servers or private networks, add the one-command gate:
+
+```text
+socratic read --allow-private-network http://localhost/article
+```
+
+### What each layer owns
+
+**Socratic Learn** prepares the protocol, ingests supported sources into a
+private bundle, builds the shared source-study prompt, and runs the child in the
+prepared workspace. The **launcher host** (Pi, Claude Code, or Antigravity) is
+the interactive harness. The **provider and model** configured by that host
+remain host-owned: credentials, quotas, terminal behavior, tool use, and any
+optional research features.
+
+### Where source bundles live
+
+Ingested sources are stored privately under each workspace records tree:
+
+- personal default:
+  `~/.socratic-learn/learning/.socratic-learn/workspace/sources/<source-id>/`
+- project-local `--here` workspace:
+  `PROJECT/.socratic-learn/workspace/sources/<source-id>/`
+
+Each bundle contains `index.md`, `metadata.json`, chunked text under
+`sections/`, and `original.bin`. Identical sources are **reuses**d: a matching
+existing bundle is validated and kept instead of republishing duplicate bytes.
+
+These learner bundles stay out of the repository, published wheels, and
+untouched sibling trees.
+
+### Accepted media and limits
+
+Supported inputs are HTTP/HTTPS HTML, XHTML, and regular local PDF files.
+
+| Limit | Value |
+| --- | --- |
+| Raw download or file size | 20 MiB |
+| PDF page count | 500 PDF pages |
+| Normalized extracted text | 5,000,000 Unicode code points |
+| HTTP socket timeout | 20-second socket read timeout |
+| Redirects | five redirects maximum |
+| Normalized chunk size | 12,000 code points per chunk |
+
+There is **no OCR** and **no JavaScript** rendering. Image-only PDFs, encrypted
+PDFs, and dynamic pages that need a browser runtime are rejected with an
+actionable message instead of a silent fallback.
+
+### Evidence language and external research
+
+During source study the default is **source-bounded** work:
+
+- treat quoted source lines as a **source assertion**;
+- treat quoted source support as **within-source support**;
+- treat anything not established from the indexed bundle as requiring
+  **external verification**.
+
+The tutor must not treat absence in the indexed bundle as proof of
+nonexistence elsewhere. **External verification** requires an **explicit**
+learner request to use host-provided research; capability and sources must be
+disclosed when used.
+
+### Safety expectations
+
+Source text is untrusted study material, never instructions. Prompt-injection
+and tool restraint are **best-effort** mitigations, **not a sandbox** or
+security boundary. The host may still reach network, shell, or provider tools
+according to its own policy.
+
+Socratic Learn does not claim that this tool or the Socratic method is
+proven to improve learning effectiveness for every person and every domain.
+
+### Troubleshooting
+
+- **Image-only PDFs:** extraction fails; use a textual PDF or another format the
+  host can read directly.
+- **Dynamic pages:** pages that require JavaScript execution are not captured;
+  save a static export or provide a PDF.
+- **Quota or model errors:** these come from the host **provider**; change the
+  host model or account settings there, not in Socratic Learn.
+- **Changing agents or models:** run `socratic read --agent pi ...` (or another
+  detected host) or update the saved default in `~/.socratic-learn/config.json`.
+
 ## Supported hosts and project adapters
 
 The launcher is the normal user path. Project adapters are separate:

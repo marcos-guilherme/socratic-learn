@@ -32,43 +32,18 @@ jobs:
         run: python tests/validate_repository.py
       - name: Build wheel
         run: python -m build --wheel --outdir "${{ runner.temp }}/wheelhouse"
-      - name: Smoke test installed socratic --version
+      - name: Smoke test installed socratic read
         shell: python
         run: |
-          import os
           import pathlib
-          import subprocess
           import sys
-          import venv
 
           root = pathlib.Path.cwd()
-          temporary = pathlib.Path(os.environ["RUNNER_TEMP"])
-          environment = temporary / "package-smoke"
-          venv.EnvBuilder(with_pip=True).create(environment)
-          scripts = environment / ("Scripts" if sys.platform == "win32" else "bin")
-          python = scripts / ("python.exe" if sys.platform == "win32" else "python")
-          socratic = scripts / ("socratic.exe" if sys.platform == "win32" else "socratic")
-          wheel = next((temporary / "wheelhouse").glob("*.whl"))
-          subprocess.run(
-              [str(python), "-m", "pip", "install", str(wheel)],
-              check=True,
-          )
-          subprocess.run([str(socratic), "--version"], check=True)
-          fixture = root / "tests" / "fixtures" / "sources" / "minimal-text.pdf"
-          subprocess.run(
-              [
-                  str(python),
-                  "-c",
-                  (
-                      "from pypdf import PdfReader; "
-                      "text = PdfReader(r'"
-                      + str(fixture)
-                      + "').pages[0].extract_text() or ''; "
-                      "assert 'Evidence' in text"
-                  ),
-              ],
-              check=True,
-          )
+          sys.path.insert(0, str(root))
+          # Gate: socratic read --agent pi minimal-text.pdf explain its evidence
+          from tests.read_smoke import run_wheel_read_smoke
+
+          run_wheel_read_smoke(root)
       - name: Smoke install update and doctor
         shell: python
         run: |

@@ -105,6 +105,54 @@ class UniversalSmokeTests(unittest.TestCase):
                     snapshot[relative] = ("file", path.read_bytes())
         return snapshot
 
+    def test_installed_wheel_read_receipt_is_immutable_across_adapters(self) -> None:
+        from tests.read_smoke import (
+            assert_no_repository_mutation,
+            load_receipt,
+            prepare_installed_read_smoke,
+            repository_state,
+            run_installed_read,
+        )
+
+        repository = Path(__file__).resolve().parents[1]
+        before_repository = repository_state(repository)
+        fixture = repository / "tests/fixtures/sources/minimal-text.pdf"
+        goal = "explain its evidence"
+
+        with TemporaryDirectory() as temporary:
+            smoke_root = Path(temporary)
+            pdf = smoke_root / "minimal-text.pdf"
+            pdf.write_bytes(fixture.read_bytes())
+            layout = prepare_installed_read_smoke(repository, smoke_root)
+            fake_bin = smoke_root / "fake-bin"
+            before_launch = repository_state(repository)
+
+            payloads: dict[str, str] = {}
+            for agent in ("pi", "claude", "antigravity"):
+                with self.subTest(agent=agent):
+                    layout.record.unlink(missing_ok=True)
+                    result = run_installed_read(
+                        layout,
+                        agent=agent,  # type: ignore[arg-type]
+                        pdf_path=pdf,
+                        goal=goal,
+                        fake_bin=fake_bin,
+                    )
+                    self.assertEqual(
+                        17,
+                        result.returncode,
+                        result.stdout + result.stderr,
+                    )
+                    receipt = load_receipt(layout.record)
+                    payload = receipt["payload"]
+                    self.assertIsInstance(payload, str)
+                    payloads[agent] = str(payload)
+
+            self.assertEqual(len(set(payloads.values())), 1)
+            assert_no_repository_mutation(repository, before_launch)
+
+        self.assertEqual(before_repository, repository_state(repository))
+
     def test_installed_wheel_launches_fake_pi_end_to_end(self) -> None:
         repository = Path(__file__).resolve().parents[1]
         before_repository = self._repository_state(repository)

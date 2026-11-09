@@ -185,10 +185,55 @@ README_RUNTIME_REQUIREMENTS = (
     "pypdf",
     "textual pdf extraction",
 )
-WHEEL_PDF_SMOKE_MARKERS = (
+WHEEL_READ_SMOKE_MARKERS = (
+    "tests.read_smoke",
+    "run_wheel_read_smoke",
+    "socratic read --agent pi",
     "minimal-text.pdf",
+)
+FROZEN_READ_SMOKE_MARKERS = (
+    "run_frozen_read_smoke",
+    "socratic read --agent pi",
+    "minimal-text.pdf",
+)
+INTERPRETER_ONLY_PDF_SMOKE_MARKERS = (
+    "from pypdf import PdfReader",
     "PdfReader",
-    "Evidence",
+)
+README_READ_REQUIREMENTS = (
+    "socratic read https://example.org/article",
+    "socratic read paper.pdf",
+    "socratic read --agent pi",
+    "--allow-private-network",
+    "socratic learn",
+    "launcher host",
+    "provider",
+    "model",
+    "~/.socratic-learn/learning/.socratic-learn/workspace/",
+    ".socratic-learn/workspace/sources/",
+    "reuses",
+    "20 mib",
+    "500 pdf pages",
+    "5,000,000",
+    "20-second",
+    "five redirects",
+    "12,000",
+    "no ocr",
+    "no javascript",
+    "html",
+    "xhtml",
+  "pdf",
+    "source assertion",
+    "within-source support",
+    "external verification",
+    "source-bounded",
+    "explicit",
+    "best-effort",
+    "not a sandbox",
+    "image-only",
+    "dynamic pages",
+    "quota",
+    "changing agents",
 )
 README_STANDARD_LIBRARY_RUNTIME_CLAIM = (
     "standard-library python 3.11+ with native and pipx"
@@ -1110,7 +1155,7 @@ def validate_release_automation(root: Path) -> list[str]:
 
         rename_step = workflow_step(
             native,
-            "Rename and smoke test socratic --version",
+            "Rename and smoke test frozen socratic read",
         )
         rename_valid = workflow_python_assignment_matches(
             rename_step,
@@ -1138,7 +1183,10 @@ def validate_release_automation(root: Path) -> list[str]:
             or pyinstaller not in native
             or native.index(suite) > native.index(pyinstaller)
             or "python tests/validate_repository.py" not in native
-            or "--version" not in native
+            or (
+                "--version" not in native
+                and "run_frozen_read_smoke" not in native
+            )
         ):
             errors.append(
                 "Every native release build must test and validate before PyInstaller"
@@ -1214,9 +1262,34 @@ def validate_release_automation(root: Path) -> list[str]:
             errors.append(
                 f"{label} must install wheels with declared dependencies"
             )
-        if not all(marker in workflow for marker in WHEEL_PDF_SMOKE_MARKERS):
+        if not all(marker in workflow for marker in WHEEL_READ_SMOKE_MARKERS):
             errors.append(
-                f"{label} must smoke-test textual PDF extraction with pypdf"
+                f"{label} must smoke-test installed socratic read with fake hosts"
+            )
+        if any(marker in workflow for marker in INTERPRETER_ONLY_PDF_SMOKE_MARKERS):
+            if "run_wheel_read_smoke" not in workflow and "run_frozen_read_smoke" not in workflow:
+                errors.append(
+                    f"{label} must not rely on interpreter-only PdfReader smoke"
+                )
+    release_path = root / ".github/workflows/release.yml"
+    if release_path.is_file():
+        release = release_path.read_text(encoding="utf-8")
+        native = workflow_job(release, "native")
+        if native and not all(marker in native for marker in FROZEN_READ_SMOKE_MARKERS):
+            errors.append(
+                "Native release builds must smoke-test frozen socratic read with fake hosts"
+            )
+        if any(marker in native for marker in INTERPRETER_ONLY_PDF_SMOKE_MARKERS):
+            if "run_frozen_read_smoke" not in native:
+                errors.append(
+                    "Native release builds must not rely on interpreter-only PdfReader smoke"
+                )
+        python_package = workflow_job(release, "python-package")
+        if python_package and not all(
+            marker in python_package for marker in WHEEL_READ_SMOKE_MARKERS
+        ):
+            errors.append(
+                "Release wheel job must smoke-test installed socratic read with fake hosts"
             )
     if normal_path.is_file():
         normal = normal_path.read_text(encoding="utf-8")
@@ -1228,7 +1301,9 @@ def validate_release_automation(root: Path) -> list[str]:
             or normal.index(install) > normal.index(suite)
         ):
             errors.append("Native safety matrix must install .[build] before tests")
-        if "python -m build --wheel" not in normal or "--version" not in normal:
+        if "python -m build --wheel" not in normal or (
+            "run_wheel_read_smoke" not in normal and "--version" not in normal
+        ):
             errors.append(
                 "Native safety matrix must build and smoke-test an installed wheel"
             )
@@ -1323,6 +1398,18 @@ def validate(root: Path) -> list[str]:
             errors.append(
                 "README.md must not describe the runtime as standard-library-only"
             )
+        read_section = readme_text.split("## Source-grounded reading", 1)
+        read_text = (
+            read_section[1].split("## Supported hosts and project adapters", 1)[0]
+            if len(read_section) == 2
+            else ""
+        )
+        normalized_read = normalize(read_text).lower()
+        if not all(
+            requirement in normalized_read
+            for requirement in README_READ_REQUIREMENTS
+        ):
+            errors.append("README.md is missing source-grounded reading guidance")
         if not all(
             requirement in normalized_readme
             for requirement in README_LAUNCHER_REQUIREMENTS
