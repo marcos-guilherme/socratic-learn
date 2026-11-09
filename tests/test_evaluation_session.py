@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 import json
 import subprocess
 import tempfile
@@ -1031,7 +1032,7 @@ class EvaluationCliTests(unittest.TestCase):
                 command = tuple(argv)
                 calls.append(command)
                 if command == ("git", "branch", "--show-current"):
-                    return CompletedProcess(argv, 0, "feat/semantic-evaluation-runtime-ux\n", "")
+                    return CompletedProcess(argv, 0, "feat/article-reading-mode\n", "")
                 if command == ("agy", "models"):
                     return CompletedProcess(argv, 0, "captured-model\tName\n", "")
                 if command == ("agy", "--version"):
@@ -1396,8 +1397,6 @@ class EvaluationCliTests(unittest.TestCase):
                 self.assertNotIn("Traceback", error.getvalue())
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 class ArticleSourcedSessionTests(unittest.TestCase):
     def test_execute_isolated_run_uses_production_sourced_bootstrap(self) -> None:
@@ -1469,7 +1468,35 @@ class ArticleSourcedSessionTests(unittest.TestCase):
                 captured[0],
                 initial_bootstrap(layout.protocol, scenario.initial_goal),
             )
+            bootstrap = captured[0]
+            forbidden: list[str] = []
+            for line in bootstrap.splitlines():
+                if line.startswith("Source index: "):
+                    forbidden.append(line.removeprefix("Source index: ").strip())
+                if line.startswith("Source metadata: "):
+                    forbidden.append(line.removeprefix("Source metadata: ").strip())
+            protocol_match = re.search(
+                r"protocol at (.+?\.socratic-learn\.prompt\.md)",
+                bootstrap,
+            )
+            if protocol_match:
+                forbidden.append(protocol_match.group(1))
+            record_path = layout.run_dir / "run-record.json"
+            serialized = record_path.read_text(encoding="utf-8")
+            loaded = load_run_record(record_path)
+            self.assertEqual(scenario.initial_goal, loaded.turns[0].learner)
+            self.assertEqual(record.source_fixture_id, loaded.source_fixture_id)
+            self.assertEqual(record.source_fixture_sha256, loaded.source_fixture_sha256)
+            self.assertNotIn("--- SOCRATIC LEARN SOURCE STUDY ---", serialized)
+            for marker in forbidden:
+                self.assertNotIn(marker, serialized)
+            self.assertNotIn(str(layout.runtime_root), serialized)
+            self.assertNotIn(str(layout.records), serialized)
         finally:
             remove_runtime_root(layout, repository)
             temporary.cleanup()
+
+
+if __name__ == "__main__":
+    unittest.main()
 

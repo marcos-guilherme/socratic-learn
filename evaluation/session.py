@@ -236,6 +236,7 @@ def run_session(
     progress: SessionProgress | None = None,
     source_fixture_id: str | None = None,
     source_fixture_sha256: str | None = None,
+    record_initial_request: str | None = None,
 ) -> RunRecord:
     """Run one bootstrap turn followed by at most fifteen adaptive responses."""
     destination = _validated_record_path(record_path)
@@ -277,10 +278,13 @@ def run_session(
         if not tutor_turn.completed:
             raise RuntimeError("tutor returned an incomplete turn")
         tutor_turns.append(tutor_turn)
+        learner_for_record = pending
+        if record_initial_request is not None and not collector.turns:
+            learner_for_record = record_initial_request
         collector.turns.append(
             TurnRecord(
                 number=len(collector.turns) + 1,
-                learner=pending,
+                learner=learner_for_record,
                 tutor=tutor_turn.text,
             )
         )
@@ -483,6 +487,9 @@ def execute_isolated_run(
             progress=progress,
             source_fixture_id=sourced.fixture_id if sourced is not None else None,
             source_fixture_sha256=sourced.fixture_sha256 if sourced is not None else None,
+            record_initial_request=(
+                scenario.initial_goal if sourced is not None else None
+            ),
         )
     except BaseException as error:
         primary = error

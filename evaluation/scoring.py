@@ -220,6 +220,8 @@ def article_reading_passes(scorecard: Scorecard, record: RunRecord) -> bool:
         return False
     if scorecard.total < ARTICLE_RELEASE_MIN_TOTAL:
         return False
+    if len(scorecard.categories) != len(ARTICLE_CATEGORY_IDS):
+        return False
     scores = {
         category.identifier: category.score for category in scorecard.categories
     }

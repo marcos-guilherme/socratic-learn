@@ -947,6 +947,25 @@ class ArticleReleaseGateTests(unittest.TestCase):
         record = self._record(stop_reason="completion_without_evidence")
         self.assertEqual("failed", article_release_status(record, self._scorecard()))
 
+
+    def test_wrong_suite_id_fails_gate(self) -> None:
+        record = replace(self._record(), suite_id="baseline-v1")
+        self.assertFalse(article_reading_passes(self._scorecard(), record))
+
+    def test_missing_rubric_category_fails_gate(self) -> None:
+        categories = tuple(
+            category
+            for category in self._scorecard().categories
+            if category.identifier != "relevant-diagnosis"
+        )
+        scorecard = Scorecard(1, "article-reading", categories, ())
+        self.assertFalse(article_reading_passes(scorecard, self._record()))
+
+    def test_duplicate_rubric_category_fails_gate(self) -> None:
+        categories = self._scorecard().categories + (self._scorecard().categories[0],)
+        scorecard = Scorecard(1, "article-reading", categories, ())
+        self.assertFalse(article_reading_passes(scorecard, self._record()))
+
     def test_rubric_contains_new_critical_failures(self) -> None:
         rubric = load_rubric(fixture_root() / "rubric.json")
         self.assertIn("source-claim-presented-as-externally-verified", rubric.critical_failures)

@@ -72,7 +72,7 @@ from evaluation.session import (
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-EXPECTED_BRANCH = "feat/semantic-evaluation-runtime-ux"
+EXPECTED_BRANCH = "feat/article-reading-mode"
 BLOCKED_EXIT_CODE = 2
 PREFLIGHT_TIMEOUT_SECONDS = 30.0
 PRECHECK_REFUSAL_MESSAGE = "BLOCKED: Semantic evaluation precheck refused.\n"
