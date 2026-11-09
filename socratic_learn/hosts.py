@@ -12,12 +12,14 @@ READ_MODE_DELIMITER = "\n\n--- SOCRATIC LEARN SOURCE STUDY ---\n"
 
 AgentName = Literal["pi", "claude", "antigravity"]
 
+BuildArgv = Callable[[str, Path, str, str | None], tuple[str, ...]]
+
 
 @dataclass(frozen=True)
 class HostAdapter:
     name: AgentName
     executable_names: tuple[str, ...]
-    build_argv: Callable[..., tuple[str, ...]]
+    build_argv: BuildArgv
 
 
 @dataclass(frozen=True)
@@ -30,7 +32,7 @@ def _pi(
     executable: str,
     protocol: Path,
     goal: str,
-    source_study_payload: str | None = None,
+    source_study_payload: str | None,
 ) -> tuple[str, ...]:
     final_prompt = source_study_payload if source_study_payload is not None else goal
     return executable, "--append-system-prompt", str(protocol), final_prompt
@@ -40,7 +42,7 @@ def _claude(
     executable: str,
     protocol: Path,
     goal: str,
-    source_study_payload: str | None = None,
+    source_study_payload: str | None,
 ) -> tuple[str, ...]:
     final_prompt = source_study_payload if source_study_payload is not None else goal
     return executable, "--append-system-prompt-file", str(protocol), final_prompt
@@ -50,7 +52,7 @@ def _antigravity(
     executable: str,
     protocol: Path,
     goal: str,
-    source_study_payload: str | None = None,
+    source_study_payload: str | None,
 ) -> tuple[str, ...]:
     if source_study_payload is not None:
         bootstrap = (
@@ -96,4 +98,6 @@ def command_for(
     source_study_payload: str | None = None,
 ) -> tuple[str, ...]:
     """Build an argument vector without invoking a process."""
+    if source_study_payload is not None and not source_study_payload.strip():
+        raise ValueError("source_study_payload must be nonblank when supplied")
     return adapter.build_argv(executable, protocol, goal, source_study_payload)

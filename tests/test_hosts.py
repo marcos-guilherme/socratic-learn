@@ -171,3 +171,23 @@ class HostAdapterTests(unittest.TestCase):
             f"The learner's initial objective is: {goal}",
             agy_argv[2],
         )
+
+    def test_rejects_blank_source_study_payload_for_every_host(self) -> None:
+        protocol = Path("C:/Learning Home/protocol.md")
+        goal = "learn probability"
+        hosts = (
+            ("pi", "pi"),
+            ("claude", "claude"),
+            ("antigravity", "agy"),
+        )
+        for blank in ("", "   ", "\n\t"):
+            for name, executable in hosts:
+                with self.subTest(host=name, blank=repr(blank)):
+                    with self.assertRaises(ValueError):
+                        command_for(
+                            ADAPTERS[name],
+                            executable,
+                            protocol,
+                            goal,
+                            source_study_payload=blank,
+                        )
