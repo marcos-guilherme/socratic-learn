@@ -41,6 +41,7 @@ jobs:
           import sys
           import venv
 
+          root = pathlib.Path.cwd()
           temporary = pathlib.Path(os.environ["RUNNER_TEMP"])
           environment = temporary / "package-smoke"
           venv.EnvBuilder(with_pip=True).create(environment)
@@ -49,10 +50,25 @@ jobs:
           socratic = scripts / ("socratic.exe" if sys.platform == "win32" else "socratic")
           wheel = next((temporary / "wheelhouse").glob("*.whl"))
           subprocess.run(
-              [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+              [str(python), "-m", "pip", "install", str(wheel)],
               check=True,
           )
           subprocess.run([str(socratic), "--version"], check=True)
+          fixture = root / "tests" / "fixtures" / "sources" / "minimal-text.pdf"
+          subprocess.run(
+              [
+                  str(python),
+                  "-c",
+                  (
+                      "from pypdf import PdfReader; "
+                      "text = PdfReader(r'"
+                      + str(fixture)
+                      + "').pages[0].extract_text() or ''; "
+                      "assert 'Evidence' in text"
+                  ),
+              ],
+              check=True,
+          )
       - name: Smoke install update and doctor
         shell: python
         run: |

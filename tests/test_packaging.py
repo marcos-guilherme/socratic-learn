@@ -1,15 +1,48 @@
 from __future__ import annotations
 
+import io
 import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import unittest
 import zipfile
 from pathlib import Path
 
 
 class PackagingTests(unittest.TestCase):
+    def test_runtime_declares_supported_pypdf_major(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        project = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))
+        self.assertIn("pypdf>=7.0,<8", project["project"]["dependencies"])
+
+    def test_native_spec_collects_pypdf(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "socratic-learn.spec").read_text("utf-8")
+        self.assertIn('collect_submodules("pypdf")', text)
+
+    def test_minimal_text_pdf_fixture_is_readable(self) -> None:
+        from pypdf import PdfReader
+
+        root = Path(__file__).resolve().parents[1]
+        fixture = root / "tests/fixtures/sources/minimal-text.pdf"
+        self.assertTrue(fixture.is_file(), "minimal-text.pdf must be committed")
+        reader = PdfReader(fixture)
+        self.assertIn("Evidence", reader.pages[0].extract_text() or "")
+
+    def test_build_text_pdf_is_deterministic(self) -> None:
+        from pypdf import PdfReader
+
+        from tests.pdf_fixture import build_text_pdf
+
+        pages = ("Evidence paragraph.", "Second page.")
+        first = build_text_pdf(pages)
+        second = build_text_pdf(pages)
+        self.assertEqual(first, second)
+        reader = PdfReader(io.BytesIO(first))
+        self.assertEqual(2, len(reader.pages))
+
     def test_published_archives_exclude_private_evaluation_system(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temporary:
@@ -109,13 +142,20 @@ class PackagingTests(unittest.TestCase):
                     "pip",
                     "--disable-pip-version-check",
                     "install",
-                    "--no-deps",
                     str(wheel),
                 ],
                 check=True,
                 capture_output=True,
                 text=True,
             )
+
+            dependency = subprocess.run(
+                [str(python), "-c", "import pypdf; print(pypdf.__version__)"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(0, dependency.returncode, dependency.stderr)
 
             version = subprocess.run(
                 [str(console), "--version"],

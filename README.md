@@ -117,8 +117,8 @@ evaluation, not an effectiveness claim.
 
 - **Deterministic distribution:** canonical Markdown builds a versioned prompt
   bundle and manifest with reproducible hashes.
-- **Portable runtime:** standard-library Python 3.11+ with native and pipx
-  distribution paths.
+- **Portable runtime:** dependency-light Python 3.11+ with `pypdf` for textual
+  PDF extraction, plus native and pipx distribution paths.
 - **Safe installation:** ownership receipts, no-overwrite
   publication, rollback, and explicit recovery artifacts.
 - **Private by default:** learner records and raw semantic evidence are ignored

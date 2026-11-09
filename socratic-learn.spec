@@ -54,8 +54,10 @@ datas.extend(
     )
 )
 
-hiddenimports = collect_submodules("socratic_learn") + collect_submodules(
-    "learning_tutor"
+hiddenimports = (
+    collect_submodules("socratic_learn")
+    + collect_submodules("learning_tutor")
+    + collect_submodules("pypdf")
 )
 
 analysis = Analysis(

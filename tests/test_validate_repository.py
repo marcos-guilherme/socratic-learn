@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from tests.validate_repository import (
+    RUNTIME_PDF_DEPENDENCY,
     UNSAFE_INSTALLER_PATTERNS,
     main,
     normalize,
@@ -1952,6 +1953,10 @@ class RepositoryValidationTests(unittest.TestCase):
             'socratic = "socratic_learn.cli:entry_point"',
             pyproject,
         )
+        self.assertIn(RUNTIME_PDF_DEPENDENCY, pyproject)
+
+        spec = (root / "socratic-learn.spec").read_text(encoding="utf-8")
+        self.assertIn('collect_submodules("pypdf")', spec)
 
         release = (root / ".github/workflows/release.yml").read_text(
             encoding="utf-8"
@@ -2008,6 +2013,66 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn("socratic --version", normal)
         self.assertLess(normal.index(install), normal.index(tests))
         self.assertNotIn("PyInstaller", normal)
+        self.assertNotIn("--no-deps", release)
+        self.assertNotIn("--no-deps", normal)
+        self.assertIn("minimal-text.pdf", release)
+        self.assertIn("minimal-text.pdf", normal)
+
+    def test_pyproject_runtime_dependency_is_validated(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        pyproject = root / "pyproject.toml"
+        pyproject.write_text("dependencies = []\n", encoding="utf-8")
+
+        self.assertIn(
+            "pyproject.toml must declare exactly "
+            f"{RUNTIME_PDF_DEPENDENCY} as the runtime dependency",
+            validate(root),
+        )
+
+    def test_release_workflow_rejects_no_dependency_wheel_install(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        release = root / ".github/workflows/release.yml"
+        release.write_text(
+            release.read_text(encoding="utf-8").replace(
+                '"install", str(wheel)',
+                '"install", "--no-deps", str(wheel)',
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertIn(
+            "Release workflow must install wheels with declared dependencies",
+            validate(root),
+        )
+
+    def test_readme_runtime_positioning_is_validated(self) -> None:
+        temp, root = self.make_root()
+        self.addCleanup(temp.cleanup)
+        readme = root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "dependency-light Python 3.11+",
+                "standard-library Python 3.11+",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        errors = validate(root)
+        self.assertTrue(
+            any(
+                message in error
+                for error in errors
+                for message in (
+                    "dependency-light runtime with pypdf",
+                    "standard-library-only",
+                )
+            ),
+            errors,
+        )
 
     def test_release_paths_are_required_by_validator(self) -> None:
         temp, root = self.make_root()

@@ -7,6 +7,7 @@ import re
 import stat
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -177,6 +178,20 @@ README_NEGATED_EFFECTIVENESS_PATTERNS = (
         rf"improve{_MARKDOWN_WHITESPACE}learning\b",
         re.IGNORECASE,
     ),
+)
+RUNTIME_PDF_DEPENDENCY = "pypdf>=7.0,<8"
+README_RUNTIME_REQUIREMENTS = (
+    "dependency-light python 3.11+",
+    "pypdf",
+    "textual pdf extraction",
+)
+WHEEL_PDF_SMOKE_MARKERS = (
+    "minimal-text.pdf",
+    "PdfReader",
+    "Evidence",
+)
+README_STANDARD_LIBRARY_RUNTIME_CLAIM = (
+    "standard-library python 3.11+ with native and pipx"
 )
 README_LAUNCHER_REQUIREMENTS = (
     "socratic",
@@ -982,16 +997,27 @@ def version_step_imports_local_package(step: str) -> bool:
 def validate_release_automation(root: Path) -> list[str]:
     errors: list[str] = []
     pyproject = root / "pyproject.toml"
-    if pyproject.is_file() and (
-        'socratic = "socratic_learn.cli:entry_point"'
-        not in pyproject.read_text(encoding="utf-8")
-    ):
-        errors.append("pyproject.toml must map the socratic console entry point")
+    if pyproject.is_file():
+        pyproject_text = pyproject.read_text(encoding="utf-8")
+        if 'socratic = "socratic_learn.cli:entry_point"' not in pyproject_text:
+            errors.append("pyproject.toml must map the socratic console entry point")
+        try:
+            project = tomllib.loads(pyproject_text)
+        except tomllib.TOMLDecodeError as error:
+            errors.append(f"pyproject.toml is invalid: {error}")
+        else:
+            dependencies = project.get("project", {}).get("dependencies", [])
+            if dependencies != [RUNTIME_PDF_DEPENDENCY]:
+                errors.append(
+                    "pyproject.toml must declare exactly "
+                    f"{RUNTIME_PDF_DEPENDENCY} as the runtime dependency"
+                )
 
     spec = root / "socratic-learn.spec"
     if spec.is_file():
         spec_text = spec.read_text(encoding="utf-8")
         required_spec_terms = (
+            'collect_submodules("pypdf")',
             "socratic_learn",
             "learning_tutor",
             "socratic_learn/data",
@@ -1171,6 +1197,27 @@ def validate_release_automation(root: Path) -> list[str]:
             )
 
     normal_path = root / ".github/workflows/native-python.yml"
+    workflow_paths = (
+        (release_path, "Release workflow")
+        if release_path.is_file()
+        else None,
+        (normal_path, "Native safety matrix")
+        if normal_path.is_file()
+        else None,
+    )
+    for entry in workflow_paths:
+        if entry is None:
+            continue
+        path, label = entry
+        workflow = path.read_text(encoding="utf-8")
+        if '"--no-deps"' in workflow or "'--no-deps'" in workflow:
+            errors.append(
+                f"{label} must install wheels with declared dependencies"
+            )
+        if not all(marker in workflow for marker in WHEEL_PDF_SMOKE_MARKERS):
+            errors.append(
+                f"{label} must smoke-test textual PDF extraction with pypdf"
+            )
     if normal_path.is_file():
         normal = normal_path.read_text(encoding="utf-8")
         install = 'python -m pip install -e ".[build]"'
@@ -1258,6 +1305,24 @@ def validate(root: Path) -> list[str]:
             errors.append("README.md is missing portfolio narrative")
         if contains_unsupported_effectiveness_claim(readme_text):
             errors.append("README.md contains an unsupported effectiveness claim")
+        engineering = readme_text.split("## Engineering evidence", 1)
+        engineering_text = normalize(
+            engineering[1].split("## Evaluation status", 1)[0]
+            if len(engineering) == 2
+            else ""
+        ).lower()
+        if not all(
+            requirement in engineering_text
+            for requirement in README_RUNTIME_REQUIREMENTS
+        ):
+            errors.append(
+                "README.md engineering evidence must describe a dependency-light "
+                "runtime with pypdf"
+            )
+        if README_STANDARD_LIBRARY_RUNTIME_CLAIM in engineering_text:
+            errors.append(
+                "README.md must not describe the runtime as standard-library-only"
+            )
         if not all(
             requirement in normalized_readme
             for requirement in README_LAUNCHER_REQUIREMENTS

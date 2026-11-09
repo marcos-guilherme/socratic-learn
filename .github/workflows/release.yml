@@ -70,10 +70,25 @@ jobs:
           socratic = scripts / ("socratic.exe" if sys.platform == "win32" else "socratic")
           wheel = next((root / "release-dist").glob("*.whl"))
           subprocess.run(
-              [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+              [str(python), "-m", "pip", "install", str(wheel)],
               check=True,
           )
           subprocess.run([str(socratic), "--version"], check=True)
+          fixture = root / "tests" / "fixtures" / "sources" / "minimal-text.pdf"
+          subprocess.run(
+              [
+                  str(python),
+                  "-c",
+                  (
+                      "from pypdf import PdfReader; "
+                      "text = PdfReader(r'"
+                      + str(fixture)
+                      + "').pages[0].extract_text() or ''; "
+                      "assert 'Evidence' in text"
+                  ),
+              ],
+              check=True,
+          )
       - uses: actions/upload-artifact@v4
         with:
           name: python-package
@@ -131,6 +146,21 @@ jobs:
           destination.parent.mkdir()
           shutil.move(source, destination)
           subprocess.run([str(destination.resolve()), "--version"], check=True)
+          fixture = root / "tests" / "fixtures" / "sources" / "minimal-text.pdf"
+          subprocess.run(
+              [
+                  sys.executable,
+                  "-c",
+                  (
+                      "from pypdf import PdfReader; "
+                      "text = PdfReader(r'"
+                      + str(fixture)
+                      + "').pages[0].extract_text() or ''; "
+                      "assert 'Evidence' in text"
+                  ),
+              ],
+              check=True,
+          )
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.platform }}

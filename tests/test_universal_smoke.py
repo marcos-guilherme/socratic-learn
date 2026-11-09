@@ -145,7 +145,6 @@ class UniversalSmokeTests(unittest.TestCase):
                     "pip",
                     "install",
                     "--disable-pip-version-check",
-                    "--no-deps",
                     str(wheels[0]),
                 ],
                 check=True,
