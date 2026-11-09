@@ -151,23 +151,22 @@ class EvaluationParserTests(unittest.TestCase):
         )
 
     def test_sample_events_replay_to_completed_tutor_turn(self) -> None:
+        self.assertEqual("1.5.3", self.contract.antigravity_version)
+        self.assertEqual(("/result/response",), self.contract.output_text_pointers)
+
         turn = collect_tutor_turn(
             self.contract.sample_output_events,
             self.contract,
         )
         self.assertEqual(
             TutorTurn(
-                text=(
-                    "STREAM_CONTRACT_OK\n\nYour message doesn't include a learning objective. "
-                    "If you want a learning session, tell me what you want to be able to do at "
-                    "the end, and I'll confirm that outcome with you before any diagnostic "
-                    "questions.\n"
-                ),
-                event_count=5,
+                text="STREAM_CONTRACT_OK\n",
+                event_count=6,
                 completed=True,
             ),
             turn,
         )
+        self.assertNotIn("Your message doesn't include", turn.text)
 
     def test_collect_uses_only_captured_pointers_in_event_order(self) -> None:
         contract = replace(
