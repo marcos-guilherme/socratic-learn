@@ -907,7 +907,7 @@ def publish_tracked_directory(
         return destination
     except PostMutationIdentityError:
         raise
-    except BaseException as error:
+    except Exception as error:
         try:
             remove_tracked_tree(staging)
         except IdentityMismatchError as cleanup_error:

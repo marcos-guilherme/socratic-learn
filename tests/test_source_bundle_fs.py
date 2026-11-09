@@ -100,6 +100,59 @@ class SourceBundleFilesystemTests(unittest.TestCase):
         self.assertFalse((external / "bundle-id").exists())
         self.assertTrue(staging.path.is_dir())
 
+    def test_publish_moves_tracked_staging_to_absent_destination(self) -> None:
+        staging_path = self.root / "staging"
+        staging_path.mkdir()
+        (staging_path / "index.md").write_bytes(b"staged bundle")
+        nested = staging_path / "chunks"
+        nested.mkdir()
+        (nested / "0001.txt").write_bytes(b"chunk one")
+        staging = track_directory(staging_path)
+
+        destination = self.root / "sources" / "bundle-id"
+        destination.parent.mkdir(parents=True)
+
+        published = publish_tracked_directory(
+            staging,
+            destination,
+            root=self.root,
+            validate_existing=lambda _path: False,
+        )
+
+        self.assertEqual(destination, published)
+        self.assertTrue(destination.is_dir())
+        self.assertEqual(b"staged bundle", (destination / "index.md").read_bytes())
+        self.assertEqual(b"chunk one", (destination / "chunks" / "0001.txt").read_bytes())
+        self.assertFalse(staging_path.exists())
+
+    def test_publish_preserves_staging_on_keyboard_interrupt(self) -> None:
+        staging_path = self.root / "staging"
+        staging_path.mkdir()
+        (staging_path / "index.md").write_bytes(b"staged bundle")
+        staging = track_directory(staging_path)
+        destination = self.root / "sources" / "bundle-id"
+        destination.parent.mkdir(parents=True)
+
+        with (
+            mock.patch(
+                "socratic_learn.safe_fs.identity_bound_replace",
+                side_effect=KeyboardInterrupt,
+            ),
+            mock.patch("socratic_learn.safe_fs.remove_tracked_tree") as remove_tree,
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            publish_tracked_directory(
+                staging,
+                destination,
+                root=self.root,
+                validate_existing=lambda _path: False,
+            )
+
+        remove_tree.assert_not_called()
+        self.assertTrue(staging_path.is_dir())
+        self.assertEqual(b"staged bundle", (staging_path / "index.md").read_bytes())
+        self.assertFalse(destination.exists())
+
     def test_publish_reuses_valid_existing_bundle(self) -> None:
         destination = self.root / "sources" / "bundle-id"
         destination.parent.mkdir(parents=True)
