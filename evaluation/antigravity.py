@@ -80,13 +80,18 @@ class ProcessCleanupError(InfrastructureFailure):
         )
 
 
-def initial_bootstrap(protocol: Path, goal: str) -> str:
+def initial_bootstrap(
+    protocol: Path,
+    goal: str,
+    source_study_payload: str | None = None,
+) -> str:
     """Return the public launcher's Antigravity bootstrap without duplicating it."""
     return command_for(
         ADAPTERS["antigravity"],
         "agy",
         protocol,
         goal,
+        source_study_payload=source_study_payload,
     )[2]
 
 

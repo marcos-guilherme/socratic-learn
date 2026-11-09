@@ -16,6 +16,7 @@ from evaluation.isolation import (
     RuleDisclosure,
 )
 from evaluation.sanitize import RedactionRule, assert_tracked_safe, sanitize_text
+from evaluation.scoring import article_release_status
 from evaluation.schema import (
     Finding,
     RUN_SCHEMA_V2,
@@ -413,9 +414,13 @@ def render_baseline_report(
                 [
                     f"- Infrastructure failure: {record.infrastructure_failure or 'unspecified'}",
                     "- Score: not assigned",
-                    "",
                 ]
             )
+            if suite.report_contract == "article-reading-v1":
+                lines.append(
+                    f"- Release gate: {article_release_status(record, None)}"
+                )
+            lines.append("")
             continue
 
         maximum = rubric.maximum_score
@@ -446,6 +451,10 @@ def render_baseline_report(
             "- Critical failures: "
             + (", ".join(scorecard.critical_failures) or "none")
         )
+        if suite.report_contract == "article-reading-v1":
+            lines.append(
+                f"- Release gate: {article_release_status(record, scorecard)}"
+            )
         lines.append("")
         turn_by_number = {turn.number: turn for turn in record.turns}
         for turn_number in sorted(referenced_turns):
@@ -588,6 +597,11 @@ def _validate_scenario_section(lines: list[str]) -> None:
             if index >= len(lines) or lines[index] != "- Score: not assigned":
                 raise ValueError("baseline report infrastructure score is malformed")
             index += 1
+            if index < len(lines) and lines[index].startswith("- Release gate: "):
+                gate = _require_prefixed(lines[index], "- Release gate: ", "release gate")
+                if gate not in {"passed", "failed", "inconclusive"}:
+                    raise ValueError("baseline report release gate is malformed")
+                index += 1
             if index >= len(lines) or lines[index] != "":
                 raise ValueError("baseline report infrastructure result is malformed")
             index += 1
@@ -641,6 +655,11 @@ def _validate_scenario_section(lines: list[str]) -> None:
             "critical failures",
         )
         index += 1
+        if index < len(lines) and lines[index].startswith("- Release gate: "):
+            gate = _require_prefixed(lines[index], "- Release gate: ", "release gate")
+            if gate not in {"passed", "failed", "inconclusive"}:
+                raise ValueError("baseline report release gate is malformed")
+            index += 1
         if index >= len(lines) or lines[index] != "":
             raise ValueError("baseline report scenario score is malformed")
         index += 1

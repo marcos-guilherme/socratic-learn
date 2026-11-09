@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from evaluation.sanitize import write_private
@@ -614,6 +614,96 @@ def _validate_layout_contract(layout: RunLayout) -> None:
     context = load_runtime_context(layout.run_dir)
     if not _same_path(context.runtime_root, layout.runtime_root):
         raise ValueError("runtime root differs from the recorded cleanup contract")
+
+
+
+
+from evaluation.schema import Scenario, fixture_root, fixture_sha256
+from socratic_learn.sources.ingest import ingest_source
+from socratic_learn.sources.model import SourceRequest
+from socratic_learn.sources.payload import build_source_study_payload
+
+
+@dataclass(frozen=True)
+class SourcedStudy:
+    fixture_id: str
+    fixture_sha256: str
+    source_study_payload: str
+    copied_pdf: Path
+
+
+def resolve_source_fixture(fixture_id: str) -> Path:
+    _require_identifier(fixture_id, "source fixture id")
+    normalized = PurePosixPath(fixture_id)
+    if normalized.as_posix() != fixture_id or ".." in normalized.parts:
+        raise ValueError("source fixture id is invalid")
+    root = (fixture_root() / "sources").resolve(strict=True)
+    candidate = (root / fixture_id / "source.pdf").resolve(strict=False)
+    try:
+        candidate.relative_to(root)
+    except ValueError as error:
+        raise ValueError("source fixture path escapes fixture root") from error
+    if not candidate.is_file():
+        raise ValueError("source fixture is unavailable")
+    return candidate
+
+
+def prepare_sourced_study(
+    repository: Path,
+    layout: RunLayout,
+    scenario: Scenario,
+) -> SourcedStudy:
+    fixture_id = scenario.source_fixture_id
+    if fixture_id is None:
+        raise ValueError("scenario does not declare a source fixture")
+    fixture_path = resolve_source_fixture(fixture_id)
+    fixture_hash = fixture_sha256(fixture_path)
+    repository_root = _require_directory(repository, "repository")
+    runtime_root = _resolved(_absolute(layout.runtime_root), strict=True)
+    if _contains(repository_root, runtime_root) or _contains(runtime_root, repository_root):
+        raise ValueError("runtime root must be outside the repository")
+    staging_dir = runtime_root / "source-fixture"
+    staging_dir.mkdir(mode=0o700, exist_ok=True)
+    copied_pdf = staging_dir / "source.pdf"
+    if copied_pdf.exists():
+        raise ValueError("sourced study staging already exists")
+    shutil.copyfile(fixture_path, copied_pdf)
+    if hashlib.sha256(copied_pdf.read_bytes()).hexdigest() != fixture_hash:
+        copied_pdf.unlink(missing_ok=True)
+        raise ValueError("source fixture copy failed identity check")
+    try:
+        ingested = ingest_source(
+            layout.records,
+            SourceRequest(str(copied_pdf.resolve()), "local_pdf"),
+        )
+    except BaseException:
+        if copied_pdf.exists():
+            copied_pdf.unlink()
+        if staging_dir.exists() and not any(staging_dir.iterdir()):
+            staging_dir.rmdir()
+        raise
+    index_path = (ingested.bundle_path / "index.md").resolve(strict=True)
+    metadata_path = (ingested.bundle_path / "metadata.json").resolve(strict=True)
+    payload = build_source_study_payload(
+        learner_goal=scenario.initial_goal,
+        index_path=index_path,
+        metadata_path=metadata_path,
+    )
+    return SourcedStudy(
+        fixture_id=fixture_id,
+        fixture_sha256=fixture_hash,
+        source_study_payload=payload,
+        copied_pdf=copied_pdf,
+    )
+
+
+def cleanup_sourced_study(sourced: SourcedStudy) -> None:
+    copied = _absolute(sourced.copied_pdf)
+    if copied.exists():
+        copied.unlink()
+    parent = copied.parent
+    if parent.exists() and parent.is_dir() and not any(parent.iterdir()):
+        parent.rmdir()
 
 
 def remove_runtime_root(layout: RunLayout, repository: Path) -> None:

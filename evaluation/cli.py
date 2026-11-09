@@ -58,7 +58,11 @@ from evaluation.schema import (
     suite_manifest_path,
     validate_run_record,
 )
-from evaluation.scoring import interactive_score, scorecard_from_mapping
+from evaluation.scoring import (
+    article_release_status,
+    interactive_score,
+    scorecard_from_mapping,
+)
 from evaluation.session import (
     ConsoleEvaluator,
     RuntimeCleanupError,
@@ -570,6 +574,20 @@ def _report_command(args: argparse.Namespace, *, repository: Path, output: TextI
         rules=(),
     )
     write_sanitized_report(_tracked_report_path(repository, args.output), text)
+
+    if manifest.report_contract == "article-reading-v1":
+        output.write("Article release summary:\n")
+        for run_dir, record in run_records:
+            scorecard_path = run_dir / "scorecard.json"
+            scorecard = None
+            if scorecard_path.is_file():
+                document = _load_json(scorecard_path)
+                if isinstance(document, dict):
+                    scorecard = scorecard_from_mapping(document, rubric, record)
+            status = article_release_status(record, scorecard)
+            output.write(f"- {record.scenario_id}: {status}\n")
+            if status == "inconclusive":
+                output.write("  Article release gate is inconclusive, not passed.\n")
     output.write("Semantic baseline report written.\n")
     return 0
 

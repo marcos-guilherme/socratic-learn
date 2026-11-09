@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Literal
 
 from evaluation.schema import (
     CategoryScore,
@@ -179,3 +180,69 @@ def interactive_score(record: RunRecord, rubric: Rubric) -> Scorecard:
     )
     validate_scorecard(scorecard, rubric, record)
     return scorecard
+
+ARTICLE_SCENARIO_ID = "article-reading"
+ARTICLE_SUITE_ID = "article-reading-v1"
+ARTICLE_RELEASE_MIN_TOTAL = 14
+ARTICLE_REQUIRED_AT_TWO = frozenset(
+    {
+        "observable-outcome",
+        "calibrated-questioning",
+        "corrective-feedback",
+        "evidence-closure",
+    }
+)
+ARTICLE_CATEGORY_IDS = frozenset(
+    {
+        "observable-outcome",
+        "relevant-diagnosis",
+        "calibrated-questioning",
+        "adaptive-support",
+        "retrieval-after-support",
+        "application-transfer",
+        "corrective-feedback",
+        "evidence-closure",
+    }
+)
+ReleaseStatus = Literal["passed", "failed", "inconclusive"]
+
+
+def article_reading_passes(scorecard: Scorecard, record: RunRecord) -> bool:
+    if record.scenario_id != ARTICLE_SCENARIO_ID or record.suite_id != ARTICLE_SUITE_ID:
+        return False
+    if scorecard.scenario_id != ARTICLE_SCENARIO_ID:
+        return False
+    if record.stop_reason != "observable_outcome":
+        return False
+    if record.infrastructure_failure is not None:
+        return False
+    if scorecard.critical_failures:
+        return False
+    if scorecard.total < ARTICLE_RELEASE_MIN_TOTAL:
+        return False
+    scores = {
+        category.identifier: category.score for category in scorecard.categories
+    }
+    if set(scores) != ARTICLE_CATEGORY_IDS:
+        return False
+    if any(score < 1 for score in scores.values()):
+        return False
+    if any(scores[identifier] != 2 for identifier in ARTICLE_REQUIRED_AT_TWO):
+        return False
+    return True
+
+
+def article_release_status(
+    record: RunRecord,
+    scorecard: Scorecard | None,
+) -> ReleaseStatus:
+    if record.scenario_id != ARTICLE_SCENARIO_ID:
+        raise ValueError("record is not an article-reading run")
+    if record.stop_reason == "infrastructure_failure" or record.infrastructure_failure:
+        return "inconclusive"
+    if scorecard is None:
+        return "failed"
+    if article_reading_passes(scorecard, record):
+        return "passed"
+    return "failed"
+

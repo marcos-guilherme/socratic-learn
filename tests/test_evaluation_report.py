@@ -19,11 +19,22 @@ from evaluation.report import (
     write_sanitized_report,
 )
 from evaluation.sanitize import RedactionRule
+from evaluation.scoring import (
+    ARTICLE_CATEGORY_IDS,
+    ARTICLE_REQUIRED_AT_TWO,
+    article_reading_passes,
+    article_release_status,
+)
 from evaluation.schema import (
+    CategoryScore,
     Finding,
     RUN_SCHEMA_V1,
     RUN_SCHEMA_V2,
+    RunRecord,
+    Scorecard,
+    TurnRecord,
     fixture_root,
+    identities_for_scenario,
     load_rubric,
     load_run_record,
     load_suite_manifest,
@@ -556,6 +567,8 @@ class EvaluationReportTests(unittest.TestCase):
                 run_record["scenario_sha256"] = scenario_hash
                 run_record["rubric_sha256"] = rubric_hash
                 run_record["suite_sha256"] = suite_hash
+                run_record["source_fixture_id"] = None
+                run_record["source_fixture_sha256"] = None
                 (run_dir / "run-record.json").write_text(
                     json.dumps(run_record),
                     encoding="utf-8",
@@ -732,6 +745,212 @@ class EvaluationReportTests(unittest.TestCase):
             / "evaluation/reports/2026-11-06-antigravity-baseline.md"
         )
         validate_baseline_report(path.read_text(encoding="utf-8"))
+
+
+    def test_article_report_renders_release_gate_labels(self) -> None:
+        manifest = load_suite_manifest(fixture_root() / "suites/article-reading-v1.json")
+        rubric = load_rubric(fixture_root() / "rubric.json")
+        identities = identities_for_scenario(manifest, "article-reading")
+        record = RunRecord(
+            schema_version=RUN_SCHEMA_V2,
+            run_id="article-reading-v1-article-reading",
+            suite_id="article-reading-v1",
+            scenario_id="article-reading",
+            repository_commit="0" * 40,
+            protocol_version="1.2.0",
+            protocol_sha256="a" * 64,
+            runtime="antigravity",
+            runtime_version="1.0",
+            model_identifier="model",
+            learner_response_count=0,
+            stop_reason="infrastructure_failure",
+            infrastructure_failure="timeout",
+            turns=(TurnRecord(1, "bootstrap", "tutor"),),
+            scenario_sha256=identities.scenario_sha256,
+            rubric_sha256=identities.rubric_sha256,
+            suite_sha256=identities.suite_sha256,
+            source_fixture_id="article-reading-v1",
+            source_fixture_sha256="457b959a517b25beed4e2b986d9814e3beca89db94f4a52fe1c2de47909fd1da",
+        )
+        passing = RunRecord(
+            schema_version=record.schema_version,
+            run_id=record.run_id,
+            suite_id=record.suite_id,
+            scenario_id=record.scenario_id,
+            repository_commit=record.repository_commit,
+            protocol_version=record.protocol_version,
+            protocol_sha256=record.protocol_sha256,
+            runtime=record.runtime,
+            runtime_version=record.runtime_version,
+            model_identifier=record.model_identifier,
+            learner_response_count=1,
+            stop_reason="observable_outcome",
+            infrastructure_failure=None,
+            turns=(
+                TurnRecord(1, "bootstrap", "tutor"),
+                TurnRecord(2, "learner", "tutor"),
+            ),
+            scenario_sha256=record.scenario_sha256,
+            rubric_sha256=record.rubric_sha256,
+            suite_sha256=record.suite_sha256,
+            source_fixture_id=record.source_fixture_id,
+            source_fixture_sha256=record.source_fixture_sha256,
+        )
+        scorecard = Scorecard(
+            1,
+            "article-reading",
+            tuple(
+                CategoryScore(identifier, 2, (2,), "ok")
+                for identifier in (
+                    "observable-outcome",
+                    "relevant-diagnosis",
+                    "calibrated-questioning",
+                    "adaptive-support",
+                    "retrieval-after-support",
+                    "application-transfer",
+                    "corrective-feedback",
+                    "evidence-closure",
+                )
+            ),
+            (),
+        )
+        disclosure = {
+            "article-reading": ScenarioRuntimeDisclosure(
+                "article-reading",
+                True,
+                RuleDisclosure("user_home", (), ()),
+            )
+        }
+        infra_report = render_baseline_report(
+            manifest,
+            rubric,
+            [record],
+            [],
+            [],
+            runtime_disclosures=disclosure,
+            rules=(),
+        )
+        self.assertIn("- Release gate: inconclusive", infra_report)
+        self.assertNotIn("Release gate: passed", infra_report)
+        passing_report = render_baseline_report(
+            manifest,
+            rubric,
+            [passing],
+            [scorecard],
+            [],
+            runtime_disclosures=disclosure,
+            rules=(),
+        )
+        self.assertIn("- Release gate: passed", passing_report)
+        validate_baseline_report(passing_report)
+
+
+class ArticleReleaseGateTests(unittest.TestCase):
+    def _record(self, *, stop_reason="observable_outcome", infrastructure_failure=None):
+        return RunRecord(
+            schema_version=RUN_SCHEMA_V2,
+            run_id="article-reading-v1-article-reading",
+            suite_id="article-reading-v1",
+            scenario_id="article-reading",
+            repository_commit="0" * 40,
+            protocol_version="1.2.0",
+            protocol_sha256="a" * 64,
+            runtime="antigravity",
+            runtime_version="1.0",
+            model_identifier="model",
+            learner_response_count=1,
+            stop_reason=stop_reason,
+            infrastructure_failure=infrastructure_failure,
+            turns=(
+                TurnRecord(1, "bootstrap", "tutor"),
+                TurnRecord(2, "learner", "tutor"),
+            ),
+            scenario_sha256="a" * 64,
+            rubric_sha256="b" * 64,
+            suite_sha256="c" * 64,
+            source_fixture_id="article-reading-v1",
+            source_fixture_sha256="d" * 64,
+        )
+
+    def _scorecard(self, **overrides):
+        scores = {identifier: 2 for identifier in ARTICLE_CATEGORY_IDS}
+        scores.update(overrides)
+        return Scorecard(
+            schema_version=1,
+            scenario_id="article-reading",
+            categories=tuple(
+                CategoryScore(identifier, scores[identifier], (2,), "ok")
+                for identifier in sorted(ARTICLE_CATEGORY_IDS)
+            ),
+            critical_failures=(),
+        )
+
+    def test_boundary_pass_at_fourteen_points(self) -> None:
+        scores = {identifier: 1 for identifier in ARTICLE_CATEGORY_IDS}
+        for identifier in ARTICLE_REQUIRED_AT_TWO:
+            scores[identifier] = 2
+        scores["relevant-diagnosis"] = 2
+        scores["adaptive-support"] = 2
+        record = self._record()
+        scorecard = Scorecard(
+            1,
+            "article-reading",
+            tuple(
+                CategoryScore(identifier, scores[identifier], (2,), "ok")
+                for identifier in sorted(ARTICLE_CATEGORY_IDS)
+            ),
+            (),
+        )
+        self.assertEqual(14, scorecard.total)
+        self.assertTrue(article_reading_passes(scorecard, record))
+
+    def test_fail_at_thirteen_points(self) -> None:
+        scores = {identifier: 1 for identifier in ARTICLE_CATEGORY_IDS}
+        for identifier in ARTICLE_REQUIRED_AT_TWO:
+            scores[identifier] = 2
+        scores["relevant-diagnosis"] = 2
+        record = self._record()
+        scorecard = Scorecard(
+            1,
+            "article-reading",
+            tuple(
+                CategoryScore(identifier, scores[identifier], (2,), "ok")
+                for identifier in sorted(ARTICLE_CATEGORY_IDS)
+            ),
+            (),
+        )
+        self.assertEqual(13, scorecard.total)
+        self.assertFalse(article_reading_passes(scorecard, record))
+
+    def test_required_category_at_one_fails(self) -> None:
+        scorecard = self._scorecard(**{"observable-outcome": 1})
+        self.assertFalse(article_reading_passes(scorecard, self._record()))
+
+    def test_critical_failure_fails(self) -> None:
+        scorecard = Scorecard(
+            1,
+            "article-reading",
+            self._scorecard().categories,
+            ("source-claim-presented-as-externally-verified",),
+        )
+        self.assertFalse(article_reading_passes(scorecard, self._record()))
+
+    def test_infrastructure_is_inconclusive_not_pass(self) -> None:
+        record = self._record(
+            stop_reason="infrastructure_failure",
+            infrastructure_failure="timeout",
+        )
+        self.assertEqual("inconclusive", article_release_status(record, self._scorecard()))
+        self.assertFalse(article_reading_passes(self._scorecard(), record))
+
+    def test_non_observable_outcome_fails(self) -> None:
+        record = self._record(stop_reason="completion_without_evidence")
+        self.assertEqual("failed", article_release_status(record, self._scorecard()))
+
+    def test_rubric_contains_new_critical_failures(self) -> None:
+        rubric = load_rubric(fixture_root() / "rubric.json")
+        self.assertIn("source-claim-presented-as-externally-verified", rubric.critical_failures)
+        self.assertIn("batched-independent-learner-tasks", rubric.critical_failures)
 
 
 if __name__ == "__main__":

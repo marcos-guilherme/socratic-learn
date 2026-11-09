@@ -347,6 +347,26 @@ class EvaluationAntigravityTests(unittest.TestCase):
         )
         self.assertEqual(public[2], initial_bootstrap(self.layout.protocol, goal))
 
+    def test_sourced_initial_bootstrap_matches_public_command_for(self) -> None:
+        from socratic_learn.sources.payload import build_source_study_payload
+
+        payload = build_source_study_payload(
+            learner_goal="study",
+            index_path=Path("C:/runtime/home/learning/.socratic-learn/workspace/sources/demo/index.md"),
+            metadata_path=Path("C:/runtime/home/learning/.socratic-learn/workspace/sources/demo/metadata.json"),
+        )
+        protocol = self.layout.protocol
+        goal = "evaluate claims and evidence"
+        public = command_for(
+            ADAPTERS["antigravity"],
+            "agy",
+            protocol,
+            goal,
+            source_study_payload=payload,
+        )
+        self.assertEqual(public[2], initial_bootstrap(protocol, goal, payload))
+        self.assertEqual(initial_bootstrap(protocol, goal), initial_bootstrap(protocol, goal, None))
+
     def test_evaluation_initial_message_matches_public_antigravity_bootstrap(self) -> None:
         protocol = Path("C:/isolated/.socratic-learn/socratic-learn.prompt.md")
         goal = "learn cafés"

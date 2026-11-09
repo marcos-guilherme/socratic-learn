@@ -30,15 +30,17 @@ SHA256 = "a" * 64
 
 class EvaluationSchemaTests(unittest.TestCase):
     def test_three_scenarios_have_distinct_domains_and_hard_cap(self) -> None:
+        baseline_ids = (
+            "communication-writing",
+            "conceptual-physics",
+            "practical-programming",
+        )
         scenarios = [
-            load_scenario(path)
-            for path in sorted((fixture_root() / "scenarios").glob("*.json"))
+            load_scenario(fixture_root() / "scenarios" / f"{identifier}.json")
+            for identifier in baseline_ids
         ]
         self.assertTrue(all(scenario.source_fixture_id is None for scenario in scenarios))
-        self.assertEqual(
-            ["communication-writing", "conceptual-physics", "practical-programming"],
-            sorted(scenario.identifier for scenario in scenarios),
-        )
+        self.assertEqual(sorted(baseline_ids), sorted(scenario.identifier for scenario in scenarios))
         self.assertEqual(
             {"communication", "conceptual", "procedural"},
             {scenario.domain for scenario in scenarios},
@@ -323,6 +325,8 @@ class EvaluationSchemaVersionTwoTests(unittest.TestCase):
                 "scenario_sha256": SHA256,
                 "rubric_sha256": SHA256,
                 "suite_sha256": SHA256,
+                "source_fixture_id": None,
+                "source_fixture_sha256": None,
             }
         )
         with tempfile.TemporaryDirectory() as temporary:
@@ -380,11 +384,35 @@ class EvaluationSchemaVersionTwoTests(unittest.TestCase):
             suite_hash,
         )
 
-    def test_identities_for_scenario_refuses_reserved_article_without_fixture(
+    def test_identities_for_scenario_resolves_article_reading_fixture(
         self,
     ) -> None:
         manifest = load_suite_manifest(
             fixture_root() / "suites/article-reading-v1.json"
         )
-        with self.assertRaisesRegex(ValueError, "not yet available"):
-            identities_for_scenario(manifest, "article-reading")
+        identities = identities_for_scenario(manifest, "article-reading")
+        self.assertEqual(len(identities.scenario_sha256), 64)
+
+    def test_article_reading_scenario_schema_two_contract(self) -> None:
+        scenario = load_scenario(fixture_root() / "scenarios/article-reading.json")
+        self.assertEqual(2, scenario.schema_version)
+        self.assertEqual("article-reading-v1", scenario.source_fixture_id)
+        self.assertEqual("communication", scenario.domain)
+        misconception = scenario.persona["misconception"]
+        self.assertIsInstance(misconception, str)
+        self.assertIn("longevity", misconception.lower())
+        style = scenario.persona["communication_style"]
+        style_text = "\n".join(style) if isinstance(style, tuple) else str(style)
+        self.assertIn("overload", style_text.lower())
+        self.assertIn("weak evidence", style_text.lower())
+        policy_text = "\n".join(scenario.response_policy)
+        self.assertIn("transfer", policy_text.lower())
+        self.assertIn("external verification", " ".join(scenario.observable_outcome).lower())
+
+    def test_article_source_fixture_hash_is_stable(self) -> None:
+        path = fixture_root() / "sources/article-reading-v1/source.pdf"
+        self.assertEqual(
+            "457b959a517b25beed4e2b986d9814e3beca89db94f4a52fe1c2de47909fd1da",
+            fixture_sha256(path),
+        )
+

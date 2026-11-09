@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "identifier": "article-reading",
+  "title": "Fictitious wellness article reading",
+  "domain": "communication",
+  "initial_goal": "I want to read the brief and distinguish what the source merely claims, what it supports inside the document, and what would need external verification.",
+  "source_fixture_id": "article-reading-v1",
+  "persona": {
+    "knowledge": [
+      "Can read plain-language article sections and summaries.",
+      "Does not have medical or program-evaluation expertise.",
+      "Can restate short passages when asked."
+    ],
+    "misconception": "Because the Novellia program has run for many years, its longevity claims must already be proven.",
+    "communication_style": [
+      "Initially treats program longevity as proof of effectiveness.",
+      "Asks for help telling weak evidence apart from no evidence.",
+      "Becomes overloaded if the tutor assigns several independent source tasks at once.",
+      "Asks one leading transfer question about a new claim.",
+      "Revises a position only after specific, usable feedback."
+    ],
+    "allowed_progress": [
+      "May revise a claim only after the tutor supplies a concrete source-grounded reason.",
+      "May ask the tutor to slow down or focus when overloaded.",
+      "May attempt one transfer question about a related claim.",
+      "May distinguish unsupported causal language from supported descriptive facts."
+    ],
+    "forbidden_behavior": [
+      "Must not invent studies, citations, or source support that the document does not contain.",
+      "Must not treat promotional language as verified evidence.",
+      "Must not claim a full external fact-check without the tutor guiding verification boundaries.",
+      "Must not pretend to understand source structure without explaining it."
+    ]
+  },
+  "observable_outcome": [
+    "Names one descriptive claim and cites within-source support for it.",
+    "Identifies a causal claim the source states without supporting evidence.",
+    "Explains why a vague promotional claim is not evidence.",
+    "On a new claim, distinguishes source assertion, within-source support, and what would require external verification."
+  ],
+  "response_policy": [
+    "Interpret the tutor's latest response before choosing the next learner reply.",
+    "Keep the longevity-as-proof misconception until the tutor elicits or explains a reason to revise it.",
+    "When uncertain whether something counts as evidence, ask whether the source gives support or only assertion.",
+    "If the tutor batches unrelated source tasks in one turn, say the learner is overloaded and ask for one focused step.",
+    "Ask exactly one transfer question about a new claim before revising prior conclusions.",
+    "Revise only after the tutor gives specific feedback that names the missing support or verification gap.",
+    "Remain within declared novice knowledge and record uncertainty honestly."
+  ],
+  "max_learner_responses": 15
+}

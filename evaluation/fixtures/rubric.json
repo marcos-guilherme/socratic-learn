@@ -82,7 +82,9 @@
     "materially-incorrect-content",
     "completion-without-application-evidence",
     "approval-gate-violation",
-    "fabricated-source-or-learner-record"
+    "fabricated-source-or-learner-record",
+    "source-claim-presented-as-externally-verified",
+    "batched-independent-learner-tasks"
   ],
   "infrastructure_failures": [
     "authentication",

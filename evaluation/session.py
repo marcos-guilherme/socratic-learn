@@ -21,6 +21,8 @@ from evaluation.isolation import (
     ProtocolIdentity,
     RunLayout,
     load_runtime_context,
+    cleanup_sourced_study,
+    prepare_sourced_study,
     remove_runtime_root,
     snapshot_learner_records,
 )
@@ -195,6 +197,8 @@ def _run_record(
     stop_reason: StopReason,
     infrastructure_failure: str | None,
     fixture_identities: FixtureIdentities,
+    source_fixture_id: str | None = None,
+    source_fixture_sha256: str | None = None,
 ) -> RunRecord:
     return RunRecord(
         schema_version=RUN_WRITE_SCHEMA_VERSION,
@@ -214,6 +218,8 @@ def _run_record(
         scenario_sha256=fixture_identities.scenario_sha256,
         rubric_sha256=fixture_identities.rubric_sha256,
         suite_sha256=fixture_identities.suite_sha256,
+        source_fixture_id=source_fixture_id,
+        source_fixture_sha256=source_fixture_sha256,
     )
 
 
@@ -228,6 +234,8 @@ def run_session(
     fixture_identities: FixtureIdentities,
     record_path: Path | None = None,
     progress: SessionProgress | None = None,
+    source_fixture_id: str | None = None,
+    source_fixture_sha256: str | None = None,
 ) -> RunRecord:
     """Run one bootstrap turn followed by at most fifteen adaptive responses."""
     destination = _validated_record_path(record_path)
@@ -260,6 +268,8 @@ def run_session(
                 stop_reason="infrastructure_failure",
                 infrastructure_failure=failure.kind,
                 fixture_identities=fixture_identities,
+                source_fixture_id=source_fixture_id,
+                source_fixture_sha256=source_fixture_sha256,
             )
             _write_record(destination, record)
             return record
@@ -301,6 +311,8 @@ def run_session(
                 stop_reason=decision.stop_reason,
                 infrastructure_failure=None,
                 fixture_identities=fixture_identities,
+                source_fixture_id=source_fixture_id,
+                source_fixture_sha256=source_fixture_sha256,
             )
             _write_record(destination, record)
             return record
@@ -326,6 +338,8 @@ def run_session(
                 stop_reason="maximum_learner_responses",
                 infrastructure_failure=None,
                 fixture_identities=fixture_identities,
+                source_fixture_id=source_fixture_id,
+                source_fixture_sha256=source_fixture_sha256,
             )
             _write_record(destination, record)
             return record
@@ -345,6 +359,8 @@ def infrastructure_record(
     kind: Literal["authentication", "quota", "network", "runtime", "timeout"],
     progress: SessionProgress,
     fixture_identities: FixtureIdentities,
+    source_fixture_id: str | None = None,
+    source_fixture_sha256: str | None = None,
 ) -> dict[str, JsonValue]:
     """Build plain schema data without arbitrary exception or provider text."""
     return {
@@ -365,6 +381,8 @@ def infrastructure_record(
         "scenario_sha256": fixture_identities.scenario_sha256,
         "rubric_sha256": fixture_identities.rubric_sha256,
         "suite_sha256": fixture_identities.suite_sha256,
+        "source_fixture_id": source_fixture_id,
+        "source_fixture_sha256": source_fixture_sha256,
     }
 
 
@@ -382,6 +400,8 @@ def _save_failure_evidence(
     model_identifier: str,
     runtime_version: str,
     fixture_identities: FixtureIdentities,
+    source_fixture_id: str | None = None,
+    source_fixture_sha256: str | None = None,
 ) -> None:
     kind: FailureKind = (
         error.kind if isinstance(error, InfrastructureFailure) else "runtime"
@@ -397,6 +417,8 @@ def _save_failure_evidence(
             kind=kind,
             progress=progress,
             fixture_identities=fixture_identities,
+            source_fixture_id=source_fixture_id,
+            source_fixture_sha256=source_fixture_sha256,
         )
         write_private(
             record_path,
@@ -437,20 +459,30 @@ def execute_isolated_run(
     tutor: TutorSession | None = None
     started = False
     primary: BaseException | None = None
+    sourced = None
     try:
+        if scenario.source_fixture_id is not None:
+            sourced = prepare_sourced_study(repository, layout, scenario)
         tutor = tutor_factory(layout)
         tutor.start()  # type: ignore[attr-defined]
         started = True
+        bootstrap = initial_bootstrap(
+            layout.protocol,
+            scenario.initial_goal,
+            sourced.source_study_payload if sourced is not None else None,
+        )
         return run_session(
             scenario,
             tutor,
             evaluator,
             identity,
-            initial_bootstrap(layout.protocol, scenario.initial_goal),
+            bootstrap,
             run_id,
             fixture_identities=fixture_identities,
             record_path=record_path,
             progress=progress,
+            source_fixture_id=sourced.fixture_id if sourced is not None else None,
+            source_fixture_sha256=sourced.fixture_sha256 if sourced is not None else None,
         )
     except BaseException as error:
         primary = error
@@ -468,6 +500,12 @@ def execute_isolated_run(
                 model_identifier=model_identifier,
                 runtime_version=runtime_version,
                 fixture_identities=fixture_identities,
+                source_fixture_id=(
+                    sourced.fixture_id if sourced is not None else None
+                ),
+                source_fixture_sha256=(
+                    sourced.fixture_sha256 if sourced is not None else None
+                ),
             )
         except BaseException as evidence_error:
             error.add_note(
@@ -480,6 +518,15 @@ def execute_isolated_run(
         cleanup_primary: BaseException | None = None
         cleanup_failures: list[tuple[str, str]] = []
         preserve_runtime = False
+        if sourced is not None:
+            try:
+                cleanup_sourced_study(sourced)
+            except BaseException as cleanup_error:
+                if primary is not None:
+                    primary.add_note(
+                        "source fixture cleanup failed: "
+                        f"{type(cleanup_error).__name__}"
+                    )
         steps: tuple[tuple[str, Callable[[], object]], ...] = (
             (
                 "close",

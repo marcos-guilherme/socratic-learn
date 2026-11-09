@@ -9,7 +9,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest import mock
 
-from evaluation.antigravity import InfrastructureFailure, ProcessCleanupError
+from evaluation.antigravity import InfrastructureFailure, ProcessCleanupError, initial_bootstrap
 from evaluation.isolation import (
     ProtocolIdentity,
     create_run_layout,
@@ -26,6 +26,7 @@ from evaluation.schema import (
     fixture_root,
     identities_for_scenario,
     load_run_record,
+    load_scenario,
     load_suite_manifest,
 )
 
@@ -480,6 +481,8 @@ class InfrastructureRecordTests(unittest.TestCase):
                 "scenario_sha256",
                 "rubric_sha256",
                 "suite_sha256",
+                "source_fixture_id",
+                "source_fixture_sha256",
             },
             set(document),
         )
@@ -1395,3 +1398,78 @@ class EvaluationCliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ArticleSourcedSessionTests(unittest.TestCase):
+    def test_execute_isolated_run_uses_production_sourced_bootstrap(self) -> None:
+        captured: list[str] = []
+
+        class Tutor:
+            model = "synthetic-model"
+            runtime_version = "synthetic-runtime"
+
+            def start(self) -> None:
+                return None
+
+            def send(self, text: str):
+                captured.append(text)
+                return TutorTurn("tutor", 1, True)
+
+            def close(self) -> int:
+                return 0
+
+        def evaluator(_context):
+            from evaluation.session import EvaluatorDecision
+
+            return EvaluatorDecision("stop", None, "observable_outcome")
+
+        temporary = tempfile.TemporaryDirectory()
+        outer = Path(temporary.name).resolve()
+        user_home = outer / "home"
+        repository = user_home / "projects" / "repo"
+        repository.mkdir(parents=True)
+        raw_root = repository / ".semantic-runs"
+        runtime_base = user_home / "runtime"
+        runtime_base.mkdir()
+        layout = create_run_layout(
+            repository,
+            "article-reading-v1",
+            "article-reading",
+            raw_root=raw_root,
+            runtime_base=runtime_base,
+            user_home=user_home,
+        )
+        scenario = load_scenario(fixture_root() / "scenarios/article-reading.json")
+        manifest = load_suite_manifest(fixture_root() / "suites/article-reading-v1.json")
+        identities = identities_for_scenario(manifest, "article-reading")
+        evaluator = ConsoleEvaluator(
+            input_fn=lambda _prompt: "outcome",
+            output=io.StringIO(),
+        )
+        try:
+            record = execute_isolated_run(
+                layout,
+                repository,
+                manifest.identifier,
+                scenario,
+                lambda _layout: Tutor(),
+                evaluator,
+                identity(),
+                "article-reading-v1-article-reading",
+                fixture_identities=identities,
+                model_identifier="synthetic-model",
+                runtime_version="synthetic-runtime",
+            )
+            self.assertEqual("article-reading-v1", record.source_fixture_id)
+            self.assertEqual(
+                "457b959a517b25beed4e2b986d9814e3beca89db94f4a52fe1c2de47909fd1da",
+                record.source_fixture_sha256,
+            )
+            self.assertIn("Source index:", captured[0])
+            self.assertNotEqual(
+                captured[0],
+                initial_bootstrap(layout.protocol, scenario.initial_goal),
+            )
+        finally:
+            remove_runtime_root(layout, repository)
+            temporary.cleanup()
+

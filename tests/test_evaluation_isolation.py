@@ -12,6 +12,10 @@ from pathlib import Path
 from unittest import mock
 
 from evaluation.isolation import (
+    cleanup_sourced_study,
+    prepare_sourced_study,
+    resolve_source_fixture,
+
     RULE_MARKERS,
     AboveHomeMarker,
     LocalRuleContamination,
@@ -26,6 +30,7 @@ from evaluation.isolation import (
     snapshot_learner_records,
 )
 from evaluation.antigravity import initial_bootstrap
+from evaluation.schema import fixture_root
 from socratic_learn import PROTOCOL_VERSION
 from socratic_learn.build import build_distribution
 from socratic_learn.hosts import ADAPTERS, command_for
@@ -809,3 +814,114 @@ class ProtocolIdentityTests(unittest.TestCase):
 
         self.assertNotIn("private", str(captured.exception))
         self.assertNotIn("rev-parse", str(captured.exception))
+
+class ArticleSourcedIsolationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.outer = Path(temporary.name).resolve()
+        self.user_home = self.outer / "home"
+        self.repository = self.user_home / "projects" / "repo"
+        self.repository.mkdir(parents=True)
+        self.raw_root = self.repository / ".semantic-runs"
+        self.runtime_base = self.user_home / "runtime"
+        self.runtime_base.mkdir()
+
+    def layout(self) -> RunLayout:
+        return create_run_layout(
+            self.repository,
+            "article-reading-v1",
+            "article-reading",
+            raw_root=self.raw_root,
+            runtime_base=self.runtime_base,
+            user_home=self.user_home,
+        )
+
+    def test_source_fixture_extracts_with_meaningful_labels(self) -> None:
+        from socratic_learn.sources.pdf import extract_pdf
+        raw = (fixture_root() / "sources/article-reading-v1/source.pdf").read_bytes()
+        document = extract_pdf(raw, title="article-reading-v1.pdf")
+        labels = tuple(section.label for section in document.sections)
+        combined = "\n".join(section.text for section in document.sections)
+        self.assertGreaterEqual(len(labels), 1)
+        self.assertIn("Novellia", combined)
+        self.assertIn("Alder Brook", combined)
+        self.assertIn("live longer", combined)
+        self.assertIn("transformed", combined)
+        self.assertIn("consult", combined)
+
+    def test_unknown_and_traversal_fixture_ids_rejected(self) -> None:
+        for fixture_id in ("missing-fixture", "../rubric", "foo/bar"):
+            with self.subTest(fixture_id=fixture_id):
+                with self.assertRaises(ValueError):
+                    resolve_source_fixture(fixture_id)
+
+    def test_prepare_copies_outside_repository_and_ingests_under_records(self) -> None:
+        from evaluation.schema import load_scenario
+
+        scenario = load_scenario(fixture_root() / "scenarios/article-reading.json")
+        layout = self.layout()
+        try:
+            sourced = prepare_sourced_study(self.repository, layout, scenario)
+            self.assertFalse(sourced.copied_pdf.resolve().is_relative_to(self.repository.resolve()))
+            bundle_root = layout.records / "sources"
+            self.assertTrue(bundle_root.is_dir())
+            self.assertGreaterEqual(len(list(bundle_root.iterdir())), 1)
+            self.assertIn("Source index:", sourced.source_study_payload)
+            self.assertNotIn(str(self.repository), sourced.source_study_payload)
+        finally:
+            try:
+                cleanup_sourced_study(sourced)
+            except Exception:
+                pass
+            remove_runtime_root(layout, self.repository)
+
+    def test_runtime_cleanup_removes_copied_fixture_and_bundle(self) -> None:
+        from evaluation.schema import load_scenario
+
+        scenario = load_scenario(fixture_root() / "scenarios/article-reading.json")
+        layout = self.layout()
+        sourced = prepare_sourced_study(self.repository, layout, scenario)
+        bundle_root = layout.records / "sources"
+        copied = sourced.copied_pdf
+        self.assertTrue(copied.is_file())
+        self.assertTrue(any(bundle_root.iterdir()))
+        cleanup_sourced_study(sourced)
+        remove_runtime_root(layout, self.repository)
+        self.assertFalse(copied.exists())
+        self.assertFalse(layout.runtime_root.exists())
+
+    def test_run_record_contains_fixture_identity_not_paths(self) -> None:
+        import json
+        import re
+        from evaluation.schema import load_scenario
+
+        scenario = load_scenario(fixture_root() / "scenarios/article-reading.json")
+        layout = self.layout()
+        sourced = prepare_sourced_study(self.repository, layout, scenario)
+        record = {
+            "source_fixture_id": sourced.fixture_id,
+            "source_fixture_sha256": sourced.fixture_sha256,
+        }
+        encoded = json.dumps(record)
+        self.assertNotRegex(encoded, r"[A-Z]:\\")
+        self.assertNotIn(str(layout.records), encoded)
+        cleanup_sourced_study(sourced)
+        remove_runtime_root(layout, self.repository)
+
+    def test_ingest_failure_leaves_no_published_bundle(self) -> None:
+        from evaluation.schema import load_scenario
+        from unittest import mock
+
+        scenario = load_scenario(fixture_root() / "scenarios/article-reading.json")
+        layout = self.layout()
+        with mock.patch(
+            "evaluation.isolation.ingest_source",
+            side_effect=RuntimeError("synthetic ingest failure"),
+        ):
+            with self.assertRaises(RuntimeError):
+                prepare_sourced_study(self.repository, layout, scenario)
+        bundle_root = layout.records / "sources"
+        self.assertFalse(bundle_root.exists() and any(bundle_root.iterdir()))
+        remove_runtime_root(layout, self.repository)
+

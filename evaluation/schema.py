@@ -125,6 +125,8 @@ class RunRecord:
     scenario_sha256: str | None = None
     rubric_sha256: str | None = None
     suite_sha256: str | None = None
+    source_fixture_id: str | None = None
+    source_fixture_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -472,6 +474,8 @@ def load_run_record(path: Path) -> RunRecord:
             "scenario_sha256",
             "rubric_sha256",
             "suite_sha256",
+            "source_fixture_id",
+            "source_fixture_sha256",
         }
     else:
         _fail(f"{label}.schema_version must be {RUN_SCHEMA_V1} or {RUN_SCHEMA_V2}")
@@ -496,6 +500,8 @@ def load_run_record(path: Path) -> RunRecord:
     scenario_sha256: str | None = None
     rubric_sha256: str | None = None
     suite_sha256: str | None = None
+    source_fixture_id: str | None = None
+    source_fixture_sha256: str | None = None
     if version == RUN_SCHEMA_V2:
         scenario_sha256 = _sha256_field(
             document["scenario_sha256"],
@@ -509,6 +515,21 @@ def load_run_record(path: Path) -> RunRecord:
             document["suite_sha256"],
             f"{label}.suite_sha256",
         )
+        source_fixture_id = document["source_fixture_id"]
+        if source_fixture_id is not None:
+            source_fixture_id = _identifier(
+                source_fixture_id,
+                f"{label}.source_fixture_id",
+            )
+        source_fixture_sha256 = document["source_fixture_sha256"]
+        if source_fixture_sha256 is not None:
+            source_fixture_sha256 = _sha256_field(
+                source_fixture_sha256,
+                f"{label}.source_fixture_sha256",
+            )
+    else:
+        source_fixture_id = None
+        source_fixture_sha256 = None
     record = RunRecord(
         schema_version=version,
         run_id=_string(document["run_id"], f"{label}.run_id"),
@@ -527,6 +548,8 @@ def load_run_record(path: Path) -> RunRecord:
         scenario_sha256=scenario_sha256,
         rubric_sha256=rubric_sha256,
         suite_sha256=suite_sha256,
+        source_fixture_id=source_fixture_id,
+        source_fixture_sha256=source_fixture_sha256,
     )
     validate_run_record(record)
     return record
@@ -545,6 +568,16 @@ def validate_run_record(record: RunRecord, rubric: Rubric | None = None) -> None
             "run record infrastructure_failure must be present iff "
             "stop_reason is infrastructure_failure"
         )
+
+    if record.schema_version == RUN_SCHEMA_V2:
+        paired = (
+            record.source_fixture_id is None,
+            record.source_fixture_sha256 is None,
+        )
+        if paired[0] != paired[1]:
+            _fail(
+                "run record source_fixture_id and source_fixture_sha256 must both be present or absent"
+            )
     if (
         rubric is not None
         and record.infrastructure_failure is not None
