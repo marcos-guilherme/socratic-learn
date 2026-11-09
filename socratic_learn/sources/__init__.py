@@ -1,6 +1,8 @@
 """Source ingestion contracts and normalization utilities."""
 
+from socratic_learn.sources.bundle import build_bundle_tree, validate_source_bundle
 from socratic_learn.sources.html import extract_html
+from socratic_learn.sources.ingest import ingest_source
 from socratic_learn.sources.http import (
     MAX_RAW_BYTES,
     MAX_REDIRECTS,
@@ -34,10 +36,12 @@ __all__ = [
     "MAX_NORMALIZED_CODE_POINTS",
     "MIN_NON_WHITESPACE_CODE_POINTS",
     "SOCKET_TIMEOUT_SECONDS",
+    "build_bundle_tree",
     "BundleMetadata",
     "ExtractedDocument",
     "ExtractedSection",
     "FetchedBytes",
+    "ingest_source",
     "IngestedSource",
     "SourceKind",
     "SourceRequest",
@@ -49,4 +53,5 @@ __all__ = [
     "normalize_text",
     "source_id_for_local",
     "source_id_for_url",
+    "validate_source_bundle",
 ]
