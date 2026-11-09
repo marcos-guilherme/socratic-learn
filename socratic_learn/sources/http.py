@@ -1,4 +1,10 @@
-"""Bounded HTTP/HTTPS retrieval for article URL sources."""
+"""Bounded HTTP/HTTPS retrieval for article URL sources.
+
+Pre-resolution rejects a hostname when *any* DNS answer is blocked. The
+connected socket peer is re-checked before request headers are sent; that peer
+check is the authoritative DNS-rebinding control (this layer does not pin a
+single resolved address at connect time).
+"""
 
 from __future__ import annotations
 
@@ -26,6 +32,10 @@ ConnectionFactory = Callable[[str, int, str, float], http.client.HTTPConnection]
 Resolver = Callable[[str, int], list[str]]
 
 
+def _operation_error(operation: str, display_origin: str, *, remediation: str | None = None) -> SourceError:
+    return SourceError(f"{operation} failed for {display_origin}", remediation=remediation)
+
+
 def _is_blocked_address(address: ipaddress._BaseAddress, *, allow_private_network: bool) -> bool:
     if allow_private_network:
         return address.is_multicast or address.is_unspecified
@@ -42,6 +52,8 @@ def _is_blocked_address(address: ipaddress._BaseAddress, *, allow_private_networ
 def _parse_ip(value: str) -> ipaddress._BaseAddress:
     if value.startswith("[") and value.endswith("]"):
         value = value[1:-1]
+    if "%" in value:
+        raise ValueError("scoped address")
     return ipaddress.ip_address(value)
 
 
@@ -52,8 +64,9 @@ def _validate_addresses(
     allow_private_network: bool,
 ) -> None:
     if not addresses:
-        raise SourceError(
-            f"could not resolve {display_origin}",
+        raise _operation_error(
+            "dns resolution",
+            display_origin,
             remediation="Verify the hostname and try another URL.",
         )
     for item in addresses:
@@ -71,16 +84,27 @@ def _validate_addresses(
             )
 
 
-def _encode_host(host: str) -> str:
-    if host.startswith("["):
-        inner = host[1:-1]
+def _encode_host(hostname: str) -> str:
+    if "%" in hostname:
+        raise SourceError("invalid URL host")
+    if ":" in hostname:
         try:
-            ip = ipaddress.ip_address(inner)
+            ip = ipaddress.ip_address(hostname)
         except ValueError as error:
             raise SourceError("invalid URL host") from error
+        if ip.version != 6:
+            raise SourceError("invalid URL host")
         return f"[{ip.compressed}]"
     try:
-        return host.encode("idna").decode("ascii").lower()
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        if ip.version != 4:
+            raise SourceError("invalid URL host")
+        return str(ip)
+    try:
+        return hostname.encode("idna").decode("ascii").lower()
     except UnicodeError as error:
         raise SourceError("invalid URL host") from error
 
@@ -140,10 +164,7 @@ def canonicalize_url(url: str) -> tuple[str, str]:
 
 
 def _default_resolver(host: str, port: int) -> list[str]:
-    try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except socket.gaierror as error:
-        raise SourceError("could not resolve host") from error
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     addresses: list[str] = []
     for info in infos:
         sockaddr = info[4]
@@ -201,7 +222,16 @@ def _read_bounded_body(response: http.client.HTTPResponse, *, display_origin: st
         )
     body = bytearray()
     while True:
-        chunk = response.read(65536)
+        try:
+            chunk = response.read(65536)
+        except SourceError:
+            raise
+        except Exception:
+            raise _operation_error(
+                "response read",
+                display_origin,
+                remediation="Verify the URL and try again.",
+            ) from None
         if not chunk:
             break
         if len(body) + len(chunk) > MAX_RAW_BYTES:
@@ -213,11 +243,65 @@ def _read_bounded_body(response: http.client.HTTPResponse, *, display_origin: st
     return bytes(body)
 
 
-def _peer_address(connection: http.client.HTTPConnection) -> str:
+def _peer_address(connection: http.client.HTTPConnection, *, display_origin: str) -> str:
     sock = connection.sock
     if sock is None:
-        raise SourceError("connection failed before peer validation")
+        raise _operation_error(
+            "network connect",
+            display_origin,
+            remediation="Verify the URL and try again.",
+        )
     return sock.getpeername()[0]
+
+
+def _resolve_host(
+    resolve: Resolver,
+    hostname: str,
+    port: int,
+    *,
+    display_origin: str,
+) -> list[str]:
+    try:
+        return resolve(hostname, port)
+    except SourceError:
+        raise
+    except Exception:
+        raise _operation_error(
+            "dns resolution",
+            display_origin,
+            remediation="Verify the hostname and try another URL.",
+        ) from None
+
+
+def _connect_peer(
+    connection: http.client.HTTPConnection,
+    *,
+    display_origin: str,
+    allow_private_network: bool,
+) -> None:
+    try:
+        connection.connect()
+    except SourceError:
+        raise
+    except ssl.SSLError:
+        raise _operation_error(
+            "tls handshake",
+            display_origin,
+            remediation="Verify the URL and try again.",
+        ) from None
+    except Exception:
+        raise _operation_error(
+            "network connect",
+            display_origin,
+            remediation="Verify the URL and try again.",
+        ) from None
+
+    peer = _peer_address(connection, display_origin=display_origin)
+    _validate_addresses(
+        [peer],
+        display_origin=display_origin,
+        allow_private_network=allow_private_network,
+    )
 
 
 def fetch_url(
@@ -241,9 +325,13 @@ def fetch_url(
         hostname = parts.hostname
         if hostname is None:
             raise SourceError("malformed URL")
-        port = _canonical_port(scheme, parts.port)
+        try:
+            hop_port = parts.port
+        except ValueError as error:
+            raise SourceError("invalid URL port") from error
+        port = _canonical_port(scheme, hop_port)
 
-        addresses = resolve(hostname, port)
+        addresses = _resolve_host(resolve, hostname, port, display_origin=initial_display_origin)
         _validate_addresses(
             addresses,
             display_origin=initial_display_origin,
@@ -252,10 +340,8 @@ def fetch_url(
 
         connection = connect(hostname, port, scheme, SOCKET_TIMEOUT_SECONDS)
         try:
-            connection.connect()
-            peer = _peer_address(connection)
-            _validate_addresses(
-                [peer],
+            _connect_peer(
+                connection,
                 display_origin=initial_display_origin,
                 allow_private_network=allow_private_network,
             )
@@ -265,8 +351,27 @@ def fetch_url(
                 "Accept-Encoding": "identity",
                 "Host": parts.netloc.split("@")[-1],
             }
-            connection.request("GET", _request_path(retrieval_url), headers=headers)
-            response = connection.getresponse()
+            try:
+                connection.request("GET", _request_path(retrieval_url), headers=headers)
+            except SourceError:
+                raise
+            except Exception:
+                raise _operation_error(
+                    "http request",
+                    initial_display_origin,
+                    remediation="Verify the URL and try again.",
+                ) from None
+
+            try:
+                response = connection.getresponse()
+            except SourceError:
+                raise
+            except Exception:
+                raise _operation_error(
+                    "http response",
+                    initial_display_origin,
+                    remediation="Verify the URL and try again.",
+                ) from None
 
             if response.status in _REDIRECT_STATUSES:
                 location = response.getheader("Location")
@@ -307,5 +412,5 @@ def fetch_url(
                 media_type=media_type,
             )
         finally:
-            if connection.sock is not None:
+            if getattr(connection, "sock", None) is not None:
                 connection.close()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import socket
 import ssl
 import threading
 import unittest
@@ -70,6 +71,31 @@ class CanonicalizeUrlTests(unittest.TestCase):
     def test_rejects_control_characters(self) -> None:
         with self.assertRaises(SourceError):
             canonicalize_url("http://example.com/a\x00b")
+
+
+class CanonicalizeIpv6Tests(unittest.TestCase):
+    def test_compresses_ipv6_literal_with_bracketed_netloc(self) -> None:
+        retrieval, display = canonicalize_url("http://[2001:DB8:0:0:0:0:0:1]/doc?k=1")
+        self.assertEqual("http://[2001:db8::1]/doc?k=1", retrieval)
+        self.assertEqual("http://[2001:db8::1]/doc", display)
+
+    def test_preserves_non_default_ipv6_port(self) -> None:
+        retrieval, display = canonicalize_url("https://[2001:db8::1]:8443/x")
+        self.assertEqual("https://[2001:db8::1]:8443/x", retrieval)
+        self.assertEqual("https://[2001:db8::1]:8443/x", display)
+
+    def test_rejects_scoped_and_malformed_ipv6_literals(self) -> None:
+        with self.assertRaises(SourceError):
+            canonicalize_url("http://[fe80::1%25eth0]/")
+        with self.assertRaises(SourceError):
+            canonicalize_url("http://[not-an-ip]/")
+        with self.assertRaises(SourceError):
+            canonicalize_url("http://[::gggg]/")
+
+    def test_ipv4_literal_host_without_brackets(self) -> None:
+        retrieval, display = canonicalize_url(f"http://{TEST_HOST}/x")
+        self.assertEqual(f"http://{TEST_HOST}/x", retrieval)
+        self.assertEqual(retrieval, display)
 
 
 class _TestHandler(BaseHTTPRequestHandler):
@@ -251,6 +277,33 @@ class AddressPolicyTests(unittest.TestCase):
             thread.join(timeout=2)
 
 
+class PolicyOrderingTests(unittest.TestCase):
+    def test_pre_resolution_blocks_before_connection_factory(self) -> None:
+        factory = mock.Mock()
+        with self.assertRaises(SourceError):
+            fetch_url(
+                f"http://{TEST_HOST}/",
+                allow_private_network=False,
+                user_agent="Socratic-Learn/test",
+                resolver=_resolver_for("10.0.0.1"),
+                connection_factory=factory,
+            )
+        factory.assert_not_called()
+
+    def test_fetch_ipv6_literal_display_applies_address_policy(self) -> None:
+        with self.assertRaises(SourceError) as context:
+            fetch_url(
+                "http://[2001:db8::1]/article",
+                allow_private_network=False,
+                user_agent="Socratic-Learn/test",
+                resolver=_resolver_for("10.0.0.1"),
+                connection_factory=lambda *_args: mock.Mock(),
+            )
+        message = str(context.exception)
+        self.assertIn("http://[2001:db8::1]/article", message)
+        self.assertNotIn("10.0.0.1", message)
+
+
 class PeerRecheckTests(_HttpTestCase):
     def test_rejects_connected_peer_outside_policy(self) -> None:
         self.start_server()
@@ -274,7 +327,7 @@ class PeerRecheckTests(_HttpTestCase):
             def getresponse(self):
                 raise AssertionError("unreachable")
 
-        with self.assertRaises(SourceError):
+        with self.assertRaises(SourceError) as context:
             fetch_url(
                 self.retrieval_url(),
                 allow_private_network=False,
@@ -282,6 +335,43 @@ class PeerRecheckTests(_HttpTestCase):
                 resolver=_public_resolver,
                 connection_factory=lambda _h, port, _s, _t: _PeeringConnection(port=port),
             )
+        self.assertIn("blocked network destination", str(context.exception))
+        self.assertIn(f"http://{TEST_HOST}:{self.port}/article", str(context.exception))
+
+    def test_peer_check_runs_after_connect_and_before_request(self) -> None:
+        events: list[str] = []
+
+        class _OrderedConnection:
+            def __init__(self, *, port: int) -> None:
+                self._port = port
+
+            def connect(self) -> None:
+                events.append("connect")
+
+            @property
+            def sock(self) -> mock.Mock:
+                peer = mock.Mock()
+                peer.getpeername.return_value = ("10.0.0.1", self._port)
+                return peer
+
+            def close(self) -> None:
+                return
+
+            def request(self, *_args: object, **_kwargs: object) -> None:
+                events.append("request")
+
+            def getresponse(self) -> None:
+                raise AssertionError("unreachable")
+
+        with self.assertRaises(SourceError):
+            fetch_url(
+                f"http://{TEST_HOST}/",
+                allow_private_network=False,
+                user_agent="Socratic-Learn/test",
+                resolver=_resolver_for(TEST_HOST),
+                connection_factory=lambda _h, port, _s, _t: _OrderedConnection(port=port),
+            )
+        self.assertEqual(["connect"], events)
 
 
 class RedirectTests(_HttpTestCase):
@@ -447,6 +537,110 @@ class ConstantsTests(unittest.TestCase):
         self.assertEqual(20 * 1024 * 1024, MAX_RAW_BYTES)
         self.assertEqual(20, SOCKET_TIMEOUT_SECONDS)
         self.assertEqual(5, MAX_REDIRECTS)
+
+
+class TransportExceptionTests(unittest.TestCase):
+    def _url(self, query: str = "apikey=supersecret") -> str:
+        return f"http://{TEST_HOST}/article?{query}"
+
+    def test_dns_failure_uses_operation_label_and_redacted_origin(self) -> None:
+        def failing_resolver(_host: str, _port: int) -> list[str]:
+            raise socket.gaierror(8, "name resolution leak apikey=supersecret")
+
+        with self.assertRaises(SourceError) as context:
+            fetch_url(
+                self._url(),
+                allow_private_network=False,
+                user_agent="Socratic-Learn/test",
+                resolver=failing_resolver,
+                connection_factory=lambda *_args: mock.Mock(),
+            )
+        message = str(context.exception)
+        self.assertIn("dns resolution failed", message)
+        self.assertIn(f"http://{TEST_HOST}/article", message)
+        self.assertNotIn("apikey", message)
+        self.assertNotIn("supersecret", message)
+        self.assertNotIn("name resolution leak", message)
+
+    def test_re_raises_existing_source_error_unchanged(self) -> None:
+        original = SourceError("blocked network destination for sentinel")
+
+        def resolver(_host: str, _port: int) -> list[str]:
+            raise original
+
+        with self.assertRaises(SourceError) as context:
+            fetch_url(
+                self._url(),
+                allow_private_network=False,
+                user_agent="Socratic-Learn/test",
+                resolver=resolver,
+                connection_factory=lambda *_args: mock.Mock(),
+            )
+        self.assertIs(context.exception, original)
+
+    def test_connect_timeout_maps_to_sanitized_network_error(self) -> None:
+        class _TimeoutConnection:
+            sock = None
+
+            def connect(self) -> None:
+                raise TimeoutError("timed out with secret=apikey")
+
+            def close(self) -> None:
+                return
+
+        with self.assertRaises(SourceError) as context:
+            fetch_url(
+                self._url(),
+                allow_private_network=False,
+                user_agent="Socratic-Learn/test",
+                resolver=_resolver_for(TEST_HOST),
+                connection_factory=lambda *_args: _TimeoutConnection(),
+            )
+        message = str(context.exception)
+        self.assertIn("network connect failed", message)
+        self.assertIn(f"http://{TEST_HOST}/article", message)
+        self.assertNotIn("apikey", message)
+        self.assertNotIn("secret=", message)
+
+    def test_response_read_failure_maps_to_sanitized_error(self) -> None:
+        class _ReadFailResponse:
+            status = 200
+
+            def read(self, _size: int) -> bytes:
+                raise OSError("read failed secret=supersecret")
+
+            def getheader(self, _name: str) -> None:
+                return None
+
+        class _ReadFailConnection:
+            def __init__(self) -> None:
+                self.sock = mock.Mock()
+                self.sock.getpeername.return_value = (TEST_HOST, 80)
+
+            def connect(self) -> None:
+                return
+
+            def request(self, *_args: object, **_kwargs: object) -> None:
+                return
+
+            def getresponse(self) -> _ReadFailResponse:
+                return _ReadFailResponse()
+
+            def close(self) -> None:
+                return
+
+        with self.assertRaises(SourceError) as context:
+            fetch_url(
+                self._url(),
+                allow_private_network=False,
+                user_agent="Socratic-Learn/test",
+                resolver=_resolver_for(TEST_HOST),
+                connection_factory=lambda *_args: _ReadFailConnection(),
+            )
+        message = str(context.exception)
+        self.assertIn("response read failed", message)
+        self.assertNotIn("supersecret", message)
+        self.assertNotIn("read failed secret", message)
 
 
 class SanitizedErrorTests(_HttpTestCase):
