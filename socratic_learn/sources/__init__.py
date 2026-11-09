@@ -1,0 +1,36 @@
+"""Source ingestion contracts and normalization utilities."""
+
+from socratic_learn.sources.ids import source_id_for_local, source_id_for_url
+from socratic_learn.sources.model import (
+    BundleMetadata,
+    ExtractedDocument,
+    ExtractedSection,
+    FetchedBytes,
+    IngestedSource,
+    SourceKind,
+    SourceRequest,
+)
+from socratic_learn.sources.normalize import (
+    DEFAULT_SECTION_CHUNK_LIMIT,
+    MAX_NORMALIZED_CODE_POINTS,
+    MIN_NON_WHITESPACE_CODE_POINTS,
+    chunk_section,
+    normalize_text,
+)
+
+__all__ = [
+    "DEFAULT_SECTION_CHUNK_LIMIT",
+    "MAX_NORMALIZED_CODE_POINTS",
+    "MIN_NON_WHITESPACE_CODE_POINTS",
+    "BundleMetadata",
+    "ExtractedDocument",
+    "ExtractedSection",
+    "FetchedBytes",
+    "IngestedSource",
+    "SourceKind",
+    "SourceRequest",
+    "chunk_section",
+    "normalize_text",
+    "source_id_for_local",
+    "source_id_for_url",
+]

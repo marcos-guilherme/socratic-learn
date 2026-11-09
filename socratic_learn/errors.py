@@ -53,3 +53,9 @@ class FilesystemError(LearningTutorError):
     """A filesystem operation failed."""
 
     exit_code = 5
+
+
+class SourceError(LearningTutorError):
+    """A source request, extraction, or normalization step failed."""
+
+    exit_code = 6
