@@ -16,8 +16,22 @@ from socratic_learn.safe_fs import (
     identity_bound_replace,
     path_identity,
     remove_tracked_tree,
+    require_trusted_regular_file,
     track_directory,
 )
+
+
+def _symlinks_supported() -> bool:
+    with TemporaryDirectory() as temporary:
+        base = Path(temporary).resolve()
+        target = base / "target"
+        target.mkdir()
+        link = base / "link"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            return False
+        return link.is_symlink()
 
 
 class SafeFilesystemTests(unittest.TestCase):
@@ -25,6 +39,53 @@ class SafeFilesystemTests(unittest.TestCase):
         self.temporary = TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+
+    def test_require_trusted_regular_file_accepts_plain_file(self) -> None:
+        document = self.root / "document.pdf"
+        document.write_bytes(b"%PDF")
+        identity = require_trusted_regular_file(document, root=self.root)
+        self.assertEqual(path_identity(document), identity)
+
+    def test_require_trusted_regular_file_rejects_directory_leaf(self) -> None:
+        directory = self.root / "sources"
+        directory.mkdir()
+        with self.assertRaisesRegex(IdentityMismatchError, "regular file"):
+            require_trusted_regular_file(directory, root=self.root)
+
+    @unittest.skipUnless(_symlinks_supported(), "symlinks unavailable")
+    def test_require_trusted_regular_file_rejects_symlink_leaf(self) -> None:
+        target = self.root / "document.pdf"
+        target.write_bytes(b"%PDF")
+        link = self.root / "linked.pdf"
+        link.symlink_to(target)
+        with self.assertRaisesRegex(IdentityMismatchError, "link|reparse"):
+            require_trusted_regular_file(link, root=self.root)
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction regression")
+    def test_require_trusted_regular_file_rejects_linked_ancestor(self) -> None:
+        external = self.root / "external"
+        external.mkdir()
+        trusted = self.root / "trusted"
+        junction = subprocess.run(
+            [
+                os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe"),
+                "/d",
+                "/c",
+                "mklink",
+                "/J",
+                str(trusted),
+                str(external),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if junction.returncode != 0:
+            self.skipTest("directory junctions are unavailable")
+        document = trusted / "document.pdf"
+        document.write_bytes(b"%PDF")
+        with self.assertRaisesRegex(IdentityMismatchError, "plain directory|reparse|link"):
+            require_trusted_regular_file(document, root=self.root)
 
     @unittest.skipUnless(os.name == "nt", "requires Windows handle rename")
     def test_destination_appearance_at_rename_boundary_is_not_overwritten(self) -> None:

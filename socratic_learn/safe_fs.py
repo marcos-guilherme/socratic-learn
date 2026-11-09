@@ -9,6 +9,7 @@ import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 
@@ -109,6 +110,32 @@ def _is_reparse_or_symlink(status: os.stat_result) -> bool:
     attributes = getattr(status, "st_file_attributes", 0)
     reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
     return stat.S_ISLNK(status.st_mode) or bool(attributes & reparse_flag)
+
+
+def _assert_under_root(path: Path, *, root: Path) -> None:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError as error:
+        raise IdentityMismatchError(
+            f"path escapes trusted root: {path}"
+        ) from error
+
+
+def require_trusted_regular_file(path: Path, *, root: Path) -> PathIdentity:
+    """Return the identity of one regular file beneath a verified trusted root."""
+
+    _assert_under_root(path, root=root)
+    capture_parent_chain(root, path)
+    status = path.stat(follow_symlinks=False)
+    if _is_reparse_or_symlink(status):
+        raise IdentityMismatchError(
+            f"trusted file is a link or reparse point: {path}"
+        )
+    if not stat.S_ISREG(status.st_mode):
+        raise IdentityMismatchError(
+            f"trusted path is not a regular file: {path}"
+        )
+    return status_identity(status)
 
 
 def capture_parent_chain(root: Path, destination: Path) -> tuple[ParentIdentity, ...]:
@@ -841,6 +868,51 @@ def _posix_delete_bound_tree(
             os.rmdir(name, dir_fd=directory_fd)
         else:
             os.unlink(name, dir_fd=directory_fd)
+
+
+def publish_tracked_directory(
+    staging: TrackedDirectory,
+    destination: Path,
+    *,
+    root: Path,
+    validate_existing: Callable[[Path], bool],
+) -> Path:
+    """Publish one tracked staging tree or reuse a validated existing destination."""
+
+    _assert_under_root(staging.path, root=root)
+    _assert_under_root(destination, root=root)
+    _verify_tracked_tree(staging)
+
+    source_chain = capture_parent_chain(root, staging.path)
+    destination_chain = capture_parent_chain(root, destination)
+
+    if destination.exists():
+        if validate_existing(destination):
+            remove_tracked_tree(staging)
+            return destination
+        raise IdentityMismatchError(
+            f"existing destination failed validation: {destination}"
+        )
+
+    try:
+        _verify_tracked_tree(staging)
+        identity_bound_replace(
+            staging.path,
+            destination,
+            root=root,
+            expected_source=staging.identity,
+            expected_source_chain=source_chain,
+            expected_destination_chain=destination_chain,
+        )
+        return destination
+    except PostMutationIdentityError:
+        raise
+    except BaseException as error:
+        try:
+            remove_tracked_tree(staging)
+        except IdentityMismatchError as cleanup_error:
+            raise cleanup_error from error
+        raise
 
 
 def remove_tracked_tree(directory: TrackedDirectory) -> None:
