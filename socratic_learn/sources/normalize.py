@@ -15,22 +15,32 @@ _HORIZONTAL_WHITESPACE = re.compile(r"[^\S\n]+")
 _BLANK_LINES = re.compile(r"\n{3,}")
 
 
-def normalize_text(text: str) -> str:
+def normalize_text(text: str, *, require_meaningful: bool = True) -> str:
+    """Normalize source text to NFC, LF, and stable whitespace.
+
+    Whole-document ingestion keeps ``require_meaningful=True`` (default) and
+    rejects fewer than ``MIN_NON_WHITESPACE_CODE_POINTS`` non-whitespace
+    characters. Per-page or per-section fragments for extraction should pass
+    ``require_meaningful=False`` to apply the same transforms without the
+    document-wide minimum.
+    """
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = unicodedata.normalize("NFC", text)
     lines = [_HORIZONTAL_WHITESPACE.sub(" ", line.strip(" \t")) for line in text.split("\n")]
     text = "\n".join(lines)
     text = _BLANK_LINES.sub("\n\n", text)
-    _validate_text_bounds(text)
+    _validate_text_bounds(text, require_meaningful=require_meaningful)
     return text
 
 
-def _validate_text_bounds(text: str) -> None:
+def _validate_text_bounds(text: str, *, require_meaningful: bool) -> None:
     if len(text) > MAX_NORMALIZED_CODE_POINTS:
         raise SourceError(
             f"normalized source exceeds {MAX_NORMALIZED_CODE_POINTS} code points",
             remediation="Use a shorter source or split the material.",
         )
+    if not require_meaningful:
+        return
     non_whitespace = sum(1 for character in text if not character.isspace())
     if non_whitespace < MIN_NON_WHITESPACE_CODE_POINTS:
         raise SourceError(

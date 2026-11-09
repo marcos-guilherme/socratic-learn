@@ -46,6 +46,28 @@ class NormalizeTextTests(unittest.TestCase):
             normalize_text(text)
 
 
+class NormalizeTextFragmentTests(unittest.TestCase):
+    def test_short_fragment_is_accepted_only_without_meaningful_requirement(self) -> None:
+        fragment = "Page 1\r\n"
+        with self.assertRaises(SourceError):
+            normalize_text(fragment)
+        self.assertEqual("Page 1\n", normalize_text(fragment, require_meaningful=False))
+
+    def test_fragment_mode_applies_identical_transformation_steps(self) -> None:
+        padding = _meaningful_text(50)
+        body = "  spaced\twords  \r\n\r\n\n\nnext"
+        full_text = f"{padding}\n\n{body}"
+        padded = normalize_text(full_text)
+        fragment = normalize_text(body, require_meaningful=False)
+        suffix = padded.split("\n\n", 1)[1]
+        self.assertEqual(suffix, fragment)
+
+    def test_fragment_mode_still_rejects_maximum_size_overflow(self) -> None:
+        text = "a" * (MAX_NORMALIZED_CODE_POINTS + 1)
+        with self.assertRaises(SourceError):
+            normalize_text(text, require_meaningful=False)
+
+
 class ChunkSectionTests(unittest.TestCase):
     def test_returns_single_chunk_under_default_limit(self) -> None:
         text = _meaningful_text(100)
