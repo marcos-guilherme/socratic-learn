@@ -46,6 +46,18 @@ class HtmlPrecedenceTests(unittest.TestCase):
     document = extract_html(html.encode("utf-8"), content_type=None, title_hint="hint")
     self.assertIn("BODY TEXT", document.sections[0].text)
 
+  def test_skips_under_two_hundred_article_for_meaningful_main(self) -> None:
+    html = _pad(
+      "<html><body>"
+      "<article><p>Short article note only.</p></article>"
+      "<main><p>MAIN PREVAILS when article is below the meaningful threshold.</p></main>"
+      "</body></html>",
+      target="main",
+    )
+    document = extract_html(html.encode("utf-8"), content_type="text/html", title_hint="hint")
+    self.assertIn("MAIN PREVAILS", document.sections[0].text)
+    self.assertNotIn("Short article note", document.sections[0].text)
+
 
 class HtmlExclusionTests(unittest.TestCase):
   def test_excludes_script_style_nav_and_chrome(self) -> None:
@@ -113,6 +125,23 @@ class HtmlCharsetTests(unittest.TestCase):
     document = extract_html(html.encode("latin-1"), content_type="text/html", title_hint="hint")
     self.assertIn("Café", document.sections[0].text)
 
+  def test_uses_meta_http_equiv_content_type_charset(self) -> None:
+    html = _pad(
+      '<html><head><meta http-equiv="Content-Type" '
+      'content="text/html; charset=iso-8859-1"></head>'
+      "<body><article><p>Http-equiv Caf\xe9.</p></article></body></html>"
+    )
+    document = extract_html(html.encode("latin-1"), content_type="text/html", title_hint="hint")
+    self.assertIn("Café", document.sections[0].text)
+
+  def test_invalid_meta_charset_label_falls_back_to_utf8(self) -> None:
+    html = _pad(
+      '<html><head><meta charset="not-a-real-charset"></head>'
+      "<body><article><p>Meta invalid UTF-8 café fallback.</p></article></body></html>"
+    )
+    document = extract_html(html.encode("utf-8"), content_type="text/html", title_hint="hint")
+    self.assertIn("café", document.sections[0].text)
+
   def test_falls_back_to_utf8_replacement_for_invalid_charset_label(self) -> None:
     html = _pad("<html><body><article><p>Fallback UTF-8 text runs here.</p></article></body></html>")
     document = extract_html(
@@ -131,6 +160,22 @@ class HtmlTitleTests(unittest.TestCase):
     )
     document = extract_html(html.encode("utf-8"), content_type="text/html", title_hint="Hint Title")
     self.assertEqual("Real HTML Title", document.title)
+
+  def test_uses_title_hint_when_title_element_is_empty(self) -> None:
+    html = _pad(
+      "<html><head><title>   </title></head>"
+      "<body><article><p>Empty title should defer to the hint string.</p></article></body></html>"
+    )
+    document = extract_html(html.encode("utf-8"), content_type="text/html", title_hint="Hint From Caller")
+    self.assertEqual("Hint From Caller", document.title)
+
+  def test_uses_title_hint_when_title_element_is_too_short(self) -> None:
+    html = _pad(
+      "<html><head><title>ab</title></head>"
+      "<body><article><p>Short title element should not override the hint.</p></article></body></html>"
+    )
+    document = extract_html(html.encode("utf-8"), content_type="text/html", title_hint="Hint From Caller")
+    self.assertEqual("Hint From Caller", document.title)
 
 
 class HtmlRejectionTests(unittest.TestCase):
