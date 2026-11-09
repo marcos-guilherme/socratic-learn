@@ -4,14 +4,18 @@ import contextlib
 import io
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from socratic_learn.cli import main, parse_read_arguments, parse_source_origin
+from socratic_learn.config import LauncherConfig
 from socratic_learn.errors import SourceError, UsageError
+from socratic_learn.hosts import ADAPTERS, DetectedHost
 from socratic_learn.launcher import LaunchOptions
 from socratic_learn.sources.model import SourceRequest
+from socratic_learn.workspace import LearningWorkspace
 
 
 class ParseSourceOriginTests(unittest.TestCase):
@@ -111,6 +115,45 @@ class ParseReadArgumentsTests(unittest.TestCase):
         with self.assertRaises(UsageError):
             parse_read_arguments(["read"])
 
+    def test_options_after_source_token(self) -> None:
+        options = parse_read_arguments(
+            [
+                "read",
+                "article.pdf",
+                "--here",
+                "--agent",
+                "claude",
+                "--allow-private-network",
+                "evaluate",
+                "claims",
+            ],
+        )
+        self.assertTrue(options.here)
+        self.assertEqual("claude", options.agent)
+        self.assertEqual("evaluate claims", options.goal)
+        self.assertTrue(options.source.allow_private_network)
+        self.assertEqual("article.pdf", options.source.origin)
+        self.assertEqual("local_pdf", options.source.kind)
+
+    def test_url_options_after_source_without_goal(self) -> None:
+        options = parse_read_arguments(
+            [
+                "read",
+                "https://example.com/doc",
+                "--allow-private-network",
+                "--agent",
+                "pi",
+            ],
+        )
+        self.assertEqual("pi", options.agent)
+        self.assertIsNone(options.goal)
+        self.assertTrue(options.source.allow_private_network)
+
+    def test_read_mode_rejects_abbreviated_agent_option(self) -> None:
+        with self.assertRaises(UsageError) as raised:
+            parse_read_arguments(["read", "--ag", "pi", "doc.pdf"])
+        self.assertIn("--ag", str(raised.exception))
+
 
 class ReadConsoleDispatchTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -178,17 +221,60 @@ class ReadConsoleDispatchTests(unittest.TestCase):
         run.assert_not_called()
         self.write_banner.assert_not_called()
 
-    @mock.patch(
-        "socratic_learn.cli.run_learning",
-        side_effect=SourceError("unsupported source"),
-    )
-    def test_source_error_exits_six_without_traceback(self, run: mock.Mock) -> None:
+    def test_read_mode_main_rejects_abbreviated_agent_option(self) -> None:
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            exit_code = main(["read", "critically"])
+            exit_code = main(["read", "--ag", "pi", "doc.pdf"])
+        self.assertEqual(2, exit_code)
+        self.assertIn("--ag", stderr.getvalue())
+        self.write_banner.assert_not_called()
+
+    def test_ingestion_source_error_exits_six_without_spawn(self) -> None:
+        spawn = mock.Mock(side_effect=AssertionError("must not spawn"))
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            records = home / "records"
+            records.mkdir()
+            protocol = home / "protocol.md"
+            protocol.write_text("protocol\n", encoding="utf-8")
+            prepared = LearningWorkspace(home, protocol, records)
+            with (
+                mock.patch(
+                    "socratic_learn.launcher.detect_hosts",
+                    return_value={"pi": DetectedHost(ADAPTERS["pi"], "pi")},
+                ),
+                mock.patch(
+                    "socratic_learn.launcher.load_config",
+                    return_value=LauncherConfig(default_agent="pi"),
+                ),
+                mock.patch(
+                    "socratic_learn.launcher.prepare_personal_workspace",
+                    return_value=prepared,
+                ),
+                mock.patch(
+                    "socratic_learn.launcher.ingest_source",
+                    side_effect=SourceError("ingestion failed"),
+                ),
+                mock.patch("socratic_learn.launcher.subprocess.run", spawn),
+            ):
+                with contextlib.redirect_stderr(stderr):
+                    exit_code = main(
+                        [
+                            "read",
+                            "--agent",
+                            "pi",
+                            "article.pdf",
+                            "study",
+                        ],
+                    )
         self.assertEqual(6, exit_code)
-        self.assertIn("unsupported source", stderr.getvalue())
+        lines = [line for line in stderr.getvalue().splitlines() if line.strip()]
+        self.assertEqual(1, len(lines))
+        self.assertTrue(lines[0].startswith("error: "))
+        self.assertIn("ingestion failed", lines[0])
         self.assertNotIn("Traceback", stderr.getvalue())
+        spawn.assert_not_called()
 
 
 if __name__ == "__main__":

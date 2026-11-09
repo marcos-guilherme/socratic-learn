@@ -8,6 +8,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest import mock
 
+from socratic_learn.config import LauncherConfig
 from socratic_learn.errors import SourceError, UsageError
 from socratic_learn.hosts import ADAPTERS, DetectedHost, command_for
 from socratic_learn.launcher import LaunchOptions, run_learning
@@ -39,85 +40,82 @@ def _ingested(bundle: Path) -> IngestedSource:
 
 
 class ReadLauncherLifecycleTests(unittest.TestCase):
-    def _run_read(
-        self,
-        *,
-        agent: str = "pi",
-        goal: str = "study evidence",
-        home: str,
-        which: dict[str, str] | None = None,
-    ) -> tuple[list[str], list[list[str]]]:
-        which = which or {"pi": "pi", "claude": "claude", "agy": "agy"}
+    def test_lifecycle_order_is_detect_goal_agent_workspace_ingest_spawn(self) -> None:
         events: list[str] = []
-        calls: list[list[str]] = []
-        bundle = Path(home) / "records/sources/abc"
 
-        def detect(which_fn):
+        def track_detect(_which_fn):
             events.append("detect")
-            detected: dict[str, DetectedHost] = {}
-            for name in ("pi", "claude", "antigravity"):
-                executable_name = ADAPTERS[name].executable_names[0]
-                executable = which_fn(executable_name)
-                if executable is not None:
-                    detected[name] = DetectedHost(ADAPTERS[name], executable)
-            return detected
+            return {"pi": DetectedHost(ADAPTERS["pi"], "pi")}
 
-        def workspace(*_args, **_kwargs):
+        def track_goal_prompt(_prompt: str) -> str:
+            events.append("goal")
+            return "study evidence"
+
+        def track_load_config(_path: Path) -> LauncherConfig:
+            events.append("agent")
+            return LauncherConfig(default_agent="pi")
+
+        def track_workspace(_home):
             events.append("workspace")
             from socratic_learn.workspace import LearningWorkspace
 
-            records = Path(home) / "records"
+            records = _home / "records"
             records.mkdir(parents=True, exist_ok=True)
-            protocol = Path(home) / "protocol.md"
+            protocol = _home / "protocol.md"
             protocol.write_text("protocol\n", encoding="utf-8")
-            return LearningWorkspace(Path(home), protocol, records)
+            return LearningWorkspace(_home, protocol, records)
 
-        def ingest(records, request):
+        def track_ingest(records, _request):
             events.append("ingest")
+            bundle = records / "sources" / "abc"
             bundle.mkdir(parents=True, exist_ok=True)
             (bundle / "index.md").write_text("# Index\n", encoding="utf-8")
             (bundle / "metadata.json").write_text("{}", encoding="utf-8")
             return _ingested(bundle.resolve())
 
-        def spawn(argv, **kwargs):
+        def track_spawn(argv, **_kwargs):
             events.append("spawn")
-            calls.append(argv)
             return CompletedProcess(argv, 0)
 
-        with (
-            mock.patch("socratic_learn.launcher.detect_hosts", side_effect=detect),
-            mock.patch(
-                "socratic_learn.launcher.prepare_personal_workspace",
-                side_effect=workspace,
-            ),
-            mock.patch("socratic_learn.launcher.ingest_source", side_effect=ingest),
-        ):
-            options = LaunchOptions(
-                goal,
-                agent,  # type: ignore[arg-type]
-                False,
-                Path.cwd(),
-                SourceRequest("article.pdf", "local_pdf"),
-            )
-            run_learning(
-                options,
-                input_fn=lambda prompt: self.fail("must not prompt"),
-                output=io.StringIO(),
-                which=which.get,
-                run_process=spawn,
-                environ={"SOCRATIC_LEARN_HOME": home},
-            )
-        events.insert(1, "goal")
-        events.insert(2, "agent")
-        return events, calls
-
-    def test_lifecycle_order_is_detect_goal_agent_workspace_ingest_spawn(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            events, _calls = self._run_read(home=temporary)
-            self.assertEqual(
-                ["detect", "goal", "agent", "workspace", "ingest", "spawn"],
-                events,
-            )
+            home = Path(temporary)
+            with (
+                mock.patch(
+                    "socratic_learn.launcher.detect_hosts",
+                    side_effect=track_detect,
+                ),
+                mock.patch(
+                    "socratic_learn.launcher.load_config",
+                    side_effect=track_load_config,
+                ),
+                mock.patch(
+                    "socratic_learn.launcher.prepare_personal_workspace",
+                    side_effect=track_workspace,
+                ),
+                mock.patch(
+                    "socratic_learn.launcher.ingest_source",
+                    side_effect=track_ingest,
+                ),
+            ):
+                run_learning(
+                    LaunchOptions(
+                        None,
+                        None,
+                        False,
+                        Path.cwd(),
+                        SourceRequest("article.pdf", "local_pdf"),
+                    ),
+                    input_fn=track_goal_prompt,
+                    output=io.StringIO(),
+                    which={"pi": "pi"}.get,
+                    run_process=track_spawn,
+                    environ={"SOCRATIC_LEARN_HOME": str(home)},
+                )
+
+        self.assertEqual(
+            ["detect", "goal", "agent", "workspace", "ingest", "spawn"],
+            events,
+        )
 
     def test_missing_host_skips_prompt_workspace_and_ingest(self) -> None:
         prompts: list[str] = []
