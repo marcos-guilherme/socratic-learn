@@ -96,6 +96,20 @@ class ScenarioRuntimeDisclosure:
 def _inline(text: str) -> str:
     return " ".join(text.split())
 
+_QUOTATION_CHAR_LIMIT = 600
+_QUOTATION_TRUNCATION_MARKER = " [excerpt truncated]"
+
+
+def _bounded_quotation_side(text: str) -> str:
+    """Return a deterministic inline excerpt no longer than the report quotation limit."""
+    normalized = _inline(text)
+    if len(normalized) <= _QUOTATION_CHAR_LIMIT:
+        return normalized
+    keep = _QUOTATION_CHAR_LIMIT - len(_QUOTATION_TRUNCATION_MARKER)
+    if keep < 1:
+        raise ValueError("report quotation truncation budget is invalid")
+    return normalized[:keep] + _QUOTATION_TRUNCATION_MARKER
+
 
 def _approved_research_link(link: str) -> bool:
     if not isinstance(link, str):
@@ -229,12 +243,10 @@ def _validated_disclosure(
 
 
 def _quote(turn: TurnRecord) -> list[str]:
-    if len(turn.learner) > 600 or len(turn.tutor) > 600:
-        raise ValueError("report quotations must not exceed 600 characters per turn")
     return [
         f"### Evidence turn {turn.number}",
-        f"> Learner: {_inline(turn.learner)}",
-        f"> Tutor: {_inline(turn.tutor)}",
+        f"> Learner: {_bounded_quotation_side(turn.learner)}",
+        f"> Tutor: {_bounded_quotation_side(turn.tutor)}",
         "",
     ]
 

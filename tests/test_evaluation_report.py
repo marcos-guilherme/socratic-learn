@@ -427,7 +427,7 @@ class EvaluationReportTests(unittest.TestCase):
         long_record = replace(
             record,
             turns=(
-                replace(record.turns[0], learner="x" * 601),
+                replace(record.turns[0], learner="x" * 900, tutor="y" * 850),
                 *record.turns[1:],
             ),
         )
@@ -438,16 +438,32 @@ class EvaluationReportTests(unittest.TestCase):
                 for category in scorecards[0].categories
             ),
         )
-        with self.assertRaisesRegex(ValueError, "600"):
-            render_baseline_report(
-                suite,
-                baseline_rubric(),
-                [long_record, *records[1:]],
-                [long_scorecard, *scorecards[1:]],
-                [],
-                runtime_disclosures=runtime_disclosures,
-                rules=(),
-            )
+        bounded = render_baseline_report(
+            suite,
+            baseline_rubric(),
+            [long_record, *records[1:]],
+            [long_scorecard, *scorecards[1:]],
+            [],
+            runtime_disclosures=runtime_disclosures,
+            rules=(),
+        )
+        validate_baseline_report(bounded)
+        long_learner = next(
+            line for line in bounded.splitlines() if line.startswith("> Learner: x")
+        )
+        long_tutor = next(
+            line for line in bounded.splitlines() if line.startswith("> Tutor: y")
+        )
+        for line in (long_learner, long_tutor):
+            body = line.split(": ", 1)[1]
+            self.assertLessEqual(len(body), 600)
+            self.assertIn("[excerpt truncated]", body)
+        for line in bounded.splitlines():
+            if line.startswith("> Learner: ") or line.startswith("> Tutor: "):
+                self.assertLessEqual(len(line.split(": ", 1)[1]), 600)
+        manual = bounded.replace(long_learner, "> Learner: " + ("z" * 601), 1)
+        with self.assertRaisesRegex(ValueError, "overlong learner quotation"):
+            validate_baseline_report(manual)
 
     def test_validate_and_write_reject_unsafe_report_text(self) -> None:
         report = self.render(disclosure())
@@ -746,6 +762,86 @@ class EvaluationReportTests(unittest.TestCase):
         )
         validate_baseline_report(path.read_text(encoding="utf-8"))
 
+
+
+    def test_article_long_turn_quotations_render_within_limit(self) -> None:
+        manifest = load_suite_manifest(fixture_root() / "suites/article-reading-v1.json")
+        rubric = load_rubric(fixture_root() / "rubric.json")
+        identities = identities_for_scenario(manifest, "article-reading")
+        learner = (
+            "Before responding, read and follow the Socratic Learn protocol. "
+            + ("claim " * 200)
+        )
+        tutor = "Tutor explains source assertion versus support. " + ("detail " * 200)
+        record = RunRecord(
+            schema_version=RUN_SCHEMA_V2,
+            run_id="article-reading-v1-article-reading",
+            suite_id="article-reading-v1",
+            scenario_id="article-reading",
+            repository_commit="0" * 40,
+            protocol_version="1.2.0",
+            protocol_sha256="a" * 64,
+            runtime="antigravity",
+            runtime_version="1.0",
+            model_identifier="model",
+            learner_response_count=1,
+            stop_reason="observable_outcome",
+            infrastructure_failure=None,
+            turns=(
+                TurnRecord(1, learner, tutor),
+                TurnRecord(2, "follow-up", "more tutor text"),
+            ),
+            scenario_sha256=identities.scenario_sha256,
+            rubric_sha256=identities.rubric_sha256,
+            suite_sha256=identities.suite_sha256,
+            source_fixture_id="article-reading-v1",
+            source_fixture_sha256="457b959a517b25beed4e2b986d9814e3beca89db94f4a52fe1c2de47909fd1da",
+        )
+        scorecard = Scorecard(
+            1,
+            "article-reading",
+            tuple(
+                CategoryScore(identifier, 2, (1,), "ok")
+                for identifier in (
+                    "observable-outcome",
+                    "relevant-diagnosis",
+                    "calibrated-questioning",
+                    "adaptive-support",
+                    "retrieval-after-support",
+                    "application-transfer",
+                    "corrective-feedback",
+                    "evidence-closure",
+                )
+            ),
+            (),
+        )
+        disclosure = {
+            "article-reading": ScenarioRuntimeDisclosure(
+                "article-reading",
+                True,
+                RuleDisclosure("user_home", (), ()),
+            )
+        }
+        report = render_baseline_report(
+            manifest,
+            rubric,
+            [record],
+            [scorecard],
+            [],
+            runtime_disclosures=disclosure,
+            rules=(),
+        )
+        validate_baseline_report(report)
+        learner_line = next(
+            line for line in report.splitlines() if line.startswith("> Learner: ")
+        )
+        tutor_line = next(
+            line for line in report.splitlines() if line.startswith("> Tutor: ")
+        )
+        self.assertLessEqual(len(learner_line.removeprefix("> Learner: ")), 600)
+        self.assertLessEqual(len(tutor_line.removeprefix("> Tutor: ")), 600)
+        self.assertIn("[excerpt truncated]", learner_line)
+        self.assertIn("[excerpt truncated]", tutor_line)
 
     def test_article_report_renders_release_gate_labels(self) -> None:
         manifest = load_suite_manifest(fixture_root() / "suites/article-reading-v1.json")
