@@ -148,9 +148,8 @@ def build_text_pdf(pages: tuple[str, ...]) -> bytes:
     return bytes(document)
 ```
 
-Replace the ellipsis during implementation with the complete object/xref
-writer. Generate `tests/fixtures/sources/minimal-text.pdf` with two paragraphs
-and assert:
+Generate `tests/fixtures/sources/minimal-text.pdf` with two paragraphs and
+assert:
 
 ```python
 from pypdf import PdfReader
