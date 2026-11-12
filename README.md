@@ -1,166 +1,74 @@
 # Socratic Learn
 
-[Native Python safety matrix](https://github.com/marcos-guilherme/socratic-learn/actions/workflows/native-python.yml)
-· [Python 3.11+](https://www.python.org/downloads/)
-· [License: MIT](LICENSE)
+**Turn any AI agent into a tutor that checks whether you actually learned.**
+
+Socratic Learn helps you learn any subject through a guided conversation that
+ends in application. It works for any subject or skill, including physics,
+programming, writing, and research.
+
+**Any subject** | **Your AI host** | **Progress through application**
 
 ```text
-  ███████╗ ██████╗  ██████╗██████╗  █████╗ ████████╗██╗ ██████╗
-  ██╔════╝██╔═══██╗██╔════╝██╔══██╗██╔══██╗╚══██╔══╝██║██╔════╝
-  ███████╗██║   ██║██║     ██████╔╝███████║   ██║   ██║██║
-  ╚════██║██║   ██║██║     ██╔══██╗██╔══██║   ██║   ██║██║
-  ███████║╚██████╔╝╚██████╗██║  ██║██║  ██║   ██║   ██║╚██████╗
-  ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝ ╚═════╝
-                              L E A R N
-
-  objective → prerequisites → guided route → application → evidence
+socratic "I want to learn how attention works"
 ```
 
-**A portable, evidence-aware Socratic protocol for learning any subject.**
+[Install Socratic Learn](#quick-start)
 
-Socratic Learn gives compatible AI agents a clear method for helping people
-learn any subject. First, define what the learner should be able to do. Then
-check only the knowledge they need, preview the shortest useful route, and ask
-them to apply what they learned before calling it progress.
+[Python 3.11+](https://www.python.org/downloads/) | [License: MIT](LICENSE)
 
-It is a protocol and distribution toolkit. It is not an AI model or chat
-application, and it does not claim that questions alone guarantee learning.
+## See a session
 
-## Why I built this
-
-I built Socratic Learn out of a recurring need in my work as an AI researcher.
-I often need to learn new theory, tools, and related fields quickly without
-mistaking a fluent explanation for real understanding.
-
-The project turns that need into a portable protocol. It asks for clear
-outcomes, adapts to what the learner already knows, and uses application as
-evidence. It supports any subject or skill. Mathematics and AI are starter
-curricula and rigorous examples, not product boundaries.
-
-## The method in 60 seconds
-
-1. **Define the outcome.** Turn “I want to learn X” into something the learner
-   can explain, derive, predict, implement, or diagnose.
-2. **Find the starting point.** Check only prerequisites that could block that
-   outcome.
-3. **Preview the route.** Briefly explain what comes first and why, start
-   teaching automatically, and let the learner redirect at any time.
-4. **Teach adaptively.** Ask when the learner can work out the next step.
-   Explain information they cannot work out yet. Then ask them to use it.
-5. **Require evidence.** Finish only after the learner applies the idea in the
-   original task or a new one. Record what was established, what remains,
-   sources, and one next step.
-
-`objective → prerequisites → guided route → application → evidence`
-
-## A compact example
+Socratic Learn starts by turning a broad interest into something you can
+demonstrate. It checks only the knowledge needed for that outcome and gives
+help when the next step cannot reasonably be discovered.
 
 ```text
-Learner  → I want to understand why attention scales by √dₖ.
-Tutor    → What observable result should you be able to derive or predict?
-Learner  → I want to derive the scaling and predict what changes without it.
-Tutor    → I'll check the starting point first: compare the variance of one
-           dot-product term with the variance of a sum of dₖ independent terms.
+Learner  > I want to understand why attention scales by sqrt(d_k).
+Tutor    > What should you be able to derive or predict by the end?
+Learner  > I want to derive the scaling and predict what changes without it.
+Tutor    > I'll check the starting point first. For one term in the dot
+           product, what variance would you expect if its two factors are
+           independent and standardized?
            I'll use your answer to set the route. You can redirect me at any time.
 ...
-Evidence → The learner derives the variance growth, explains the softmax
-           consequence, and transfers the reasoning to a changed dimension.
+Evidence > The learner derives the variance growth and applies it to a changed
+           dimension without receiving the final answer first.
 ```
 
-When the learner can reasonably work out the next step, Socratic Learn asks.
-When the learner cannot work out the information yet, it explains directly
-and then asks the learner to use it.
+The tutor asks when you have enough information to reason forward. When a
+missing fact blocks you, it explains that fact and returns control with a new
+application.
 
-## How the system is structured
+## Why it is different
 
-The learning behavior lives in four main documents:
+The conversation adapts to your work, not to a personality label. A preference
+for diagrams, prose, code, or concrete examples can change the presentation.
+It does not prove mastery or define a fixed learning style. Progress comes from
+what you can explain, derive, predict, implement, or diagnose.
 
-- [pedagogy](core/pedagogy.md): connected ideas, clear reasons for each step,
-  responsive dialogue, and active practice.
-- [session protocol](core/session-protocol.md): clear outcomes, focused checks,
-  tutor-led route selection, a short route preview, and a saved session record.
-- [assessment](core/assessment.md): finding what the learner knows and where
-  the gap begins.
-- [evidence policy](core/evidence-policy.md): types of mathematical claims,
-  source priorities, checks for information that can change, and clear
-  uncertainty.
+Support also changes with the evidence in the session. The tutor can offer a
+cue, a simpler case, another representation, or a direct explanation. After
+stronger help, it asks you to retrieve or apply the idea again. When you return
+later, the next session starts from a recorded gap instead of replaying the
+previous answer.
 
-The `socratic` launcher delivers one deterministic prompt bundle to Pi, Claude
-Code, or Antigravity. Hosts provide the model, authentication, and terminal.
-Socratic Learn provides the method and private learning workspace. Cursor and
-the project adapters expose the same protocol through project discovery.
+If you have limited time, the route becomes smaller while keeping one final
+application. The aim is an honest partial result rather than a rushed claim of
+completion.
 
-## Research foundations
-
-The [learner-preference research catalog](docs/research/learner-preference-patterns.md)
-maps reported preferences, measured learning evidence, product implications,
-confidence, and caveats. Its central rule is that **preference, engagement,
-and learning are different outcomes**. Preferences can adapt representation,
-pace, accessibility, and local interaction; route placement and mastery must
-come from observed performance. Socratic Learn does not diagnose fixed
-learning styles.
-
-These studies informed design decisions. They do **not** validate Socratic
-Learn itself:
-
-- Clear objectives and short active tasks alongside Socratic dialogue:
-  [Mahoney et al. (2023)](https://doi.org/10.1016/j.tsc.2023.101422).
-- Guidance that adapts to learner behavior:
-  [Munshi et al. (2023)](https://doi.org/10.1111/jcal.12761).
-- More guidance when the strategy is new:
-  [Borchers et al. (2025)](https://doi.org/10.1016/j.compedu.2025.105364).
-- Recall of upcoming steps before worked-example feedback:
-  [van den Broek et al. (2025)](https://doi.org/10.1016/j.learninstruc.2025.102196).
-- Guidance, worked examples, learning from failed attempts, and transfer to
-  new tasks:
-  [Stogniy et al. (2020)](https://doi.org/10.1096/fasebj.2020.34.s1.04148).
-- Recent and promising evidence from GenAI-supported Socratic assessment:
-  [Lee et al. (2025)](https://doi.org/10.48550/arXiv.2509.16262).
-
-The AI-specific evidence is recent, and the cited studies examine their own
-groups and teaching methods, not this repository. They justify careful
-evaluation, not an effectiveness claim.
-
-## Engineering evidence
-
-- **Deterministic distribution:** canonical Markdown builds a versioned prompt
-  bundle and manifest with reproducible hashes.
-- **Portable runtime:** dependency-light Python 3.11+ with `pypdf` for textual
-  PDF extraction, plus native and pipx distribution paths.
-- **Safe installation:** ownership receipts, no-overwrite
-  publication, rollback, and explicit recovery artifacts.
-- **Private by default:** learner records and raw semantic evidence are ignored
-  and excluded from published packages.
-- **Host isolation:** semantic evaluation uses external temporary home
-  directories and separate working directories, sanitized tracked reports,
-  and strict cleanup checks.
-- **Safety and edge-case tests:** symlink, race, timeout, inherited-pipe,
-  malformed stream, package-exclusion, and cross-platform safety coverage.
-
-See the [CI workflow](.github/workflows/native-python.yml), [manifest
-reference](docs/manifest-reference.md), and [semantic baseline
-report](evaluation/reports/2026-11-06-antigravity-baseline.md).
-
-## Evaluation status
-
-The first semantic baseline tried three unchanged-protocol Antigravity sessions,
-one each for conceptual physics, practical programming, and
-communication writing. All three stopped before a learner response because
-Antigravity headless mode denied the same workspace-inspection command.
-
-Because no learner could respond, no pedagogy score was assigned. Socratic
-Learn does not convert runtime failure, engagement, or self-reported
-confidence into evidence of learning. The sanitized result is tracked in the [baseline
-report](evaluation/reports/2026-11-06-antigravity-baseline.md). Raw streams
-remain private and untracked.
+I built Socratic Learn out of a recurring need in my work as an AI researcher.
+I wanted a practical way to learn new theory and tools without mistaking a
+fluent explanation for understanding. Mathematics and AI are starter curricula,
+but they are examples rather than product boundaries.
 
 ## Quick start
 
 Normal use requires no repository clone and no source build. The native
-installers target x86-64 Windows, Linux, and macOS. Native installation is
-available only after GitHub Release v0.1.0 is published. When that release
-exists, download its version-scoped installer asset to a temporary file and
-review it before execution.
+installers target x86-64 Windows, Linux, and macOS.
+
+Native installation is available only after GitHub Release v0.1.0 is published.
+When that release exists, download its exact installer to a temporary file and
+review it before running it.
 
 Windows PowerShell:
 
@@ -170,7 +78,7 @@ Invoke-WebRequest https://github.com/marcos-guilherme/socratic-learn/releases/do
 Get-Content $installer
 ```
 
-After reviewing the downloaded file:
+After reviewing the file:
 
 ```powershell
 & $installer
@@ -184,65 +92,73 @@ curl -fL https://github.com/marcos-guilherme/socratic-learn/releases/download/v0
 cat "$installer"
 ```
 
-After reviewing the downloaded file:
+After reviewing the file:
 
 ```sh
 sh "$installer"
 rm -f "$installer"
 ```
 
-The installers verify release hashes and require confirmation before
-downloading. The first native binaries are unsigned and may trigger Windows
-SmartScreen or macOS Gatekeeper warnings. A checksum verifies downloaded
-bytes. It is not a substitute for code signing. This documentation does not
-claim that a public release or tag already exists.
+The installers verify release hashes before publication. The first native
+binaries are unsigned and may trigger Windows SmartScreen or macOS Gatekeeper.
+A checksum confirms the downloaded bytes, but it does not replace code signing.
 
-The x86-64 native build is the preferred one-time installation method. For
-other architectures, or if you prefer a Python-managed environment, use Python
-3.11+ and pipx after package publication. The pipx command is available only
-after socratic-learn 0.1.0 is published on PyPI.
+For another architecture, or for a Python-managed installation, use pipx after
+package publication. The pipx command is available only after socratic-learn
+0.1.0 is published on PyPI.
 
 ```text
 pipx install socratic-learn
 ```
 
-Start the launcher without a goal:
+Start without putting your learning goal in shell history:
 
 ```text
 socratic
 ```
 
-It detects Pi, Claude Code, and Antigravity, asks you to select an available
-launcher host on first use, and remembers that selection. Starting without a
-goal is the privacy default because it avoids putting the learning goal in
-shell history. Socratic Learn does not store provider credentials. The
-selected host uses its own authentication.
-
-You can pass a goal directly for convenience, but it may enter your shell
-history:
+You can also pass a goal or choose a host directly:
 
 ```text
 socratic "I want to learn linear algebra"
 socratic --agent pi
 ```
 
-By default, personal launcher profiles, progress, and sessions live under
+Starting without a goal is the privacy default. Socratic Learn does not store
+provider credentials. The chosen host keeps its own authentication and model
+settings.
+
+Personal sessions use
 `~/.socratic-learn/learning/.socratic-learn/workspace/`. To use the current
-directory as the learning project instead, run:
+directory as the learning project, run:
 
 ```text
 socratic --here
 ```
 
-The launcher prepares the protocol and private workspace, then runs the chosen
-host in that workspace. The host retains its normal terminal, authentication,
-permissions, and model selection, and `socratic` returns its exit status.
+## Choose an AI host
 
-## Source-grounded reading
+Socratic Learn provides the learning method and private workspace. The launcher
+host provides the interactive terminal and access to a provider and model.
+Pi, Claude Code, and Antigravity are launcher hosts. They keep their own
+authentication, quotas, tools, and model selection.
 
-Use `socratic read` to study one HTML page, XHTML page, or local PDF with the
-same Socratic protocol. This is separate from `socratic learn`, which keeps the
-general session flow without ingestion.
+Pi offers a general interactive harness. Antigravity can be launched through
+its `agy` command. Claude Code uses its own terminal experience. Cursor remains
+a project integration rather than a launcher choice.
+
+Native installations manage their own lifecycle. Pipx installations print the
+matching pipx command instead of changing their environment.
+
+```text
+socratic update
+socratic uninstall
+```
+
+## Learn from an article
+
+`socratic learn` starts a general session. `socratic read` prepares one HTML or
+XHTML page, or a textual PDF, for focused study.
 
 ```text
 socratic read https://example.org/article
@@ -250,231 +166,108 @@ socratic read paper.pdf evaluate the main claim and its evidence
 socratic read --agent pi tests/fixtures/sources/minimal-text.pdf explain its evidence
 ```
 
-Pick a launcher host explicitly when needed:
-
-```text
-socratic read --agent claude https://example.org/article
-```
-
-For local development servers or private networks, add the one-command gate:
+For a local development server or private network, add the explicit gate:
 
 ```text
 socratic read --allow-private-network http://localhost/article
 ```
 
-### What each layer owns
+Socratic Learn creates the source bundle and shared study prompt. The launcher
+host still owns the provider, model, credentials, quota, and optional research
+tools.
 
-**Socratic Learn** prepares the protocol, ingests supported sources into a
-private bundle, builds the shared source-study prompt, and runs the child in the
-prepared workspace. The **launcher host** (Pi, Claude Code, or Antigravity) is
-the interactive harness. The **provider and model** configured by that host
-remain host-owned: credentials, quotas, terminal behavior, tool use, and any
-optional research features.
+Private bundles live under
+`~/.socratic-learn/learning/.socratic-learn/workspace/sources/<source-id>/`.
+With `--here`, they live under
+`PROJECT/.socratic-learn/workspace/sources/<source-id>/`. Each bundle contains
+an index, metadata, normalized sections, and the original bytes. Identical
+input reuses a validated bundle instead of publishing a duplicate.
 
-### Where source bundles live
-
-Ingested sources are stored privately under each workspace records tree:
-
-- personal default:
-  `~/.socratic-learn/learning/.socratic-learn/workspace/sources/<source-id>/`
-- project-local `--here` workspace:
-  `PROJECT/.socratic-learn/workspace/sources/<source-id>/`
-
-Each bundle contains `index.md`, `metadata.json`, chunked text under
-`sections/`, and `original.bin`. Identical sources are **reuses**d: a matching
-existing bundle is validated and kept instead of republishing duplicate bytes.
-
-These learner bundles stay out of the repository, published wheels, and
-untouched sibling trees.
-
-### Accepted media and limits
-
-Supported inputs are HTTP/HTTPS HTML, XHTML, and regular local PDF files.
+Supported input is HTTP or HTTPS HTML, XHTML, and regular local PDF files:
 
 | Limit | Value |
 | --- | --- |
-| Raw download or file size | 20 MiB |
-| PDF page count | 500 PDF pages |
-| Normalized extracted text | 5,000,000 Unicode code points |
-| HTTP socket timeout | 20-second socket read timeout |
-| Redirects | five redirects maximum |
-| Normalized chunk size | 12,000 code points per chunk |
+| Raw input | 20 MiB |
+| PDF length | 500 PDF pages |
+| Extracted text | 5,000,000 Unicode code points |
+| Socket timeout | 20-second read timeout |
+| Redirects | five redirects |
+| Section chunk | 12,000 code points |
 
-There is **no OCR** and **no JavaScript** rendering. Image-only PDFs, encrypted
-PDFs, and dynamic pages that need a browser runtime are rejected with an
-actionable message instead of a silent fallback.
+There is no OCR and no JavaScript rendering. Image-only PDFs, encrypted PDFs,
+and dynamic pages that need a browser are rejected with an actionable message.
 
-### Evidence language and external research
+Study is source-bounded by default. The tutor separates a source assertion,
+within-source support, and external verification. External research requires an
+explicit learner request, and the tutor must disclose the capability and
+sources it used.
 
-During source study the default is **source-bounded** work:
+Source text is untrusted study material. Prompt-injection resistance and tool
+restraint are best-effort controls, not a sandbox. The selected host may still
+have network or shell access under its own policy.
 
-- treat quoted source lines as a **source assertion**;
-- treat quoted source support as **within-source support**;
-- treat anything not established from the indexed bundle as requiring
-  **external verification**.
+For an image-only PDF, use a textual export. For dynamic pages, save a static
+page or PDF. A quota or model error belongs to the host provider. For changing
+agents, pass `--agent` or update `~/.socratic-learn/config.json`.
 
-The tutor must not treat absence in the indexed bundle as proof of
-nonexistence elsewhere. **External verification** requires an **explicit**
-learner request to use host-provided research; capability and sources must be
-disclosed when used.
+## How the method works
 
-### Safety expectations
+The protocol follows one connected path:
 
-Source text is untrusted study material, never instructions. Prompt-injection
-and tool restraint are **best-effort** mitigations, **not a sandbox** or
-security boundary. The host may still reach network, shell, or provider tools
-according to its own policy.
+`objective → prerequisites → guided route → application → evidence`
 
-Socratic Learn does not claim that this tool or the Socratic method is
-proven to improve learning effectiveness for every person and every domain.
+1. **Define the outcome.** Turn the topic into something you can demonstrate.
+2. **Find the starting point.** Check only prerequisites that could block it.
+3. **Preview the route.** Explain what comes first and why, then start teaching
+   automatically. You can redirect at any time.
+4. **Teach adaptively.** Ask when you can reason forward and explain when
+   required information is missing.
+5. **Require evidence.** Close after an application, with remaining gaps and a
+   useful next step.
 
-### Troubleshooting
+The learning behavior is defined in [pedagogy](core/pedagogy.md), the
+[session protocol](core/session-protocol.md),
+[assessment](core/assessment.md), and the
+[evidence policy](core/evidence-policy.md).
 
-- **Image-only PDFs:** extraction fails; use a textual PDF or another format the
-  host can read directly.
-- **Dynamic pages:** pages that require JavaScript execution are not captured;
-  save a static export or provide a PDF.
-- **Quota or model errors:** these come from the host **provider**; change the
-  host model or account settings there, not in Socratic Learn.
-- **Changing agents or models:** run `socratic read --agent pi ...` (or another
-  detected host) or update the saved default in `~/.socratic-learn/config.json`.
+## Research and limitations
 
-## Supported hosts and project adapters
+The [learner preference catalog](docs/research/learner-preference-patterns.md)
+separates preference, engagement, and measured learning. The project uses that
+distinction to adapt presentation without treating confidence or activity as
+mastery evidence.
 
-The launcher is the normal user path. Project adapters are separate:
-they install protocol instructions into an existing project for an agent that
-opens that project. Choose one project-local target:
+Research that informed specific design decisions includes
+[Mahoney et al. (2023)](https://doi.org/10.1016/j.tsc.2023.101422),
+[Munshi et al. (2023)](https://doi.org/10.1111/jcal.12761),
+[Borchers et al. (2025)](https://doi.org/10.1016/j.compedu.2025.105364),
+[van den Broek et al. (2025)](https://doi.org/10.1016/j.learninstruc.2025.102196),
+[Stogniy et al. (2020)](https://doi.org/10.1096/fasebj.2020.34.s1.04148), and
+[Lee et al. (2025)](https://doi.org/10.48550/arXiv.2509.16262).
 
-| Target | Command | Discovery path |
-| --- | --- | --- |
-| Generic | `python -m socratic_learn install generic PROJECT` | `.socratic-learn/loader.md` |
-| Cursor | `python -m socratic_learn install cursor PROJECT` | `.cursor/skills/socratic-learn/SKILL.md` |
-| Claude Code | `python -m socratic_learn install claude-code PROJECT` | owned `CLAUDE.md` or an emitted snippet |
-| Pi | `python -m socratic_learn install pi PROJECT` | `.pi/skills/socratic-learn/SKILL.md` |
+Those studies examine their own learners, settings, and teaching methods. They
+do not validate Socratic Learn as a complete product or guarantee mastery.
 
-The project adapters are documented separately:
+The first semantic baseline ran three unchanged-protocol Antigravity sessions.
+All three stopped before a learner response because the host denied the same
+workspace command. For that reason, no pedagogy score was assigned. The
+[sanitized baseline report](evaluation/reports/2026-11-06-antigravity-baseline.md)
+records the result without publishing raw learner evidence.
 
-- [Cursor adapter](adapters/cursor/README.md)
-- [Claude Code adapter](adapters/claude-code/README.md)
-- [Pi adapter](adapters/pi/README.md)
-- [Pi root-ready skill template](adapters/pi/skills/socratic-learn/SKILL.project.md.template)
+## Technical documentation
 
-Installation files are stored under `.socratic-learn/`. Existing agent paths
-are never merged or overwritten automatically.
+The runtime is dependency-light Python 3.11+ with `pypdf` for textual PDF
+extraction. The checked-in prompt bundle and manifest are deterministic.
+Learner profiles, progress, source bundles, and raw evaluation streams remain
+private and excluded from published packages.
 
-Pi, Claude Code, and Antigravity are launcher hosts: they provide the model,
-authentication, and terminal. Cursor remains a project integration, alongside
-the Generic, Claude Code, and Pi project-discovery adapters. Capability
-fallbacks keep the method usable when a host lacks web search, structured
-quizzes, rendering, subagents, persistent memory, or filesystem access.
+Installation protects against ordinary collisions, accidental concurrent
+changes, and cooperating Socratic Learn processes. On POSIX systems, hostile
+processes running as the same OS user are outside the threat model. A final-path
+TOCTOU window remains because a final path mutation cannot be tied to an inode
+that is already open. Ambiguous paths are preserved for manual recovery.
 
-### Launcher lifecycle
-
-Native installs update their own verified executable. Pipx installs do not
-change their environment. These commands print the matching pipx instruction.
-Uninstall preserves learner data unless deletion is explicitly requested and
-confirmed.
-
-```text
-socratic update
-socratic uninstall
-```
-
-For pipx, the matching commands are `pipx upgrade socratic-learn` and
-`pipx uninstall socratic-learn`. See the [installation
-guide](docs/universal-installation.md), [launcher adapter
-contract](docs/launcher-adapters.md), [manifest
-reference](docs/manifest-reference.md), and [adapter extension
-guide](docs/adding-an-adapter.md).
-
-Contributor-only commands (`build`, `export`, project `install`, and
-`doctor`) are for contributors and project integrations. There is no `--force`
-option.
-
-## Privacy, security, and limitations
-
-### Private learner state
-
-Personal launcher state belongs under
-`~/.socratic-learn/learning/.socratic-learn/workspace/`. Project adapters store
-private state under `PROJECT/.socratic-learn/workspace/`. In this source
-repository, real goals, profiles, progress, and session records belong under
-`workspace/`. Project and repository locations are ignored by version control
-except for their tracked `.gitkeep` placeholders.
-
-Verify the repository workspace before publishing:
-
-```powershell
-git ls-files workspace
-```
-
-The output must contain only `workspace/.gitkeep`. Content under
-[workspace.example](workspace.example/) is made up and safe to copy.
-
-### Security and recovery
-
-Socratic Learn protects against ordinary collisions, accidental concurrent
-changes, and cooperating Socratic Learn processes. Controls include atomic
-no-replace publication, parent-directory bindings, identity rechecks,
-exact-topology cleanup, recovery artifacts, and Windows handle-bound
-operations.
-
-If publication becomes ambiguous, the tool preserves partial paths, staging,
-and backups and reports manual recovery steps. It does not knowingly overwrite
-modified or unowned files.
-
-On POSIX systems, the threat model does not cover hostile or uncooperative
-processes running as the same OS user. The `rename`, `unlink`, and `rmdir`
-system calls cannot tie a final path change to an inode that is already open.
-This leaves a final-path TOCTOU race that cannot be removed completely.
-
-### Migrating from Learning Tutor
-
-Socratic Learn recognizes an intact managed Learning Tutor installation under
-`.learning-tutor/`. Use the same target recorded by that installation:
-
-```powershell
-python -m socratic_learn install TARGET PROJECT --update
-```
-
-Migration proceeds only when the legacy receipt proves ownership and every
-managed hash still matches. Private workspace content moves with the managed
-root. Modified, ambiguous, or unowned paths are preserved and migration stops
-with an actionable diagnostic.
-
-The old command remains temporarily available:
-
-```powershell
-python -m learning_tutor --help
-```
-
-It forwards to Socratic Learn and prints a deprecation warning. New
-installations use only Socratic Learn names.
-
-### Limitations
-
-Socratic Learn does not provide an AI model, chat interface, quiz engine,
-search provider, rendering service, persistent memory service, or agent
-runtime. Those capabilities belong to the selected host. The protocol defines
-fallbacks. It cannot create tools the selected host does not provide.
-
-The bundled mathematics and AI maps are starter curricula, not the boundary
-of the protocol and not complete courses. For another subject or skill, the
-agent constructs the smallest relevant dependency path from the learner's
-goal and available evidence.
-
-Universal protocol scope does not mean universal host knowledge. Reliability
-still depends on the selected model, available sources and tools, and the
-quality of evidence produced during the session. Socratic Learn does not
-guarantee mastery.
-
-Support means the four installation and discovery paths satisfy this
-repository's contract. It does not verify every model or guarantee identical
-interpretation.
-
-## Development and documentation
-
-Contributors, unlike normal users, clone and build the source:
+Contributors can clone and build the source:
 
 ```powershell
 git clone https://github.com/marcos-guilherme/socratic-learn.git
@@ -482,7 +275,7 @@ cd socratic-learn
 python -m socratic_learn build
 ```
 
-To populate this repository's ignored example workspace:
+To create the ignored example workspace:
 
 ```powershell
 Copy-Item -Recurse workspace.example\* workspace
@@ -492,33 +285,14 @@ Copy-Item -Recurse workspace.example\* workspace
 cp -R workspace.example/. workspace/
 ```
 
-Run the complete local checks:
-
-```powershell
-python -m socratic_learn build
-python -m unittest discover -s tests -p "test_*.py" -v
-python tests/validate_repository.py
-git diff --check
-```
-
-The validator checks required files, Markdown links, adapter metadata,
-protected content boundaries, workspace privacy, manifests, generated
-artifacts, README contracts, and deterministic rebuilds.
-
-The [native CI workflow](.github/workflows/native-python.yml) runs build,
-tests, validation, and install/update/doctor smoke checks on Python 3.11 for
-Windows, Ubuntu, and macOS.
-
-Documentation:
-
-- [installation guide](docs/universal-installation.md)
-- [launcher adapter contract](docs/launcher-adapters.md)
-- [manifest reference](docs/manifest-reference.md)
-- [adapter extension guide](docs/adding-an-adapter.md)
-- [learner-preference research catalog](docs/research/learner-preference-patterns.md)
-- [Cursor adapter README](adapters/cursor/README.md)
-- [Claude Code adapter README](adapters/claude-code/README.md)
-- [Pi adapter README](adapters/pi/README.md)
+- [Installation and lifecycle](docs/universal-installation.md)
+- [Launcher host contract](docs/launcher-adapters.md)
+- [Adding an adapter](docs/adding-an-adapter.md)
+- [Manifest reference](docs/manifest-reference.md)
+- [Cursor adapter](adapters/cursor/README.md)
+- [Claude Code adapter](adapters/claude-code/README.md)
+- [Pi adapter](adapters/pi/README.md)
+- [Native CI workflow](.github/workflows/native-python.yml)
 
 ## License
 
