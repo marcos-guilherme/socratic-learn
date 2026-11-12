@@ -6,7 +6,8 @@ Socratic Learn helps you learn any subject through a guided conversation that
 ends in application. It works for any subject or skill, including physics,
 programming, writing, and research.
 
-**Any subject** | **Your AI host** | **Progress through application**
+Use it for **any subject** with **your AI host**. It measures
+**progress through application**, not confidence alone.
 
 ```text
 socratic "I want to learn how attention works"
@@ -14,13 +15,12 @@ socratic "I want to learn how attention works"
 
 [Install Socratic Learn](#quick-start)
 
-[Python 3.11+](https://www.python.org/downloads/) | [License: MIT](LICENSE)
+[Python 3.11+](https://www.python.org/downloads/) · [License: MIT](LICENSE)
 
 ## See a session
 
-Socratic Learn starts by turning a broad interest into something you can
-demonstrate. It checks only the knowledge needed for that outcome and gives
-help when the next step cannot reasonably be discovered.
+Socratic Learn turns a broad interest into something you can demonstrate, then
+checks only the knowledge needed for that outcome.
 
 ```text
 Learner  > I want to understand why attention scales by sqrt(d_k).
@@ -35,31 +35,26 @@ Evidence > The learner derives the variance growth and applies it to a changed
            dimension without receiving the final answer first.
 ```
 
-The tutor asks when you have enough information to reason forward. When a
-missing fact blocks you, it explains that fact and returns control with a new
-application.
+The tutor asks when you have enough information to reason forward. If a missing
+fact blocks you, it explains the fact and asks you to try a different case.
 
 ## Why it is different
 
-The conversation adapts to your work, not to a personality label. A preference
-for diagrams, prose, code, or concrete examples can change the presentation.
-It does not prove mastery or define a fixed learning style. Progress comes from
-what you can explain, derive, predict, implement, or diagnose.
+The format can follow your needs. Diagrams, prose, code, and concrete examples
+are presentation choices, not fixed learning styles. Your place on the route
+comes from what you can explain, derive, predict, implement, or diagnose.
 
-Support also changes with the evidence in the session. The tutor can offer a
-cue, a simpler case, another representation, or a direct explanation. After
-stronger help, it asks you to retrieve or apply the idea again. When you return
-later, the next session starts from a recorded gap instead of replaying the
+When an attempt reveals a gap, the tutor can offer a cue, a simpler case,
+another representation, or a direct explanation. It then asks you to use the
+idea again. A later session begins with a recorded gap instead of replaying the
 previous answer.
 
-If you have limited time, the route becomes smaller while keeping one final
-application. The aim is an honest partial result rather than a rushed claim of
-completion.
-
-I built Socratic Learn out of a recurring need in my work as an AI researcher.
+A time limit changes how much the session covers, but it still keeps one final
+application. I built Socratic Learn out of a recurring need in my work as an AI researcher.
 I wanted a practical way to learn new theory and tools without mistaking a
 fluent explanation for understanding. Mathematics and AI are starter curricula,
-but they are examples rather than product boundaries.
+but they are examples rather than product boundaries. The same route can be
+built for any subject or skill.
 
 ## Quick start
 
@@ -99,9 +94,10 @@ sh "$installer"
 rm -f "$installer"
 ```
 
-The installers verify release hashes before publication. The first native
-binaries are unsigned and may trigger Windows SmartScreen or macOS Gatekeeper.
-A checksum confirms the downloaded bytes, but it does not replace code signing.
+The installers verify downloaded files before installing anything. The first
+native binaries are unsigned and may trigger Windows SmartScreen or macOS
+Gatekeeper. A checksum confirms the downloaded bytes, but it does not replace
+code signing.
 
 For another architecture, or for a Python-managed installation, use pipx after
 package publication. The pipx command is available only after socratic-learn
@@ -147,13 +143,17 @@ Pi offers a general interactive harness. Antigravity can be launched through
 its `agy` command. Claude Code uses its own terminal experience. Cursor remains
 a project integration rather than a launcher choice.
 
-Native installations manage their own lifecycle. Pipx installations print the
-matching pipx command instead of changing their environment.
+Supporting any subject does not mean every host knows every subject. Accuracy
+still depends on the selected model, its sources, and its available tools.
 
 ```text
 socratic update
 socratic uninstall
 ```
+
+Native installations manage these operations directly. A pipx installation
+uses `pipx upgrade socratic-learn` and `pipx uninstall socratic-learn`.
+Uninstall keeps learner records unless you explicitly request their deletion.
 
 ## Learn from an article
 
@@ -163,7 +163,7 @@ XHTML page, or a textual PDF, for focused study.
 ```text
 socratic read https://example.org/article
 socratic read paper.pdf evaluate the main claim and its evidence
-socratic read --agent pi tests/fixtures/sources/minimal-text.pdf explain its evidence
+socratic read --agent pi paper.pdf explain its evidence
 ```
 
 For a local development server or private network, add the explicit gate:
@@ -275,15 +275,10 @@ cd socratic-learn
 python -m socratic_learn build
 ```
 
-To create the ignored example workspace:
-
-```powershell
-Copy-Item -Recurse workspace.example\* workspace
-```
-
-```sh
-cp -R workspace.example/. workspace/
-```
+Create the ignored example workspace with
+`Copy-Item -Recurse workspace.example\* workspace` on PowerShell or
+`cp -R workspace.example/. workspace/` on POSIX. Before publishing, run
+`git ls-files workspace`. Its only output should be `workspace/.gitkeep`.
 
 - [Installation and lifecycle](docs/universal-installation.md)
 - [Launcher host contract](docs/launcher-adapters.md)
@@ -292,6 +287,7 @@ cp -R workspace.example/. workspace/
 - [Cursor adapter](adapters/cursor/README.md)
 - [Claude Code adapter](adapters/claude-code/README.md)
 - [Pi adapter](adapters/pi/README.md)
+- [Pi root-ready skill](adapters/pi/skills/socratic-learn/SKILL.project.md.template)
 - [Native CI workflow](.github/workflows/native-python.yml)
 
 ## License

@@ -441,8 +441,12 @@ class RepositoryValidationTests(unittest.TestCase):
             with self.subTest(signal=signal):
                 self.assertIn(signal.lower(), opening.lower())
         self.assertNotIn("tests", opening.lower())
+        self.assertNotIn(" | ", opening)
         self.assertNotIn("███████╗", text)
+        self.assertNotIn("tests/fixtures/", text)
         self.assertNotRegex(text, r"!\[[^\]]*\]\(https?://")
+        self.assertGreaterEqual(len(text.splitlines()), 250)
+        self.assertLessEqual(len(text.splitlines()), 300)
         for command in README_WORKSPACE_COMMANDS:
             with self.subTest(command=command):
                 self.assertIn(command, text)
@@ -503,6 +507,23 @@ class RepositoryValidationTests(unittest.TestCase):
             "gatekeeper",
             "pi, claude code, and antigravity",
             "cursor remains a project integration",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, normalized)
+
+    def test_readme_keeps_host_scope_lifecycle_and_workspace_privacy_visible(
+        self,
+    ) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "README.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split()).lower()
+
+        for clause in (
+            "does not mean every host knows every subject",
+            "pipx upgrade socratic-learn",
+            "pipx uninstall socratic-learn",
+            "git ls-files workspace",
+            "workspace/.gitkeep",
         ):
             with self.subTest(clause=clause):
                 self.assertIn(clause, normalized)
@@ -1050,7 +1071,8 @@ class RepositoryValidationTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         readme = root / "README.md"
         readme.write_text(
-            readme.read_text(encoding="utf-8").replace(
+            replace_requirement_once(
+                readme.read_text(encoding="utf-8"),
                 "Socratic Learn does not store provider credentials",
                 "Authentication is handled elsewhere",
             ),
