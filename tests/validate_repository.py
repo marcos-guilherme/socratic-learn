@@ -97,7 +97,7 @@ README_POSITIONING_REQUIREMENTS = (
     "starter curricula",
 )
 README_TAGLINE = (
-    "A portable, evidence-aware Socratic protocol for learning any subject."
+    "Turn any AI agent into a tutor that checks whether you actually learned."
 )
 README_OPENING_PROMISE = "learn any subject"
 README_UNFRIENDLY_DASHES = ("—", "–")
@@ -1355,7 +1355,7 @@ def validate(root: Path) -> list[str]:
     readme = root / "README.md"
     if readme.is_file():
         readme_text = readme.read_text(encoding="utf-8")
-        readme_opening = readme_text.split("## Why I built this", 1)[0]
+        readme_opening = readme_text.split("## See a session", 1)[0]
         first_prose_paragraph = readme_opening_prose_paragraph(readme_opening)
         if not all(
             phrase.lower() in readme_text.lower()
@@ -1375,9 +1375,9 @@ def validate(root: Path) -> list[str]:
             errors.append("README.md is missing portfolio narrative")
         if contains_unsupported_effectiveness_claim(readme_text):
             errors.append("README.md contains an unsupported effectiveness claim")
-        engineering = readme_text.split("## Engineering evidence", 1)
+        engineering = readme_text.split("## Technical documentation", 1)
         engineering_text = normalize(
-            engineering[1].split("## Evaluation status", 1)[0]
+            engineering[1].split("## License", 1)[0]
             if len(engineering) == 2
             else ""
         ).lower()
@@ -1393,9 +1393,9 @@ def validate(root: Path) -> list[str]:
             errors.append(
                 "README.md must not describe the runtime as standard-library-only"
             )
-        read_section = readme_text.split("## Source-grounded reading", 1)
+        read_section = readme_text.split("## Learn from an article", 1)
         read_text = (
-            read_section[1].split("## Supported hosts and project adapters", 1)[0]
+            read_section[1].split("## How the method works", 1)[0]
             if len(read_section) == 2
             else ""
         )
@@ -1412,7 +1412,7 @@ def validate(root: Path) -> list[str]:
             errors.append("README.md is missing public launcher onboarding")
         quick_start = readme_text.split("## Quick start", 1)
         quick_start_text = (
-            quick_start[1].split("## Supported hosts and project adapters", 1)[0]
+            quick_start[1].split("## Choose an AI host", 1)[0]
             if len(quick_start) == 2
             else ""
         )
@@ -1430,7 +1430,7 @@ def validate(root: Path) -> list[str]:
         (
             root / "README.md",
             "## Quick start",
-            "## Supported hosts and project adapters",
+            "## Choose an AI host",
         ),
         (
             root / "docs/universal-installation.md",

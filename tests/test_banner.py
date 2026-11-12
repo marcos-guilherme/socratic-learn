@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import os
 import unittest
-from pathlib import Path
 
 from socratic_learn.banner import ASCII_BANNER, BANNER, write_banner
 
@@ -33,13 +32,12 @@ class _TrackingTextWrapper(io.TextIOWrapper):
 
 
 class BannerTests(unittest.TestCase):
-    def test_banner_matches_first_readme_text_block(self) -> None:
-        readme = Path(__file__).resolve().parents[1] / "README.md"
-        fenced_block = readme.read_text(encoding="utf-8").split(
-            "```text\n", 1
-        )[1].split("\n```", 1)[0]
-
-        self.assertEqual(fenced_block, BANNER)
+    def test_banner_keeps_product_identity_and_learning_flow(self) -> None:
+        self.assertIn("L E A R N", BANNER)
+        self.assertIn(
+            "objective → prerequisites → guided route → application → evidence",
+            BANNER,
+        )
 
     def test_interactive_stream_gets_green_banner(self) -> None:
         output = _TerminalStream(interactive=True)

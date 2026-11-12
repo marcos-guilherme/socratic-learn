@@ -111,22 +111,18 @@ SESSION_H2_HEADINGS = (
     "## Sources",
 )
 README_HEADINGS = (
-    "## Why I built this",
-    "## The method in 60 seconds",
-    "## A compact example",
-    "## How the system is structured",
-    "## Research foundations",
-    "## Engineering evidence",
-    "## Evaluation status",
+    "## See a session",
+    "## Why it is different",
     "## Quick start",
-    "## Source-grounded reading",
-    "## Supported hosts and project adapters",
-    "## Privacy, security, and limitations",
-    "## Development and documentation",
+    "## Choose an AI host",
+    "## Learn from an article",
+    "## How the method works",
+    "## Research and limitations",
+    "## Technical documentation",
     "## License",
 )
 README_TAGLINE = (
-    "A portable, evidence-aware Socratic protocol for learning any subject."
+    "Turn any AI agent into a tutor that checks whether you actually learned."
 )
 README_OPENING_PROMISE = "learn any subject"
 README_UNFRIENDLY_DASHES = ("—", "–")
@@ -410,7 +406,7 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertTrue(text.startswith("# Socratic Learn\n"))
         tagline = f"**{README_TAGLINE}**"
         self.assertIn(tagline, text)
-        opening = text.split("## Why I built this", 1)[0]
+        opening = text.split("## See a session", 1)[0]
         first_prose_paragraph = readme_opening_prose_paragraph(opening)
         self.assertIn(
             README_OPENING_PROMISE,
@@ -424,10 +420,7 @@ class RepositoryValidationTests(unittest.TestCase):
         headings = tuple(
             line for line in text.splitlines() if line.startswith("## ")
         )
-        headings_with_extra = (
-            headings[:1] + ("## Optional additional guidance",) + headings[1:]
-        )
-        remaining_headings = iter(headings_with_extra)
+        remaining_headings = iter(headings)
         for required_heading in README_HEADINGS:
             with self.subTest(heading=required_heading):
                 self.assertIn(
@@ -439,7 +432,16 @@ class RepositoryValidationTests(unittest.TestCase):
         for requirement in README_PORTFOLIO_REQUIREMENTS:
             with self.subTest(portfolio_requirement=requirement):
                 self.assertIn(" ".join(requirement.split()), normalized_text)
-        self.assertIn("███████╗", text)
+        for signal in (
+            "Any subject",
+            "Your AI host",
+            "Progress through application",
+            'socratic "I want to learn',
+        ):
+            with self.subTest(signal=signal):
+                self.assertIn(signal.lower(), opening.lower())
+        self.assertNotIn("tests", opening.lower())
+        self.assertNotIn("███████╗", text)
         self.assertNotRegex(text, r"!\[[^\]]*\]\(https?://")
         for command in README_WORKSPACE_COMMANDS:
             with self.subTest(command=command):
@@ -448,9 +450,8 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn("start teaching automatically", normalized_text)
         self.assertIn("redirect at any time", normalized_text)
         self.assertNotIn("learner approval", normalized_text.lower())
-        compact_example = text.split("## A compact example", 1)[1].split(
-            "When the learner can reasonably work out the next step",
-            1,
+        compact_example = text.split("## See a session", 1)[1].split(
+            "## Why it is different", 1
         )[0]
         normalized_example = " ".join(compact_example.split()).lower()
         self.assertNotIn("we choose a path", normalized_example)
@@ -510,7 +511,7 @@ class RepositoryValidationTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         text = (root / "README.md").read_text(encoding="utf-8")
         quick_start = text.split("## Quick start", 1)[1].split(
-            "## Supported hosts and project adapters",
+            "## Choose an AI host",
             1,
         )[0]
         normalized_quick_start = " ".join(quick_start.split())
@@ -606,8 +607,8 @@ class RepositoryValidationTests(unittest.TestCase):
     def test_validator_requires_any_subject_in_readme_opening(self) -> None:
         replacements = (
             (
-                "A portable, evidence-aware Socratic protocol for learning any subject.",
-                "A portable Socratic protocol.",
+                "Turn any AI agent into a tutor that checks whether you actually learned.",
+                "Use a learning protocol with an AI agent.",
             ),
             ("learn any subject", "study selected topics"),
         )
@@ -618,7 +619,7 @@ class RepositoryValidationTests(unittest.TestCase):
                 readme = root / "README.md"
                 opening, marker, remainder = readme.read_text(
                     encoding="utf-8"
-                ).partition("## Why I built this")
+                ).partition("## See a session")
                 self.assertIn(original, opening)
                 readme.write_text(
                     opening.replace(original, replacement) + marker + remainder,
@@ -716,7 +717,7 @@ class RepositoryValidationTests(unittest.TestCase):
                 self.addCleanup(temp.cleanup)
                 readme = root / "README.md"
                 text = readme.read_text(encoding="utf-8")
-                opening, heading, remainder = text.partition("## Why I built this")
+                opening, heading, remainder = text.partition("## See a session")
                 tagline = f"**{README_TAGLINE}**"
                 before_tagline, separator, after_tagline = opening.partition(
                     tagline
@@ -768,7 +769,7 @@ class RepositoryValidationTests(unittest.TestCase):
                     text = readme.read_text(encoding="utf-8")
                     tagline = f"**{README_TAGLINE}**"
                     opening, heading, remainder = text.partition(
-                        "## Why I built this"
+                        "## See a session"
                     )
                     before, separator, after = opening.partition(tagline)
                     self.assertEqual(separator, tagline)
@@ -818,7 +819,7 @@ class RepositoryValidationTests(unittest.TestCase):
                     text = readme.read_text(encoding="utf-8")
                     tagline = f"**{README_TAGLINE}**"
                     opening, heading, remainder = text.partition(
-                        "## Why I built this"
+                        "## See a session"
                     )
                     before, separator, after = opening.partition(tagline)
                     self.assertEqual(separator, tagline)
