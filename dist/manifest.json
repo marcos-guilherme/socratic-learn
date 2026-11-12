@@ -1,7 +1,7 @@
 {
   "bundle": {
     "path": "socratic-learn.prompt.md",
-    "sha256": "e7752fdc4a8613122b45ab189d9b47ba922681446491c815c63f7426ea03b8be"
+    "sha256": "b260412ddde39b62c17d44eca0ad94e93cf2087100ae6b8177384fcc98b618b4"
   },
   "capability_fallbacks": {
     "cross_session_memory": "Ask for a prior summary and state what is unknown.",
@@ -25,9 +25,13 @@
       "graduated-support",
       "mathematical-assumptions-classification",
       "observable-outcome",
+      "preference-mastery-separation",
+      "preference-not-prerequisite-evidence",
       "private-state",
       "productive-effort",
       "responsive-socratic-follow-up",
+      "resumable-retrieval",
+      "session-support-calibration",
       "silent-orchestration",
       "silent-self-review",
       "source-aware-closure",
@@ -38,14 +42,15 @@
       "source-study-epistemic-distinction",
       "source-study-external-verification-gate",
       "source-untrusted-material",
+      "time-bounded-scope",
       "vocabulary-readiness",
       "volatile-primary-source-verification"
     ],
-    "version": 3
+    "version": 4
   },
   "language": "en",
   "product": "socratic-learn",
-  "protocol_version": "1.2.0",
+  "protocol_version": "1.3.0",
   "schema_version": 2,
   "session_headings": [
     "## Outcome",
@@ -60,15 +65,15 @@
   "sources": [
     {
       "path": "core/pedagogy.md",
-      "sha256": "cfb6946cdf6a9bffc84eaaae8317ba1dc9f6dd70f091587436282d3f7d273c7e"
+      "sha256": "b1c2a3a475b4a4d0cb284e050d90f917b30c19597c43313006190dc43f3303b8"
     },
     {
       "path": "core/session-protocol.md",
-      "sha256": "127c5ae2fe87bb64ee69a63d292a51a1cc9fc3217135247627f0dff581d8305d"
+      "sha256": "8c171bd15a09ad15d05ad34c14b894483b13cbca3fe61456e17e328e47343816"
     },
     {
       "path": "core/assessment.md",
-      "sha256": "891975f10693bb61666dfa8b6da23c0ca5e8de807d5176eada31c73b868583e4"
+      "sha256": "fbfb047cf1c8294e4fe7feed27fa84f32c0e72eb8c8b0d8f197dc1d27586cbcb"
     },
     {
       "path": "core/evidence-policy.md",

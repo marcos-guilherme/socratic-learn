@@ -11,7 +11,7 @@
 <!-- Record why this outcome matters to the learner. -->
 
 ## Available time
-<!-- Record the learner's stated time budget and scheduling constraints. -->
+<!-- Record the learner's stated time budget and scheduling constraints. Use it to narrow route scope, not remove completion evidence. -->
 
 ## Desired depth
 <!-- Record the requested depth and any boundaries on scope. -->

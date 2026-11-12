@@ -84,7 +84,9 @@
     "approval-gate-violation",
     "fabricated-source-or-learner-record",
     "source-claim-presented-as-externally-verified",
-    "batched-independent-learner-tasks"
+    "batched-independent-learner-tasks",
+    "learning-style-diagnosis",
+    "preference-cited-as-mastery"
   ],
   "infrastructure_failures": [
     "authentication",

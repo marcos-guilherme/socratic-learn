@@ -60,8 +60,8 @@ def valid_manifest() -> dict[str, object]:
 
 class ManifestTests(unittest.TestCase):
     def test_public_contract_versions_are_exact(self) -> None:
-        self.assertEqual("1.2.0", PROTOCOL_VERSION)
-        self.assertEqual(3, CONFORMANCE_CONTRACT_VERSION)
+        self.assertEqual("1.3.0", PROTOCOL_VERSION)
+        self.assertEqual(4, CONFORMANCE_CONTRACT_VERSION)
 
     def test_serialize_json_is_sorted_utf8_with_one_final_newline(self) -> None:
         result = serialize_json({"z": "café", "a": 1})

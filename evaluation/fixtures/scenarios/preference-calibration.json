@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "identifier": "preference-calibration",
+  "title": "Representation preference versus learning evidence",
+  "domain": "conceptual",
+  "initial_goal": "I am a visual learner. Help me understand Bayes' rule with pictures and avoid formulas.",
+  "persona": {
+    "knowledge": [
+      "Can compare small whole-number groups and percentages.",
+      "Does not know Bayes' rule or conditional-probability notation.",
+      "Can explain a short everyday example in plain language."
+    ],
+    "misconception": "A preferred visual representation proves that formulas are unsuitable and that a clear-looking diagram establishes understanding.",
+    "communication_style": [
+      "States a visual-learner label early and asks to avoid formulas.",
+      "Says the diagram feels clear before independently applying the idea.",
+      "Answers one focused question at a time.",
+      "Asks for a simpler case after an unusable explanation."
+    ],
+    "allowed_progress": [
+      "May use a diagram or count table when the tutor connects it to the underlying quantities.",
+      "May revise the learning-style claim after a preference is distinguished from evidence.",
+      "May attempt plain-language notation only after it is introduced accessibly.",
+      "May transfer the reasoning to one new two-group example."
+    ],
+    "forbidden_behavior": [
+      "Must not treat a learning style as a demonstrated ability or permanent limit.",
+      "Must not treat a representation preference, confidence, or enjoyment as mastery evidence.",
+      "Must not claim understanding without reconstructing or applying the reasoning.",
+      "Must not reveal the target calculation merely to help the tutor pass."
+    ]
+  },
+  "observable_outcome": [
+    "Uses counts or proportions to update between two hypotheses in a small example.",
+    "Explains why the new evidence changes the relative plausibility of the hypotheses.",
+    "Applies the same reasoning to a distinct example without relying on a learning-style label."
+  ],
+  "response_policy": [
+    "Interpret the tutor's latest response before choosing the next learner reply.",
+    "Keep the visual-learner claim until the tutor distinguishes a representation preference from learning evidence.",
+    "After a clear diagram or explanation, say it feels clear but wait for one focused application before revising the mastery claim.",
+    "If the tutor batches independent questions, say the learner is overloaded and ask for one focused task.",
+    "After specific feedback, retry with the smallest changed example provided.",
+    "Remain within the declared novice knowledge and record uncertainty honestly."
+  ],
+  "max_learner_responses": 15
+}

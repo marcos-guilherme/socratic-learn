@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 
 
-CONFORMANCE_CONTRACT_VERSION = 3
+CONFORMANCE_CONTRACT_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -388,6 +388,84 @@ _CONTRACTS = (
         "provide a cue, alternate view, explanation, and return through a new application",
     ),
     _Contract(
+        "session-support-calibration",
+        "core/pedagogy.md",
+        (
+            ("session support calibration",),
+            ("observable session evidence",),
+            ("at most one step",),
+            ("confirmed representation preference",),
+            ("delivery choice",),
+            ("do not diagnose or persist a fixed learning style",),
+            ("stronger support",),
+            ("one focused",),
+            ("retrieval, prediction, or application task",),
+        ),
+        "support is calibrated from inferred learner types instead of session evidence",
+        "calibrate one support step at a time from observed work, treat representation "
+        "preferences as delivery choices, and reject fixed learning-style diagnosis",
+    ),
+    _Contract(
+        "preference-not-prerequisite-evidence",
+        "core/assessment.md",
+        (
+            ("stated preference",),
+            ("learning-style label",),
+            ("context, not prerequisite",),
+            ("mastery evidence",),
+            ("observed task performance",),
+            ("increasing support",),
+            ("changed application or prediction",),
+        ),
+        "assessment treats learner preferences or style labels as prerequisite evidence",
+        "treat preferences and style labels as context and bracket knowledge only from "
+        "observed task performance",
+    ),
+    _Contract(
+        "preference-mastery-separation",
+        "core/session-protocol.md",
+        (
+            ("confirmed preferences separately",),
+            ("demonstrated knowledge",),
+            ("never cite",),
+            ("preferred representation",),
+            ("confidence",),
+            ("enjoyment",),
+            ("mastery evidence",),
+        ),
+        "preferences and experience signals are not separated from demonstrated knowledge",
+        "store confirmed preferences separately and never cite representation, confidence, "
+        "or enjoyment as mastery evidence",
+    ),
+    _Contract(
+        "resumable-retrieval",
+        "core/session-protocol.md",
+        (
+            ("prior progress exists",),
+            ("one retrieval task",),
+            ("recorded gap",),
+            ("before introducing new material",),
+            ("next evidence should be revisited",),
+        ),
+        "resumed sessions do not retrieve from recorded gaps before new material",
+        "begin resumed sessions with one retrieval task from a recorded gap and record "
+        "when the next evidence should be revisited",
+    ),
+    _Contract(
+        "time-bounded-scope",
+        "core/session-protocol.md",
+        (
+            ("available time budget",),
+            ("narrow the route scope",),
+            ("without dropping the final learner application",),
+            ("plain-language progress checkpoint",),
+            ("before time expires",),
+        ),
+        "time-bounded sessions drop application evidence or lack a progress checkpoint",
+        "narrow route scope rather than evidence and offer a plain-language checkpoint "
+        "before the learner's time expires",
+    ),
+    _Contract(
         "agent-led-route",
         "core/session-protocol.md",
         (
@@ -424,6 +502,8 @@ _CONTRACTS = (
             ("the smallest useful next step",),
             ("a perspective contributes distinct value",),
             ("factual currency or uncertainty requires research",),
+            ("support is adapting to observed evidence",),
+            ("inferred learner type",),
             ("a decision they lack the basis to evaluate",),
             ("do not narrate this silent self-review",),
         ),

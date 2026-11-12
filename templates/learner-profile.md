@@ -8,7 +8,7 @@
 <!-- Record prior experience supported by examples or other observable evidence. -->
 
 ## Preferred interaction
-<!-- Note learner-requested pacing, representations, feedback, and dialogue style. -->
+<!-- Note confirmed pacing, representation, feedback, and dialogue requests. Keep them contextual and revisable; a preference is not demonstrated skill or a fixed learning style. -->
 
 ## Accessibility and constraints
 <!-- Note accessibility needs and practical constraints that affect participation. -->

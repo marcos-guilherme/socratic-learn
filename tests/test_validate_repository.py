@@ -285,6 +285,7 @@ class RepositoryValidationTests(unittest.TestCase):
             "core/evidence-policy.md",
             "curricula/mathematics/map.md",
             "curricula/ai/map.md",
+            "docs/research/learner-preference-patterns.md",
             "templates/learner-profile.md",
             "templates/learning-goal.md",
             "templates/session-log.md",
@@ -317,6 +318,7 @@ class RepositoryValidationTests(unittest.TestCase):
             "core/session-protocol.md",
             "core/assessment.md",
             "core/evidence-policy.md",
+            "docs/research/learner-preference-patterns.md",
             "curricula/mathematics/map.md",
             "curricula/ai/map.md",
         ):
@@ -1807,6 +1809,25 @@ class RepositoryValidationTests(unittest.TestCase):
         ):
             with self.subTest(heading=heading):
                 self.assertIn(heading, text, f"Missing heading: {heading}")
+
+    def test_progress_template_records_spaced_retrieval_without_claiming_mastery(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "templates/progress.md").read_text(encoding="utf-8")
+
+        self.assertIn("## Revisit queue", text)
+        self.assertIn("retrieval prompt", text)
+        self.assertIn("support used", text)
+        self.assertIn("not a mastery claim", text)
+
+    def test_profile_and_goal_templates_bound_preferences_and_time(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        profile = (root / "templates/learner-profile.md").read_text(encoding="utf-8")
+        goal = (root / "templates/learning-goal.md").read_text(encoding="utf-8")
+
+        self.assertIn("contextual and revisable", profile)
+        self.assertIn("not demonstrated skill", profile)
+        self.assertIn("narrow route scope", goal)
+        self.assertIn("not remove completion evidence", goal)
 
     def test_curriculum_nodes_use_shared_schema(self) -> None:
         root = Path(__file__).resolve().parents[1]

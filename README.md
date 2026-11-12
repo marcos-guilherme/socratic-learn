@@ -92,6 +92,14 @@ the project adapters expose the same protocol through project discovery.
 
 ## Research foundations
 
+The [learner-preference research catalog](docs/research/learner-preference-patterns.md)
+maps reported preferences, measured learning evidence, product implications,
+confidence, and caveats. Its central rule is that **preference, engagement,
+and learning are different outcomes**. Preferences can adapt representation,
+pace, accessibility, and local interaction; route placement and mastery must
+come from observed performance. Socratic Learn does not diagnose fixed
+learning styles.
+
 These studies informed design decisions. They do **not** validate Socratic
 Learn itself:
 
@@ -507,6 +515,7 @@ Documentation:
 - [launcher adapter contract](docs/launcher-adapters.md)
 - [manifest reference](docs/manifest-reference.md)
 - [adapter extension guide](docs/adding-an-adapter.md)
+- [learner-preference research catalog](docs/research/learner-preference-patterns.md)
 - [Cursor adapter README](adapters/cursor/README.md)
 - [Claude Code adapter README](adapters/claude-code/README.md)
 - [Pi adapter README](adapters/pi/README.md)

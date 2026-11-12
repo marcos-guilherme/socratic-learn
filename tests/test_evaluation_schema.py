@@ -337,6 +337,9 @@ class EvaluationSchemaVersionTwoTests(unittest.TestCase):
     def test_suite_manifests_are_immutable_and_canonical(self) -> None:
         baseline = load_suite_manifest(fixture_root() / "suites/baseline-v1.json")
         article = load_suite_manifest(fixture_root() / "suites/article-reading-v1.json")
+        preference = load_suite_manifest(
+            fixture_root() / "suites/preference-calibration-v1.json"
+        )
         with self.assertRaises(FrozenInstanceError):
             baseline.identifier = "changed"  # type: ignore[misc]
         self.assertEqual(
@@ -348,6 +351,7 @@ class EvaluationSchemaVersionTwoTests(unittest.TestCase):
             baseline.scenario_ids,
         )
         self.assertEqual(("article-reading",), article.scenario_ids)
+        self.assertEqual(("preference-calibration",), preference.scenario_ids)
 
     def test_suite_manifest_rejects_invalid_scenarios_paths_and_contracts(self) -> None:
         base = {
@@ -415,4 +419,29 @@ class EvaluationSchemaVersionTwoTests(unittest.TestCase):
             "457b959a517b25beed4e2b986d9814e3beca89db94f4a52fe1c2de47909fd1da",
             fixture_sha256(path),
         )
+
+    def test_preference_calibration_scenario_separates_preference_from_evidence(
+        self,
+    ) -> None:
+        scenario = load_scenario(
+            fixture_root() / "scenarios/preference-calibration.json"
+        )
+
+        self.assertEqual("preference-calibration", scenario.identifier)
+        self.assertIn("visual learner", scenario.initial_goal.lower())
+        policy = " ".join(scenario.response_policy).lower()
+        outcomes = " ".join(scenario.observable_outcome).lower()
+        forbidden = " ".join(scenario.persona["forbidden_behavior"]).lower()
+        self.assertIn("one focused", policy)
+        self.assertIn("applies", outcomes)
+        self.assertIn("learning style", forbidden)
+        self.assertIn("preference", forbidden)
+
+    def test_rubric_rejects_learning_style_and_preference_mastery_failures(
+        self,
+    ) -> None:
+        rubric = load_rubric(fixture_root() / "rubric.json")
+
+        self.assertIn("learning-style-diagnosis", rubric.critical_failures)
+        self.assertIn("preference-cited-as-mastery", rubric.critical_failures)
 

@@ -30,6 +30,20 @@ difficulty, give the smallest useful support or move one edge lower. Do not
 introduce domain notation as part of a diagnostic question before vocabulary
 readiness is established.
 
+## Preference and evidence
+
+A stated preference or learning-style label is context, not prerequisite or
+mastery evidence. It may guide the medium, pace, accessibility support, or the
+starting difficulty of a neutral task, but it cannot establish where the
+learner belongs on the route. Bracket knowledge only from observed task
+performance under stated conditions.
+
+Do not diagnose visual, auditory, reading/writing, kinesthetic, or other fixed
+learner types. When a learner requests a representation, use it when it fits
+the idea and preserve the same evidence requirements. After increasing support
+because of an error, ask one changed application or prediction in the same or
+immediately following turn.
+
 ## Bracketing a knowledge edge
 
 Start with a representative prerequisite near the target. After success, make

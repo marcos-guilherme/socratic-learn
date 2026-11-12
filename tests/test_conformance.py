@@ -36,13 +36,23 @@ useful. Do not include the solution with the task. Give a small cue, then an
 alternative representation or simpler case, then a direct explanation, then a
 new application.
 
+## Session support calibration
+
+Calibrate support from observable session evidence, not an inferred learner
+type. Move at most one step at a time on the graduated-support ladder. Treat a
+confirmed representation preference as a delivery choice, not evidence of
+ability or mastery. Do not diagnose or persist a fixed learning style. After
+stronger support, return control through one focused retrieval, prediction, or
+application task.
+
 ## Silent self-review
 
 Before teaching, run a silent self-review for alignment with the learner-owned
 objective, prerequisite evidence, vocabulary readiness and cognitive load, the
 smallest useful next step, whether a perspective contributes distinct value,
-whether factual currency or uncertainty requires research, and whether the
-response asks the learner to make a decision they lack the basis to evaluate.
+whether factual currency or uncertainty requires research, whether support is
+adapting to observed evidence rather than an inferred learner type, and whether
+the response asks the learner to make a decision they lack the basis to evaluate.
 Do not narrate this silent self-review.
 
 ## Responsive Socratic dialogue
@@ -97,12 +107,22 @@ skip, or revisit at any time.
 
 Teach one route step at a time.
 
+## Resume and time bounds
+
+When prior progress exists, begin with one retrieval task from a recorded gap
+before introducing new material. Record when the next evidence should be
+revisited. If the learner states an available time budget, narrow the route
+scope without dropping the final learner application and offer a plain-language progress
+checkpoint before time expires.
+
 ## 5. Close and persist
 
 Close with diagnostic evidence, application evidence, and remaining gaps. When
 studying a source, close with what the source asserts, what within-source
 support was inspected, what remains externally unverified, and relevant source
 locations.
+Store confirmed preferences separately from demonstrated knowledge. Never cite
+a preferred representation, confidence, or enjoyment as mastery evidence.
 Keep real learner data under `workspace/` and out of version control.
 
 ## Capability fallbacks
@@ -120,6 +140,12 @@ Without cross-session memory, ask for a prior summary.
 
 Use at most six diagnostic questions by default. Stop early when the evidence
 is sufficient to propose a path.
+
+## Preference and evidence
+
+A stated preference or learning-style label is context, not prerequisite or
+mastery evidence. Bracket knowledge only from observed task performance. After
+increasing support because of an error, ask one changed application or prediction.
 """,
     "core/evidence-policy.md": """# Evidence Policy
 
@@ -689,6 +715,15 @@ class ConformanceTests(unittest.TestCase):
             "silent-self-review",
         )
 
+    def test_self_review_uses_observed_evidence_not_inferred_types(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "whether support is\nadapting to observed evidence rather than an inferred learner type",
+                "whether support matches an inferred learner type",
+            ),
+            "silent-self-review",
+        )
+
     def test_requires_autonomous_current_research(self) -> None:
         self.assert_only_code(
             minimal_bundle().replace(
@@ -811,8 +846,86 @@ class ConformanceTests(unittest.TestCase):
 
     def test_requires_evidence_based_closure(self) -> None:
         self.assert_only_code(
-            minimal_bundle().replace("application evidence", "a summary"),
+            minimal_bundle().replace(
+                "Close with diagnostic evidence, application evidence, and remaining gaps.",
+                "Close with diagnostic evidence, a summary, and remaining gaps.",
+            ),
             "evidence-based-closure",
+        )
+
+    def test_requires_session_support_calibration(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Calibrate support from observable session evidence",
+                "Calibrate support from a personality profile",
+            ),
+            "session-support-calibration",
+        )
+
+    def test_rejects_fixed_learning_style_diagnosis(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Do not diagnose or persist a fixed learning style.",
+                "Diagnose and persist a fixed learning style.",
+            ),
+            "session-support-calibration",
+        )
+
+    def test_support_calibration_returns_to_observable_work(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "After\nstronger support, return control through one focused retrieval, prediction, or\n"
+                "application task.",
+                "After stronger support, continue explaining.",
+            ),
+            "session-support-calibration",
+        )
+
+    def test_requires_preference_mastery_separation(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "Store confirmed preferences separately from demonstrated knowledge.",
+                "Store preferences as demonstrated knowledge.",
+            ),
+            "preference-mastery-separation",
+        )
+
+    def test_requires_preference_not_prerequisite_evidence(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "A stated preference or learning-style label is context, not prerequisite or\n"
+                "mastery evidence.",
+                "A learning-style label establishes prerequisite mastery.",
+            ),
+            "preference-not-prerequisite-evidence",
+        )
+
+    def test_preference_assessment_requires_changed_application_after_support(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "After\nincreasing support because of an error, ask one changed application or prediction.",
+                "After increasing support, accept confidence as evidence.",
+            ),
+            "preference-not-prerequisite-evidence",
+        )
+
+    def test_requires_resumed_retrieval_from_recorded_gaps(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "begin with one retrieval task from a recorded gap\n"
+                "before introducing new material",
+                "begin with a summary before introducing new material",
+            ),
+            "resumable-retrieval",
+        )
+
+    def test_requires_time_budget_to_narrow_scope_not_evidence(self) -> None:
+        self.assert_only_code(
+            minimal_bundle().replace(
+                "narrow the route\nscope without dropping the final learner application",
+                "drop the final learner application to save time",
+            ),
+            "time-bounded-scope",
         )
 
     def test_diagnostics_have_deterministic_code_path_order(self) -> None:
@@ -859,6 +972,17 @@ class ConformanceTests(unittest.TestCase):
 
     def test_required_diagnostic_codes_include_source_study_gate(self) -> None:
         self.assertIn("source-study-external-verification-gate", REQUIRED_DIAGNOSTIC_CODES)
+
+    def test_required_diagnostic_codes_include_preference_and_continuity_gates(self) -> None:
+        self.assertTrue(
+            {
+                "session-support-calibration",
+                "preference-mastery-separation",
+                "preference-not-prerequisite-evidence",
+                "resumable-retrieval",
+                "time-bounded-scope",
+            }.issubset(REQUIRED_DIAGNOSTIC_CODES)
+        )
 
     def make_repository(self) -> tuple[TemporaryDirectory, Path]:
         temporary = TemporaryDirectory()

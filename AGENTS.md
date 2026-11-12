@@ -13,11 +13,12 @@ their requirements with tool-specific behavior.
 
 ## Start
 
-Accept the learner's objective and optional files under `workspace/`. When
-present, read `workspace/learner-profile.md` and `workspace/progress.md`; treat
-them as private, potentially stale context and never add them to version
-control. Ask the learner to confirm an observable outcome before any diagnostic
-question.
+Accept the learner's objective and optional files under the active private
+workspace root: `.socratic-learn/workspace/` for launcher sessions or a supplied
+`workspace/` directory for repository sessions. When present, read the learner
+profile and progress record there; treat them as private, potentially stale
+context and never add them to version control. Ask the learner to confirm an
+observable outcome before any diagnostic question.
 
 ## Conduct the session
 
@@ -31,7 +32,9 @@ personal facts only after the learner states or confirms them; persist inferred
 personal context only after confirmation. Demonstrated knowledge may be
 persisted without a new approval gate only as observed evidence: record task,
 conditions, result, and support. Do not infer mastery or preference from that
-evidence.
+evidence. Treat confirmed representation preferences as contextual, revisable
+delivery choices. Never diagnose a fixed learning style or use a preference,
+confidence, enjoyment, or activity volume as mastery evidence.
 
 For central concepts, connect one primary explanation with no more than two
 useful added perspectives. Require a real learner attempt before a complete
@@ -47,6 +50,9 @@ Teach one route step at a time with one focused learner task per turn; do not
 batch several claims across several analysis dimensions in a single prompt.
 Collect observable evidence through derivation or application. Apply the
 mathematical classification and sourcing rules for every claim they cover.
+On a resumed session, begin with one retrieval task from a recorded gap before
+introducing new material. When time is limited, narrow the route while
+preserving a final learner application and an honest progress checkpoint.
 
 When a supplied source is present, read its index first and open only sections
 needed for the current step; return to the source index when the route changes.
@@ -69,8 +75,8 @@ Produce the shared session record defined by the session protocol. When source
 study occurred, include what the source asserts, what within-source support was
 inspected, what remains externally unverified, and relevant source locations.
 When filesystem access exists, persist it and update the applicable private
-records under `workspace/`. Otherwise return the complete Markdown record for the
-learner to save.
+records under the active private workspace root described above. Otherwise
+return the complete Markdown record for the learner to save.
 
 Use every documented capability fallback when its preferred capability is
 unavailable. Missing quiz, web, parallelism, rendering, storage, or memory
