@@ -111,7 +111,6 @@ SESSION_H2_HEADINGS = (
     "## Sources",
 )
 README_HEADINGS = (
-    "## See a session",
     "## Why it is different",
     "## Quick start",
     "## Choose an AI host",
@@ -406,7 +405,7 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertTrue(text.startswith("# Socratic Learn\n"))
         tagline = f"**{README_TAGLINE}**"
         self.assertIn(tagline, text)
-        opening = text.split("## See a session", 1)[0]
+        opening = text.split("## Why it is different", 1)[0]
         first_prose_paragraph = readme_opening_prose_paragraph(opening)
         self.assertIn(
             README_OPENING_PROMISE,
@@ -454,17 +453,6 @@ class RepositoryValidationTests(unittest.TestCase):
         self.assertIn("start teaching automatically", normalized_text)
         self.assertIn("redirect at any time", normalized_text)
         self.assertNotIn("learner approval", normalized_text.lower())
-        compact_example = text.split("## See a session", 1)[1].split(
-            "## Why it is different", 1
-        )[0]
-        normalized_example = " ".join(compact_example.split()).lower()
-        self.assertNotIn("we choose a path", normalized_example)
-        self.assertIn("i'll check the starting point first", normalized_example)
-        self.assertIn(
-            "i'll use your answer to set the route",
-            normalized_example,
-        )
-        self.assertIn("you can redirect me at any time", normalized_example)
 
     def test_manifest_reference_documents_current_behavior_contract(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -640,7 +628,7 @@ class RepositoryValidationTests(unittest.TestCase):
                 readme = root / "README.md"
                 opening, marker, remainder = readme.read_text(
                     encoding="utf-8"
-                ).partition("## See a session")
+                ).partition("## Why it is different")
                 self.assertIn(original, opening)
                 readme.write_text(
                     opening.replace(original, replacement) + marker + remainder,
@@ -738,7 +726,9 @@ class RepositoryValidationTests(unittest.TestCase):
                 self.addCleanup(temp.cleanup)
                 readme = root / "README.md"
                 text = readme.read_text(encoding="utf-8")
-                opening, heading, remainder = text.partition("## See a session")
+                opening, heading, remainder = text.partition(
+                    "## Why it is different"
+                )
                 tagline = f"**{README_TAGLINE}**"
                 before_tagline, separator, after_tagline = opening.partition(
                     tagline
@@ -790,7 +780,7 @@ class RepositoryValidationTests(unittest.TestCase):
                     text = readme.read_text(encoding="utf-8")
                     tagline = f"**{README_TAGLINE}**"
                     opening, heading, remainder = text.partition(
-                        "## See a session"
+                        "## Why it is different"
                     )
                     before, separator, after = opening.partition(tagline)
                     self.assertEqual(separator, tagline)
@@ -840,7 +830,7 @@ class RepositoryValidationTests(unittest.TestCase):
                     text = readme.read_text(encoding="utf-8")
                     tagline = f"**{README_TAGLINE}**"
                     opening, heading, remainder = text.partition(
-                        "## See a session"
+                        "## Why it is different"
                     )
                     before, separator, after = opening.partition(tagline)
                     self.assertEqual(separator, tagline)

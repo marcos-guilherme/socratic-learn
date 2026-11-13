@@ -1355,7 +1355,7 @@ def validate(root: Path) -> list[str]:
     readme = root / "README.md"
     if readme.is_file():
         readme_text = readme.read_text(encoding="utf-8")
-        readme_opening = readme_text.split("## See a session", 1)[0]
+        readme_opening = readme_text.split("## Why it is different", 1)[0]
         first_prose_paragraph = readme_opening_prose_paragraph(readme_opening)
         if not all(
             phrase.lower() in readme_text.lower()
