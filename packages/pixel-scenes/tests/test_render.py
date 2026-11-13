@@ -1,10 +1,11 @@
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageSequence
 
 from pixel_scenes import parse_scene, render
 from pixel_scenes.errors import OutputExistsError
+from test_step_process import process_data
 
 
 def test_render_writes_png_and_accessibility_text(
@@ -62,3 +63,17 @@ def test_failed_render_does_not_leave_partial_output(
         render(parse_scene(concept_data), output)
 
     assert not output.exists()
+
+
+def test_render_writes_deterministic_gif(tmp_path):
+    output = tmp_path / "process.gif"
+
+    result = render(parse_scene(process_data()), output)
+
+    with Image.open(output) as image:
+        frames = list(ImageSequence.Iterator(image))
+        assert len(frames) == 8
+        assert image.size == (960, 540)
+    assert result.media_type == "image/gif"
+    assert result.frame_count == 8
+    assert result.duration_seconds == 2
