@@ -19,27 +19,6 @@ socratic "I want to learn how attention works"
 
 [Python 3.11+](https://www.python.org/downloads/) · [License: MIT](LICENSE)
 
-## See a session
-
-Socratic Learn turns a broad interest into something you can demonstrate, then
-checks only the knowledge needed for that outcome.
-
-```text
-Learner  > I want to understand why attention scales by sqrt(d_k).
-Tutor    > What should you be able to derive or predict by the end?
-Learner  > I want to derive the scaling and predict what changes without it.
-Tutor    > I'll check the starting point first. For one term in the dot
-           product, what variance would you expect if its two factors are
-           independent and standardized?
-           I'll use your answer to set the route. You can redirect me at any time.
-...
-Evidence > The learner derives the variance growth and applies it to a changed
-           dimension without receiving the final answer first.
-```
-
-The tutor asks when you have enough information to reason forward. If a missing
-fact blocks you, it explains the fact and asks you to try a different case.
-
 ## Why it is different
 
 The format can follow your needs. Diagrams, prose, code, and concrete examples

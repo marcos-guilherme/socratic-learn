@@ -30,3 +30,15 @@ def test_readme_references_hero_after_title():
     assert readme.index(reference) < readme.index(
         "**Turn any AI agent into a tutor that checks whether you actually learned.**"
     )
+
+
+def test_readme_opens_without_session_example():
+    readme = README.read_text(encoding="utf-8")
+
+    assert "## See a session" not in readme
+    assert "Learner  >" not in readme
+    assert "Tutor    >" not in readme
+    assert "Evidence >" not in readme
+    assert readme.index("[Install Socratic Learn](#quick-start)") < readme.index(
+        "## Why it is different"
+    )
