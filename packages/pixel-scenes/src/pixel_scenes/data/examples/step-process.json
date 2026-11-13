@@ -1,0 +1,19 @@
+{
+  "schema_version": "1",
+  "template": "step-process",
+  "theme": "cozy-classroom",
+  "canvas": {"width": 960, "height": 540},
+  "content": {
+    "title": "How printing spread ideas",
+    "steps": [
+      {"label": "Copy", "detail": "A page is prepared once."},
+      {"label": "Print", "detail": "The press makes many copies."},
+      {"label": "Share", "detail": "Readers carry the ideas farther."}
+    ]
+  },
+  "animation": {"duration_seconds": 4, "fps": 12},
+  "accessibility": {
+    "description": "Three stages show preparation, repeated printing, and distribution."
+  },
+  "seed": 0
+}

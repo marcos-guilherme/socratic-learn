@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "template": "comparison",
+  "theme": "cozy-classroom",
+  "canvas": {"width": 960, "height": 540},
+  "content": {
+    "title": "Ser and estar",
+    "left": {
+      "heading": "Ser",
+      "description": "Identity or defining traits"
+    },
+    "right": {
+      "heading": "Estar",
+      "description": "State or location"
+    },
+    "points": [
+      {"label": "Nature", "left": "Soy amable", "right": "Estoy cansado"},
+      {"label": "Place", "left": "Es de Brasil", "right": "Está en casa"}
+    ]
+  },
+  "animation": {"duration_seconds": 4, "fps": 12},
+  "accessibility": {
+    "description": "Two labeled columns compare uses of the Spanish verbs ser and estar."
+  },
+  "seed": 0
+}
