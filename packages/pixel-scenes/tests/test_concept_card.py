@@ -1,6 +1,10 @@
+import pytest
 from PIL import Image
 
+from pixel_scenes import parse_scene
 from pixel_scenes.drawing import PixelSurface
+from pixel_scenes.errors import SceneValidationError
+from pixel_scenes.templates.concept_card import render_concept_card
 from pixel_scenes.model import Canvas
 from pixel_scenes.theme import COZY_CLASSROOM
 
@@ -46,3 +50,19 @@ def test_dots_accepts_builtin_theme_color():
 
     assert surface.image.getpixel((5, 5)) == COZY_CLASSROOM.coral
     assert surface.image.getpixel((6, 6)) == COZY_CLASSROOM.coral
+
+
+def test_concept_card_renders_requested_size(concept_data):
+    scene = parse_scene(concept_data)
+
+    image = render_concept_card(scene, progress=1.0)
+
+    assert image.size == (960, 540)
+    assert image.mode == "RGB"
+
+
+def test_concept_card_rejects_unknown_content(concept_data):
+    concept_data["content"]["html"] = "<iframe>"
+
+    with pytest.raises(SceneValidationError, match="content.html"):
+        parse_scene(concept_data)

@@ -5,6 +5,7 @@ from .model import (
     RenderResult,
     Scene,
 )
+from .render import render
 from .schema import load_scene, parse_scene, validate_scene
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "Scene",
     "load_scene",
     "parse_scene",
+    "render",
     "validate_scene",
 ]
 
