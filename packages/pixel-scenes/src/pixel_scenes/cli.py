@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import __version__, load_scene, render
 from .errors import PixelScenesError
+from .render import _protect_output
 
 
 def parser() -> argparse.ArgumentParser:
@@ -32,6 +33,7 @@ def parser() -> argparse.ArgumentParser:
         choices=["concept-card", "step-process", "comparison"],
     )
     example_command.add_argument("--output", required=True)
+    example_command.add_argument("--overwrite", action="store_true")
 
     commands.add_parser("themes")
     return root
@@ -58,11 +60,13 @@ def entry_point(argv: Sequence[str] | None = None) -> int:
                 .joinpath(names[arguments.name])
                 .read_text(encoding="utf-8")
             )
-            Path(arguments.output).write_text(
+            destination = Path(arguments.output)
+            _protect_output(destination, arguments.overwrite)
+            destination.write_text(
                 json.dumps(value, indent=2, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
-            print(arguments.output)
+            print(destination)
             return 0
         result = render(
             load_scene(arguments.scene),
