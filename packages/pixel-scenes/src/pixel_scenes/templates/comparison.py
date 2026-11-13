@@ -1,16 +1,26 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
-from PIL import Image
+from PIL import Image, ImageFont
 
 from ..drawing import PixelSurface
-from ..errors import SceneValidationError
+from ..errors import LayoutError, SceneValidationError
 from ..model import Scene
 
 FIELDS = {"title", "left", "right", "points"}
 SIDE_FIELDS = {"heading", "description"}
 POINT_FIELDS = {"label", "left", "right"}
+
+LABEL_LINE_HEIGHT = 9
+BODY_LINE_HEIGHT = 10
+DESCRIPTION_GAP = 4
+ROW_GAP = 2
+POINTS_BOTTOM_MARGIN = 12
+HEADER_TOP = 40
+HEADER_BOTTOM = 58
+DESCRIPTION_START_Y = 60
 
 
 def _short_text(value: object, field: str, maximum: int) -> None:
@@ -18,6 +28,228 @@ def _short_text(value: object, field: str, maximum: int) -> None:
         raise SceneValidationError(
             f"{field} must contain 1 to {maximum} characters"
         )
+
+
+def revealed_point_count(point_count: int, progress: float) -> int:
+    if point_count <= 0:
+        return 0
+    clamped = max(0.0, min(1.0, progress))
+    return max(1, min(point_count, round(clamped * point_count)))
+
+
+def visible_comparison_points(
+    points: Sequence[object], progress: float
+) -> list[object]:
+    count = revealed_point_count(len(points), progress)
+    return list(points[:count])
+
+
+@dataclass(frozen=True)
+class ComparisonColumnMetrics:
+    middle: int
+    column_width: int
+    left_x: int
+    right_x: int
+    label_x: int
+    label_max_width: int
+
+
+def comparison_column_metrics(surface: PixelSurface) -> ComparisonColumnMetrics:
+    width, _height = surface.image.size
+    middle = width // 2
+    column_width = middle - 36
+    if column_width < 8:
+        raise LayoutError("comparison columns are too narrow for content")
+    return ComparisonColumnMetrics(
+        middle=middle,
+        column_width=column_width,
+        left_x=18,
+        right_x=middle + 12,
+        label_x=middle - 28,
+        label_max_width=56,
+    )
+
+
+def _wrap_characters(
+    surface: PixelSurface,
+    text: str,
+    max_width: int,
+    font: ImageFont.ImageFont,
+) -> list[str]:
+    lines: list[str] = []
+    current = ""
+    for character in text:
+        candidate = f"{current}{character}"
+        if current and surface.text_width(candidate, font) > max_width:
+            lines.append(current)
+            current = character
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    if not lines:
+        raise LayoutError("comparison text is empty")
+    overflow = [
+        line for line in lines if surface.text_width(line, font) > max_width
+    ]
+    if overflow:
+        raise LayoutError("comparison text is too wide for its column")
+    return lines
+
+
+def fit_comparison_lines(
+    surface: PixelSurface,
+    text: str,
+    max_width: int,
+    *,
+    font: ImageFont.ImageFont,
+) -> list[str]:
+    normalized = text.strip()
+    if not normalized:
+        raise LayoutError("comparison text is empty")
+    try:
+        lines = surface.wrap(normalized, max_width=max_width, font=font)
+    except LayoutError:
+        lines = _wrap_characters(surface, normalized, max_width, font)
+    overflow = [
+        line for line in lines if surface.text_width(line, font) > max_width
+    ]
+    if overflow:
+        return _wrap_characters(surface, normalized, max_width, font)
+    return lines
+
+
+@dataclass(frozen=True)
+class ComparisonPointRow:
+    label_lines: tuple[str, ...]
+    left_lines: tuple[str, ...]
+    right_lines: tuple[str, ...]
+    height: int
+    y: int = 0
+
+
+def _row_height(
+    label_lines: Sequence[str],
+    left_lines: Sequence[str],
+    right_lines: Sequence[str],
+) -> int:
+    label_block = max(1, len(label_lines)) * LABEL_LINE_HEIGHT
+    body_lines = max(len(left_lines), len(right_lines), 1)
+    return label_block + 2 + body_lines * BODY_LINE_HEIGHT
+
+
+def _plan_point_rows(
+    surface: PixelSurface,
+    metrics: ComparisonColumnMetrics,
+    points: Sequence[Mapping[str, object]],
+    visible_count: int,
+) -> list[ComparisonPointRow]:
+    label_font = surface.font("label")
+    body_font = surface.font("body")
+    text_width = metrics.column_width - 16
+    rows: list[ComparisonPointRow] = []
+    for raw_point in points[:visible_count]:
+        point = dict(raw_point)
+        label_lines = fit_comparison_lines(
+            surface,
+            str(point["label"]),
+            metrics.label_max_width,
+            font=label_font,
+        )
+        left_lines = fit_comparison_lines(
+            surface,
+            str(point["left"]),
+            text_width,
+            font=body_font,
+        )
+        right_lines = fit_comparison_lines(
+            surface,
+            str(point["right"]),
+            text_width,
+            font=body_font,
+        )
+        rows.append(
+            ComparisonPointRow(
+                label_lines=tuple(label_lines),
+                left_lines=tuple(left_lines),
+                right_lines=tuple(right_lines),
+                height=_row_height(label_lines, left_lines, right_lines),
+            )
+        )
+    return rows
+
+
+def _description_bottom(
+    surface: PixelSurface,
+    metrics: ComparisonColumnMetrics,
+    scene: Scene,
+) -> int:
+    label_font = surface.font("label")
+    text_width = metrics.column_width - 16
+    line_counts = []
+    for side_name in ("left", "right"):
+        side = dict(scene.content[side_name])
+        lines = fit_comparison_lines(
+            surface,
+            str(side["description"]),
+            text_width,
+            font=label_font,
+        )
+        line_counts.append(len(lines))
+    return DESCRIPTION_START_Y + max(line_counts) * LABEL_LINE_HEIGHT
+
+
+def _layout_point_rows(
+    rows: list[ComparisonPointRow],
+    *,
+    points_start: int,
+    points_end: int,
+) -> list[ComparisonPointRow]:
+    if not rows:
+        return []
+    natural_total = sum(row.height for row in rows) + ROW_GAP * (len(rows) - 1)
+    available = points_end - points_start
+    if natural_total > available:
+        raise LayoutError("comparison points do not fit the panel")
+    extra = available - natural_total
+    gap = ROW_GAP + (extra // (len(rows) - 1) if len(rows) > 1 else 0)
+    positioned: list[ComparisonPointRow] = []
+    y = points_start
+    for index, row in enumerate(rows):
+        positioned.append(
+            ComparisonPointRow(
+                label_lines=row.label_lines,
+                left_lines=row.left_lines,
+                right_lines=row.right_lines,
+                height=row.height,
+                y=y,
+            )
+        )
+        if index + 1 < len(rows):
+            y += row.height + gap
+    return positioned
+
+
+def comparison_content_bottom(
+    surface: PixelSurface, scene: Scene, *, progress: float
+) -> int:
+    _width, height = surface.image.size
+    metrics = comparison_column_metrics(surface)
+    desc_bottom = _description_bottom(surface, metrics, scene)
+    points_start = desc_bottom + DESCRIPTION_GAP
+    points_end = height - POINTS_BOTTOM_MARGIN
+    points = list(scene.content["points"])
+    visible = revealed_point_count(len(points), progress)
+    rows = _plan_point_rows(surface, metrics, points, visible)
+    positioned = _layout_point_rows(
+        rows,
+        points_start=points_start,
+        points_end=points_end,
+    )
+    if not positioned:
+        return desc_bottom
+    last = positioned[-1]
+    return last.y + last.height
 
 
 def validate(scene: Scene) -> None:
@@ -68,55 +300,78 @@ def render_comparison(scene: Scene, progress: float) -> Image.Image:
         font=surface.font("title"),
         fill=surface.theme.ink,
     )
-    middle = width // 2
+    metrics = comparison_column_metrics(surface)
     surface.draw.line(
-        [(middle, 48), (middle, height - 20)],
+        [
+            (metrics.middle, HEADER_TOP),
+            (metrics.middle, height - POINTS_BOTTOM_MARGIN),
+        ],
         fill=surface.theme.border,
         width=2,
     )
     sides = (
-        ("left", 18, surface.theme.blue),
-        ("right", middle + 12, surface.theme.coral),
+        ("left", metrics.left_x, surface.theme.blue),
+        ("right", metrics.right_x, surface.theme.coral),
     )
-    column_width = middle - 36
+    label_font = surface.font("label")
+    text_width = metrics.column_width - 16
     for side_name, x, color in sides:
         side = dict(scene.content[side_name])
         surface.draw.rectangle(
-            (x, 48, x + column_width, 76), fill=color
+            (x, HEADER_TOP, x + metrics.column_width, HEADER_BOTTOM),
+            fill=color,
         )
         surface.draw.text(
-            (x + 8, 54),
+            (x + 8, HEADER_TOP + 6),
             str(side["heading"]),
             font=surface.font("heading"),
             fill=surface.theme.ink,
         )
-        surface.draw.text(
-            (x + 8, 80),
+        description_lines = fit_comparison_lines(
+            surface,
             str(side["description"]),
-            font=surface.font("label"),
-            fill=surface.theme.ink,
+            text_width,
+            font=label_font,
         )
+        for line_index, line in enumerate(description_lines):
+            surface.draw.text(
+                (x + 8, DESCRIPTION_START_Y + line_index * LABEL_LINE_HEIGHT),
+                line,
+                font=label_font,
+                fill=surface.theme.ink,
+            )
+    desc_bottom = _description_bottom(surface, metrics, scene)
+    points_start = desc_bottom + DESCRIPTION_GAP
+    points_end = height - POINTS_BOTTOM_MARGIN
     points = list(scene.content["points"])
-    visible = max(1, round(progress * len(points)))
-    for index, raw_point in enumerate(points[:visible]):
-        point = dict(raw_point)
-        y = 112 + index * 34
-        surface.draw.text(
-            (middle - 28, y),
-            str(point["label"]),
-            font=surface.font("label"),
-            fill=surface.theme.muted_ink,
-        )
-        surface.draw.text(
-            (20, y + 12),
-            str(point["left"]),
-            font=surface.font("body"),
-            fill=surface.theme.ink,
-        )
-        surface.draw.text(
-            (middle + 14, y + 12),
-            str(point["right"]),
-            font=surface.font("body"),
-            fill=surface.theme.ink,
-        )
+    visible = revealed_point_count(len(points), progress)
+    rows = _layout_point_rows(
+        _plan_point_rows(surface, metrics, points, visible),
+        points_start=points_start,
+        points_end=points_end,
+    )
+    body_font = surface.font("body")
+    for row in rows:
+        for line_index, line in enumerate(row.label_lines):
+            surface.draw.text(
+                (metrics.label_x, row.y + line_index * LABEL_LINE_HEIGHT),
+                line,
+                font=label_font,
+                fill=surface.theme.muted_ink,
+            )
+        body_top = row.y + len(row.label_lines) * LABEL_LINE_HEIGHT + 2
+        for line_index, line in enumerate(row.left_lines):
+            surface.draw.text(
+                (metrics.left_x + 2, body_top + line_index * BODY_LINE_HEIGHT),
+                line,
+                font=body_font,
+                fill=surface.theme.ink,
+            )
+        for line_index, line in enumerate(row.right_lines):
+            surface.draw.text(
+                (metrics.right_x + 2, body_top + line_index * BODY_LINE_HEIGHT),
+                line,
+                font=body_font,
+                fill=surface.theme.ink,
+            )
     return surface.finish()
