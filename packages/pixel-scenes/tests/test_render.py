@@ -1,10 +1,13 @@
+from importlib import import_module
 from pathlib import Path
 
 import pytest
 from PIL import Image, ImageSequence
 
 from pixel_scenes import parse_scene, render
-from pixel_scenes.errors import OutputExistsError
+
+render_py = import_module("pixel_scenes.render")
+from pixel_scenes.errors import OutputExistsError, RenderError
 from test_step_process import process_data
 
 
@@ -77,3 +80,43 @@ def test_render_writes_deterministic_gif(tmp_path):
     assert result.media_type == "image/gif"
     assert result.frame_count == 8
     assert result.duration_seconds == 2
+
+
+def test_render_dispatches_mp4_through_encode_mp4(tmp_path, monkeypatch):
+    output = tmp_path / "process.mp4"
+    calls = []
+
+    def fake_encode(frames, destination, *, fps, ffmpeg_path=None):
+        calls.append((len(frames), destination, fps, ffmpeg_path))
+        destination.write_bytes(b"encoded-mp4")
+
+    monkeypatch.setattr(render_py, "encode_mp4", fake_encode)
+
+    result = render(parse_scene(process_data()), output, ffmpeg_path=tmp_path / "ffmpeg.exe")
+
+    assert len(calls) == 1
+    frame_count, destination, fps, ffmpeg_path = calls[0]
+    assert frame_count == 8
+    assert destination.suffix == ".mp4"
+    assert fps == 4
+    assert ffmpeg_path == tmp_path / "ffmpeg.exe"
+    assert output.read_bytes() == b"encoded-mp4"
+    assert result.media_type == "video/mp4"
+    assert result.frame_count == 8
+    assert result.duration_seconds == 2
+
+
+def test_failed_mp4_render_does_not_leave_partial_output(
+    tmp_path, concept_data, monkeypatch
+):
+    output = tmp_path / "card.mp4"
+
+    def fail(*args, **kwargs):
+        raise RenderError("FFmpeg could not encode MP4: fail")
+
+    monkeypatch.setattr(render_py, "encode_mp4", fail)
+
+    with pytest.raises(RenderError, match="FFmpeg could not encode MP4"):
+        render(parse_scene(concept_data), output)
+
+    assert not output.exists()

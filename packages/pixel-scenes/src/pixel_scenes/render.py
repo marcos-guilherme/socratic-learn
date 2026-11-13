@@ -8,6 +8,7 @@ from .accessibility import write_accessibility
 from .animation import frame_progress
 from .errors import OutputExistsError, RenderError
 from .model import RenderResult, Scene
+from .ffmpeg import encode_mp4
 from .templates import render_frame
 
 MEDIA_TYPES = {
@@ -52,11 +53,12 @@ def render(
     *,
     overwrite: bool = False,
     accessibility: bool = True,
+    ffmpeg_path: str | Path | None = None,
 ) -> RenderResult:
     destination = Path(output)
     suffix = destination.suffix.lower()
-    if suffix not in (".png", ".gif"):
-        raise RenderError("this build currently supports PNG and GIF output")
+    if suffix not in (".png", ".gif", ".mp4"):
+        raise RenderError("this build currently supports PNG, GIF, and MP4 output")
     _protect_output(destination, overwrite)
     access_path = destination.with_suffix(".txt") if accessibility else None
     if access_path is not None:
@@ -74,8 +76,18 @@ def render(
             frame.save(temporary, format="PNG")
             frame_count = 1
             duration_seconds = 0.0
-        else:
+        elif suffix == ".gif":
             frame_count = _save_gif(scene, temporary)
+            duration_seconds = scene.animation.duration_seconds
+        else:
+            frames = _frames(scene)
+            encode_mp4(
+                frames,
+                temporary,
+                fps=scene.animation.fps,
+                ffmpeg_path=ffmpeg_path,
+            )
+            frame_count = len(frames)
             duration_seconds = scene.animation.duration_seconds
         os.replace(temporary, destination)
     finally:
