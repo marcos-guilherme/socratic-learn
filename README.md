@@ -1,5 +1,7 @@
 # Socratic Learn
 
+![Pixel-art Socrates thinking beside the Socratic Learn name and the line Learn anything. Prove it by doing.](docs/assets/socratic-learn-hero.png)
+
 **Turn any AI agent into a tutor that checks whether you actually learned.**
 
 Socratic Learn helps you learn any subject through a guided conversation that
