@@ -8,7 +8,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from . import __version__, load_scene, render
-from .errors import PixelScenesError
+from .errors import OutputExistsError, PixelScenesError
 from .render import _protect_output
 
 
@@ -61,11 +61,20 @@ def entry_point(argv: Sequence[str] | None = None) -> int:
                 .read_text(encoding="utf-8")
             )
             destination = Path(arguments.output)
-            _protect_output(destination, arguments.overwrite)
-            destination.write_text(
-                json.dumps(value, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
+            payload = (
+                json.dumps(value, indent=2, ensure_ascii=False) + "\n"
             )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if arguments.overwrite:
+                destination.write_text(payload, encoding="utf-8")
+            else:
+                try:
+                    with destination.open("x", encoding="utf-8") as handle:
+                        handle.write(payload)
+                except FileExistsError as exc:
+                    raise OutputExistsError(
+                        f"output already exists: {destination}"
+                    ) from exc
             print(destination)
             return 0
         result = render(

@@ -1,10 +1,11 @@
 from pathlib import Path
+import subprocess
 
 import pytest
 from PIL import Image
 
 from pixel_scenes.errors import MissingDependencyError, RenderError
-from pixel_scenes.ffmpeg import encode_mp4, resolve_ffmpeg
+from pixel_scenes.ffmpeg import encode_mp4, encode_timeout_seconds, resolve_ffmpeg
 
 
 def test_resolve_ffmpeg_explains_missing_dependency(monkeypatch):
@@ -54,6 +55,67 @@ def test_encode_mp4_reports_final_ffmpeg_message(tmp_path, monkeypatch):
         encode_mp4(
             [Image.new("RGB", (160, 90))],
             tmp_path / "movie.mp4",
+            fps=4,
+            ffmpeg_path=executable,
+        )
+
+
+def test_encode_timeout_scales_with_frame_count():
+    assert encode_timeout_seconds(8, fps=4) >= encode_timeout_seconds(1, fps=4)
+
+
+def test_encode_mp4_timeout_becomes_render_error(tmp_path, monkeypatch):
+    executable = tmp_path / "ffmpeg"
+    executable.write_bytes(b"binary")
+
+    def slow(arguments, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=arguments, timeout=kwargs["timeout"])
+
+    monkeypatch.setattr("subprocess.run", slow)
+
+    with pytest.raises(RenderError, match="timed out"):
+        encode_mp4(
+            [Image.new("RGB", (160, 90))] * 8,
+            tmp_path / "movie.mp4",
+            fps=4,
+            ffmpeg_path=executable,
+        )
+
+
+def test_encode_mp4_rejects_missing_output_after_success(tmp_path, monkeypatch):
+    executable = tmp_path / "ffmpeg"
+    executable.write_bytes(b"binary")
+    destination = tmp_path / "movie.mp4"
+
+    def succeed(arguments, **kwargs):
+        return type("Result", (), {"returncode": 0, "stderr": ""})()
+
+    monkeypatch.setattr("subprocess.run", succeed)
+
+    with pytest.raises(RenderError, match="missing"):
+        encode_mp4(
+            [Image.new("RGB", (160, 90))],
+            destination,
+            fps=4,
+            ffmpeg_path=executable,
+        )
+
+
+def test_encode_mp4_rejects_empty_output_after_success(tmp_path, monkeypatch):
+    executable = tmp_path / "ffmpeg"
+    executable.write_bytes(b"binary")
+    destination = tmp_path / "movie.mp4"
+
+    def succeed(arguments, **kwargs):
+        destination.write_bytes(b"")
+        return type("Result", (), {"returncode": 0, "stderr": ""})()
+
+    monkeypatch.setattr("subprocess.run", succeed)
+
+    with pytest.raises(RenderError, match="empty"):
+        encode_mp4(
+            [Image.new("RGB", (160, 90))],
+            destination,
             fps=4,
             ffmpeg_path=executable,
         )

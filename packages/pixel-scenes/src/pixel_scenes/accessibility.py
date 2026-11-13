@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from .model import Scene
@@ -43,5 +44,18 @@ def accessibility_text(scene: Scene) -> str:
 
 
 def write_accessibility(scene: Scene, path: Path) -> Path:
-    path.write_text(accessibility_text(scene), encoding="utf-8")
+    """Write the accessibility sidecar atomically via a sibling temp file.
+
+  The final ``path`` appears only after ``os.replace``; readers never see a
+  partial file. If encoding fails, any leftover ``.<name>.tmp`` is removed.
+  The visual output and sidecar are still separate files with no cross-file
+  transaction guarantee.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        temporary.write_text(accessibility_text(scene), encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return path

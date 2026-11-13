@@ -14,6 +14,9 @@ STEP_FIELDS = {"label", "detail"}
 LABEL_LINE_HEIGHT = 10
 DETAIL_LINE_HEIGHT = 10
 DETAIL_GAP = 4
+TITLE_TOP = 17
+TITLE_LINE_HEIGHT = 16
+TITLE_BOTTOM_MARGIN = 8
 
 
 def revealed_step_count(step_count: int, progress: float) -> int:
@@ -64,19 +67,13 @@ def fit_label_lines(
     *,
     font: ImageFont.ImageFont,
 ) -> list[str]:
-    text = label.strip()
-    if not text:
-        raise LayoutError("label text is empty")
-    try:
-        lines = surface.wrap(text, max_width=max_width, font=font)
-    except LayoutError:
-        lines = _wrap_characters(surface, text, max_width, font)
-    overflow = [
-        line for line in lines if surface.text_width(line, font) > max_width
-    ]
-    if overflow:
-        return _wrap_characters(surface, text, max_width, font)
-    return lines
+    return surface.fit_text_lines(
+        label,
+        max_width,
+        font=font,
+        empty_message="label text is empty",
+        wide_message="label text is too wide for its column",
+    )
 
 
 def validate(scene: Scene) -> None:
@@ -112,16 +109,32 @@ def render_step_process(scene: Scene, progress: float) -> Image.Image:
     surface = PixelSurface(scene.canvas)
     width, height = surface.image.size
     surface.panel((8, 8, width - 9, height - 9))
-    surface.draw.text(
-        (18, 17),
+    title_font = surface.font("title")
+    panel_text_width = width - 36
+    baseline = height // 2
+    title_lines = surface.fit_text_lines(
         str(scene.content["title"]),
-        font=surface.font("title"),
-        fill=surface.theme.ink,
+        panel_text_width,
+        font=title_font,
+        empty_message="title text is empty",
+        wide_message="title is too wide for the panel",
     )
+    max_title_lines = max(
+        1,
+        (baseline - TITLE_BOTTOM_MARGIN - TITLE_TOP) // TITLE_LINE_HEIGHT,
+    )
+    if len(title_lines) > max_title_lines:
+        raise LayoutError("title does not fit the panel")
+    for line_index, line in enumerate(title_lines):
+        surface.draw.text(
+            (18, TITLE_TOP + line_index * TITLE_LINE_HEIGHT),
+            line,
+            font=title_font,
+            fill=surface.theme.ink,
+        )
     steps = list(scene.content["steps"])
     revealed = revealed_step_count(len(steps), progress)
     gap = max(4, (width - 36) // len(steps))
-    baseline = height // 2
     label_font = surface.font("label")
     label_column_width = max(8, gap - 8)
     track_y = height - 22
@@ -154,12 +167,16 @@ def render_step_process(scene: Scene, progress: float) -> Image.Image:
             max_detail_lines = max(
                 0, available_height // DETAIL_LINE_HEIGHT
             )
-            detail_lines = surface.wrap(
+            detail_lines = surface.fit_text_lines(
                 str(step["detail"]),
-                max_width=label_column_width,
+                label_column_width,
                 font=label_font,
+                empty_message="detail text is empty",
+                wide_message="detail text is too wide for its column",
             )
-            for line_index, line in enumerate(detail_lines[:max_detail_lines]):
+            if max_detail_lines <= 0 or len(detail_lines) > max_detail_lines:
+                raise LayoutError("step detail does not fit the panel")
+            for line_index, line in enumerate(detail_lines):
                 surface.draw.text(
                     (x - 4, detail_top + line_index * DETAIL_LINE_HEIGHT),
                     line,

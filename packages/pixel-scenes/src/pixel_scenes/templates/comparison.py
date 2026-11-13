@@ -21,6 +21,11 @@ POINTS_BOTTOM_MARGIN = 12
 HEADER_TOP = 40
 HEADER_BOTTOM = 58
 DESCRIPTION_START_Y = 60
+TITLE_TOP = 17
+TITLE_LINE_HEIGHT = 16
+HEADER_TEXT_TOP = HEADER_TOP + 6
+HEADING_LINE_HEIGHT = 12
+TITLE_BOTTOM = HEADER_TOP - 2
 
 
 def _short_text(value: object, field: str, maximum: int) -> None:
@@ -104,19 +109,13 @@ def fit_comparison_lines(
     *,
     font: ImageFont.ImageFont,
 ) -> list[str]:
-    normalized = text.strip()
-    if not normalized:
-        raise LayoutError("comparison text is empty")
-    try:
-        lines = surface.wrap(normalized, max_width=max_width, font=font)
-    except LayoutError:
-        lines = _wrap_characters(surface, normalized, max_width, font)
-    overflow = [
-        line for line in lines if surface.text_width(line, font) > max_width
-    ]
-    if overflow:
-        return _wrap_characters(surface, normalized, max_width, font)
-    return lines
+    return surface.fit_text_lines(
+        text,
+        max_width,
+        font=font,
+        empty_message="comparison text is empty",
+        wide_message="comparison text is too wide for its column",
+    )
 
 
 @dataclass(frozen=True)
@@ -294,12 +293,26 @@ def render_comparison(scene: Scene, progress: float) -> Image.Image:
     surface = PixelSurface(scene.canvas)
     width, height = surface.image.size
     surface.panel((8, 8, width - 9, height - 9))
-    surface.draw.text(
-        (18, 17),
+    title_font = surface.font("title")
+    title_lines = surface.fit_text_lines(
         str(scene.content["title"]),
-        font=surface.font("title"),
-        fill=surface.theme.ink,
+        width - 36,
+        font=title_font,
+        empty_message="title text is empty",
+        wide_message="title is too wide for the panel",
     )
+    max_title_lines = max(
+        1, (TITLE_BOTTOM - TITLE_TOP) // TITLE_LINE_HEIGHT
+    )
+    if len(title_lines) > max_title_lines:
+        raise LayoutError("title does not fit the panel")
+    for line_index, line in enumerate(title_lines):
+        surface.draw.text(
+            (18, TITLE_TOP + line_index * TITLE_LINE_HEIGHT),
+            line,
+            font=title_font,
+            fill=surface.theme.ink,
+        )
     metrics = comparison_column_metrics(surface)
     surface.draw.line(
         [
@@ -314,19 +327,34 @@ def render_comparison(scene: Scene, progress: float) -> Image.Image:
         ("right", metrics.right_x, surface.theme.coral),
     )
     label_font = surface.font("label")
+    heading_font = surface.font("heading")
     text_width = metrics.column_width - 16
+    heading_max_lines = max(
+        1,
+        (HEADER_BOTTOM - HEADER_TEXT_TOP) // HEADING_LINE_HEIGHT,
+    )
     for side_name, x, color in sides:
         side = dict(scene.content[side_name])
         surface.draw.rectangle(
             (x, HEADER_TOP, x + metrics.column_width, HEADER_BOTTOM),
             fill=color,
         )
-        surface.draw.text(
-            (x + 8, HEADER_TOP + 6),
+        heading_lines = surface.fit_text_lines(
             str(side["heading"]),
-            font=surface.font("heading"),
-            fill=surface.theme.ink,
+            text_width,
+            font=heading_font,
+            empty_message="comparison heading is empty",
+            wide_message="comparison heading is too wide for its column",
         )
+        if len(heading_lines) > heading_max_lines:
+            raise LayoutError("comparison heading does not fit the panel")
+        for line_index, line in enumerate(heading_lines):
+            surface.draw.text(
+                (x + 8, HEADER_TEXT_TOP + line_index * HEADING_LINE_HEIGHT),
+                line,
+                font=heading_font,
+                fill=surface.theme.ink,
+            )
         description_lines = fit_comparison_lines(
             surface,
             str(side["description"]),

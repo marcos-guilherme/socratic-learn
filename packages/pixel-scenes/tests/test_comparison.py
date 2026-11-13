@@ -5,6 +5,7 @@ from pixel_scenes.drawing import PixelSurface
 from pixel_scenes.errors import LayoutError, SceneValidationError
 from pixel_scenes.templates.comparison import (
     POINTS_BOTTOM_MARGIN,
+    comparison_column_metrics,
     comparison_content_bottom,
     render_comparison,
     revealed_point_count,
@@ -136,6 +137,40 @@ def test_wrapped_side_descriptions_stay_inside_columns():
             surface.text_width(line, label_font) <= metrics.column_width - 16
             for line in lines
         )
+
+
+def test_comparison_title_and_headings_wrap_within_regions():
+    data = comparison_data()
+    data["content"]["title"] = "Ser versus estar compared"
+    data["content"]["left"]["heading"] = "Ser"
+    data["content"]["right"]["heading"] = "Estar"
+    scene = parse_scene(data)
+    surface = PixelSurface(scene.canvas)
+    metrics = comparison_column_metrics(surface)
+    title_font = surface.font("title")
+    heading_font = surface.font("heading")
+    title_lines = surface.fit_text_lines(
+        "Ser versus estar across common phrases",
+        surface.image.size[0] - 36,
+        font=title_font,
+        empty_message="title text is empty",
+        wide_message="title is too wide for the panel",
+    )
+    assert len(title_lines) >= 1
+    long_heading = "Ser identity traits permanent"
+    heading_lines = surface.fit_text_lines(
+        long_heading,
+        metrics.column_width - 16,
+        font=heading_font,
+        empty_message="comparison heading is empty",
+        wide_message="comparison heading is too wide for its column",
+    )
+    assert len(heading_lines) > 1
+    assert all(
+        surface.text_width(line, heading_font) <= metrics.column_width - 16
+        for line in heading_lines
+    )
+    render_comparison(scene, progress=1.0)
 
 
 def test_max_schema_content_fits_or_raises_layout_error():

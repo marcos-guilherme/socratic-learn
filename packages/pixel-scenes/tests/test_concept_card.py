@@ -3,7 +3,7 @@ from PIL import Image
 
 from pixel_scenes import parse_scene
 from pixel_scenes.drawing import PixelSurface
-from pixel_scenes.errors import SceneValidationError
+from pixel_scenes.errors import LayoutError, SceneValidationError
 from pixel_scenes.templates.concept_card import render_concept_card
 from pixel_scenes.model import Canvas
 from pixel_scenes.theme import COZY_CLASSROOM
@@ -66,3 +66,30 @@ def test_concept_card_rejects_unknown_content(concept_data):
 
     with pytest.raises(SceneValidationError, match="content.html"):
         parse_scene(concept_data)
+
+
+def test_concept_card_title_wraps_within_panel(concept_data):
+    concept_data["content"]["title"] = "Careful steps " * 5
+    scene = parse_scene(concept_data)
+    surface = PixelSurface(scene.canvas)
+    width = surface.image.size[0]
+    title_font = surface.font("title")
+    title_lines = surface.fit_text_lines(
+        scene.content["title"],
+        width - 36,
+        font=title_font,
+        empty_message="title text is empty",
+        wide_message="title is too wide for the panel",
+    )
+
+    assert len(title_lines) > 1
+    assert all(surface.text_width(line, title_font) <= width - 36 for line in title_lines)
+    render_concept_card(scene, progress=1.0)
+
+
+def test_concept_card_summary_beyond_four_lines_raises_layout_error(concept_data):
+    concept_data["content"]["summary"] = ("word " * 48).strip()
+    scene = parse_scene(concept_data)
+
+    with pytest.raises(LayoutError, match="summary"):
+        render_concept_card(scene, progress=1.0)

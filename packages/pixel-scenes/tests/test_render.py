@@ -120,3 +120,13 @@ def test_failed_mp4_render_does_not_leave_partial_output(
         render(parse_scene(concept_data), output)
 
     assert not output.exists()
+
+
+def test_accessibility_write_uses_atomic_replace(tmp_path, concept_data):
+    output = tmp_path / "card.png"
+    render(parse_scene(concept_data), output)
+    text_path = output.with_suffix(".txt")
+    assert text_path.exists()
+    assert text_path.stat().st_size > 0
+    stale_temp = text_path.with_name(f".{text_path.name}.tmp")
+    assert not stale_temp.exists()

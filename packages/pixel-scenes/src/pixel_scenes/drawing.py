@@ -45,6 +45,61 @@ class PixelSurface:
         box = self.draw.textbbox((0, 0), text, font=font)
         return box[2] - box[0]
 
+    def fit_text_lines(
+        self,
+        text: str,
+        max_width: int,
+        *,
+        font: ImageFont.ImageFont,
+        empty_message: str = "text is empty",
+        wide_message: str = "text is too wide for its area",
+    ) -> list[str]:
+        normalized = text.strip()
+        if not normalized:
+            raise LayoutError(empty_message)
+        try:
+            lines = self.wrap(normalized, max_width=max_width, font=font)
+        except LayoutError:
+            lines = self._wrap_characters(
+                normalized, max_width, font, wide_message=wide_message
+            )
+        overflow = [
+            line for line in lines if self.text_width(line, font) > max_width
+        ]
+        if overflow:
+            lines = self._wrap_characters(
+                normalized, max_width, font, wide_message=wide_message
+            )
+        return lines
+
+    def _wrap_characters(
+        self,
+        text: str,
+        max_width: int,
+        font: ImageFont.ImageFont,
+        *,
+        wide_message: str,
+    ) -> list[str]:
+        lines: list[str] = []
+        current = ""
+        for character in text:
+            candidate = f"{current}{character}"
+            if current and self.text_width(candidate, font) > max_width:
+                lines.append(current)
+                current = character
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+        if not lines:
+            raise LayoutError("text is empty")
+        overflow = [
+            line for line in lines if self.text_width(line, font) > max_width
+        ]
+        if overflow:
+            raise LayoutError(wide_message)
+        return lines
+
     def wrap(
         self,
         text: str,

@@ -27,6 +27,24 @@ def resolve_ffmpeg(explicit: str | Path | None = None) -> Path:
     return candidate
 
 
+def encode_timeout_seconds(frame_count: int, fps: int) -> float:
+    frames = max(frame_count, 1)
+    rate = max(fps, 1)
+    duration = frames / rate
+    return min(600.0, max(30.0, duration * 8.0 + frames * 2.0))
+
+
+def _verify_encoded_output(destination: Path) -> None:
+    if not destination.is_file():
+        raise RenderError(
+            "FFmpeg reported success but the output file is missing"
+        )
+    if destination.stat().st_size == 0:
+        raise RenderError(
+            "FFmpeg reported success but the output file is empty"
+        )
+
+
 def encode_mp4(
     frames: Sequence[Image.Image],
     destination: Path,
@@ -35,6 +53,7 @@ def encode_mp4(
     ffmpeg_path: str | Path | None = None,
 ) -> None:
     executable = resolve_ffmpeg(ffmpeg_path)
+    timeout = encode_timeout_seconds(len(frames), fps)
     with tempfile.TemporaryDirectory(prefix="pixel-scenes-") as directory:
         frame_dir = Path(directory)
         for index, frame in enumerate(frames):
@@ -54,14 +73,21 @@ def encode_mp4(
             "+faststart",
             str(destination),
         ]
-        result = subprocess.run(
-            arguments,
-            shell=False,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                arguments,
+                shell=False,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RenderError(
+                f"FFmpeg timed out after {exc.timeout:.0f} seconds"
+            ) from exc
         if result.returncode != 0:
             lines = [line for line in result.stderr.splitlines() if line.strip()]
             diagnostic = lines[-1] if lines else "unknown FFmpeg error"
             raise RenderError(f"FFmpeg could not encode MP4: {diagnostic}")
+    _verify_encoded_output(destination)

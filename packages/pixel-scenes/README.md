@@ -9,6 +9,13 @@ It works on its own from a terminal or as a Python library.
 python -m pip install -e ".[test]"
 ```
 
+## Check a scene and list themes
+
+```powershell
+pixel-scenes validate examples/gradient-descent.json
+pixel-scenes themes
+```
+
 ## Render your first visual
 
 ```powershell
@@ -28,8 +35,9 @@ A scene is a UTF-8 JSON object. `schema_version` is `"1"`. `template` is
 `concept-card`, `step-process`, or `comparison`. `theme` is
 `cozy-classroom`. `canvas` sets the output width and height. `content` contains
 the fields owned by the selected template. `animation` sets a duration and
-frame rate. `accessibility.description` explains the visual in words. `seed`
-makes supported motion deterministic.
+frame rate. `accessibility.description` explains the visual in words. `seed` is
+reserved for deterministic output; it is recorded today and does not yet drive
+random motion in the renderer.
 
 Start from a bundled scene:
 
@@ -62,7 +70,8 @@ size, duration, frame rate, text length, and frame count are bounded before
 rendering. FFmpeg receives an argument list without a command shell. Scene
 content cannot become a command option.
 
-Each render also writes a text description beside the visual. Use
+Each render also writes a text description beside the visual. The sidecar is
+written atomically from a temporary file in the same directory. Use
 `--no-accessibility` only when another part of your application provides an
 equivalent description.
 

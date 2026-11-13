@@ -1,4 +1,5 @@
 import json
+import threading
 
 from pixel_scenes.cli import entry_point
 
@@ -64,3 +65,29 @@ def test_example_command_overwrites_with_flag(tmp_path, capsys):
     body = json.loads(output.read_text(encoding="utf-8"))
     assert body["template"] == "concept-card"
     assert str(output) in capsys.readouterr().out
+
+
+def test_example_command_uses_exclusive_creation(tmp_path):
+    output = tmp_path / "scene.json"
+    holder: dict[str, int] = {}
+    lock = threading.Lock()
+    start = threading.Event()
+
+    def try_create():
+        start.wait(timeout=1)
+        with lock:
+            holder["second"] = entry_point(
+                ["example", "concept-card", "--output", str(output)]
+            )
+
+    worker = threading.Thread(target=try_create)
+    worker.start()
+    start.set()
+    holder["first"] = entry_point(
+        ["example", "concept-card", "--output", str(output)]
+    )
+    worker.join(timeout=2)
+
+    codes = sorted(holder.values())
+    assert codes == [0, 2]
+    assert json.loads(output.read_text(encoding="utf-8"))["template"] == "concept-card"

@@ -3,7 +3,7 @@ import pytest
 from pixel_scenes import parse_scene
 from pixel_scenes.animation import frame_progress
 from pixel_scenes.drawing import PixelSurface
-from pixel_scenes.errors import SceneValidationError
+from pixel_scenes.errors import LayoutError, SceneValidationError
 from pixel_scenes.templates.step_process import (
     fit_label_lines,
     render_step_process,
@@ -60,7 +60,7 @@ def test_six_max_length_labels_wrap_inside_columns():
     data = process_data()
     labels = [f"Stage-{index:02d}-abcdefghijklmnopqrst" for index in range(6)]
     data["content"]["steps"] = [
-        {"label": label, "detail": f"Detail line for step {index}."}
+        {"label": label, "detail": "Note."}
         for index, label in enumerate(labels)
     ]
     scene = parse_scene(data)
@@ -81,7 +81,7 @@ def test_six_max_length_labels_wrap_inside_columns():
     assert all(
         surface.text_width(line, label_font) <= label_width for lines in wrapped_labels for line in lines
     )
-    render_step_process(scene, progress=1.0)
+    render_step_process(scene, progress=0.0)
 
 
 def test_unbroken_label_wraps_by_character_within_column():
@@ -106,3 +106,40 @@ def test_step_process_accepts_two_through_six_steps():
 
     with pytest.raises(SceneValidationError, match="2 to 6"):
         parse_scene(data)
+
+
+def test_step_process_title_wraps_within_panel():
+    data = process_data()
+    data["content"]["title"] = "How a planted seed " * 4
+    scene = parse_scene(data)
+    surface = PixelSurface(scene.canvas)
+    width = surface.image.size[0]
+    title_font = surface.font("title")
+    title_lines = surface.fit_text_lines(
+        scene.content["title"],
+        width - 36,
+        font=title_font,
+        empty_message="title text is empty",
+        wide_message="title is too wide for the panel",
+    )
+
+    assert len(title_lines) > 1
+    assert all(
+        surface.text_width(line, title_font) <= width - 36 for line in title_lines
+    )
+    render_step_process(scene, progress=1.0)
+
+
+def test_step_process_raises_when_detail_has_no_visible_lines():
+    data = process_data()
+    data["canvas"]["height"] = 270
+    labels = ["W" * 32 for _ in range(6)]
+    data["content"]["steps"] = [
+        {"label": label, "detail": f"Visible detail for step {index}."}
+        for index, label in enumerate(labels)
+    ]
+    data["content"]["title"] = "Seed growth"
+    scene = parse_scene(data)
+
+    with pytest.raises(LayoutError, match="detail"):
+        render_step_process(scene, progress=1.0)

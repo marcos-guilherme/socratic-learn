@@ -3,10 +3,16 @@ from __future__ import annotations
 from PIL import Image
 
 from ..drawing import PixelSurface
-from ..errors import SceneValidationError
+from ..errors import LayoutError, SceneValidationError
 from ..model import Scene
 
 FIELDS = {"title", "summary", "key_fact"}
+
+TITLE_TOP = 18
+SUMMARY_TOP = 47
+TITLE_LINE_HEIGHT = 14
+SUMMARY_LINE_HEIGHT = 14
+SUMMARY_MAX_LINES = 4
 
 
 def validate(scene: Scene) -> None:
@@ -39,9 +45,26 @@ def render_concept_card(scene: Scene, progress: float) -> Image.Image:
     title_font = surface.font("title")
     body_font = surface.font("body")
     label_font = surface.font("label")
-    title = str(scene.content["title"])
-    summary = str(scene.content["summary"])
-    surface.draw.text((18, 18), title, font=title_font, fill=surface.theme.ink)
+    panel_text_width = width - 36
+    title_lines = surface.fit_text_lines(
+        str(scene.content["title"]),
+        panel_text_width,
+        font=title_font,
+        empty_message="title text is empty",
+        wide_message="title is too wide for the panel",
+    )
+    max_title_lines = max(
+        1, (SUMMARY_TOP - TITLE_TOP) // TITLE_LINE_HEIGHT
+    )
+    if len(title_lines) > max_title_lines:
+        raise LayoutError("title does not fit the panel")
+    for line_index, line in enumerate(title_lines):
+        surface.draw.text(
+            (18, TITLE_TOP + line_index * TITLE_LINE_HEIGHT),
+            line,
+            font=title_font,
+            fill=surface.theme.ink,
+        )
 
     hill = [
         (20, height - 42),
@@ -55,15 +78,22 @@ def render_concept_card(scene: Scene, progress: float) -> Image.Image:
     marker_y = height - 82 + int(travel * 35)
     surface.dots([(marker_x, marker_y)], fill=surface.theme.coral, size=7)
 
-    lines = surface.wrap(
-        summary, max_width=width - 42, font=body_font
+    summary = str(scene.content["summary"])
+    summary_lines = surface.fit_text_lines(
+        summary,
+        max_width=width - 42,
+        font=body_font,
+        empty_message="summary text is empty",
+        wide_message="summary is too wide for the panel",
     )
-    y = 47
-    for line in lines[:4]:
+    if len(summary_lines) > SUMMARY_MAX_LINES:
+        raise LayoutError("summary does not fit the panel")
+    y = SUMMARY_TOP
+    for line in summary_lines:
         surface.draw.text(
             (18, y), line, font=body_font, fill=surface.theme.ink
         )
-        y += 14
+        y += SUMMARY_LINE_HEIGHT
 
     fact = scene.content.get("key_fact")
     if fact:
