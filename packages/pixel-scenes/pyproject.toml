@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pixel-scenes"
+version = "0.1.0"
+description = "Create small explanatory visuals in a friendly pixel-art style."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["Pillow>=11,<13"]
+
+[project.optional-dependencies]
+motion = ["numpy>=2,<3"]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+pixel-scenes = "pixel_scenes.cli:entry_point"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pixel_scenes"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
