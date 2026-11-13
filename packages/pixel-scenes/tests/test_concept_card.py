@@ -37,3 +37,12 @@ def test_finish_uses_nearest_neighbor_scaling():
     assert isinstance(result, Image.Image)
     assert result.getpixel((2, 2)) == COZY_CLASSROOM.ink
     assert result.getpixel((3, 3)) == COZY_CLASSROOM.ink
+
+
+def test_dots_accepts_builtin_theme_color():
+    surface = PixelSurface(Canvas(40, 40), scale=1)
+
+    surface.dots([(5, 5)], fill=COZY_CLASSROOM.coral, size=2)
+
+    assert surface.image.getpixel((5, 5)) == COZY_CLASSROOM.coral
+    assert surface.image.getpixel((6, 6)) == COZY_CLASSROOM.coral

@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .errors import LayoutError
 from .model import Canvas
-from .theme import COZY_CLASSROOM, Theme
+from .theme import COZY_CLASSROOM, Color, Theme
 
 
 class PixelSurface:
@@ -71,7 +71,7 @@ class PixelSurface:
         self,
         box: tuple[int, int, int, int],
         *,
-        fill: str | None = None,
+        fill: Color | None = None,
     ) -> None:
         self.draw.rectangle(
             box,
@@ -85,7 +85,7 @@ class PixelSurface:
         start: tuple[int, int],
         end: tuple[int, int],
         *,
-        fill: str | None = None,
+        fill: Color | None = None,
     ) -> None:
         color = fill or self.theme.ink
         self.draw.line([start, end], fill=color, width=2)
@@ -99,7 +99,7 @@ class PixelSurface:
         self,
         points: Iterable[tuple[int, int]],
         *,
-        fill: str,
+        fill: Color,
         size: int = 4,
     ) -> None:
         for x, y in points:

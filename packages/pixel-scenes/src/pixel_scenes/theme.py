@@ -1,21 +1,24 @@
 from dataclasses import dataclass
 
+# Pillow RGB tuples used for Theme palette values and drawing fill colors.
+Color = tuple[int, int, int]
 
-def _hex_color(value: str) -> tuple[int, int, int]:
+
+def _hex_color(value: str) -> Color:
     return (int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16))
 
 
 @dataclass(frozen=True)
 class Theme:
-    background: tuple[int, int, int]
-    paper: tuple[int, int, int]
-    ink: tuple[int, int, int]
-    muted_ink: tuple[int, int, int]
-    coral: tuple[int, int, int]
-    gold: tuple[int, int, int]
-    green: tuple[int, int, int]
-    blue: tuple[int, int, int]
-    border: tuple[int, int, int]
+    background: Color
+    paper: Color
+    ink: Color
+    muted_ink: Color
+    coral: Color
+    gold: Color
+    green: Color
+    blue: Color
+    border: Color
 
 
 COZY_CLASSROOM = Theme(
